@@ -1,0 +1,208 @@
+from __future__ import annotations
+import streamlit as st
+from pathlib import Path
+import pandas as pd
+
+from src.config import load_config, save_config, default_config, EQUIVALENCE_KEYS, FINAL_KEYS, validate_sum_100
+from src.run_manager import utc_run_id, create_run_dirs
+from src.pipeline import run_discovery, run_update
+from src.excel_export import export_excel
+
+APP_TITLE = "Drain Systems Benchmark – MVP"
+BASE_DIR = Path(__file__).parent
+DATA_DIR = BASE_DIR / "data"
+CONFIG_PATH = DATA_DIR / "config" / "weights.json"
+TEMPLATE_PATH = DATA_DIR / "templates" / "benchmark_template.xlsx"
+
+st.set_page_config(page_title=APP_TITLE, layout="wide")
+st.title(APP_TITLE)
+
+# Load config
+cfg = load_config(CONFIG_PATH)
+
+# Sidebar: settings
+st.sidebar.header("Nastavení")
+target_length = st.sidebar.number_input("Cílová délka (mm)", min_value=300, max_value=3000, value=1200, step=10)
+tolerance = st.sidebar.number_input("Tolerance (±mm)", min_value=0, max_value=500, value=100, step=10)
+
+show_excluded = st.sidebar.checkbox("Zobrazit i nevyhovující produkty", value=False)
+
+st.sidebar.subheader("Penalizace")
+cfg.unknown_penalty_score = st.sidebar.number_input("Unknown score (0–1)", min_value=0.0, max_value=1.0, value=float(cfg.unknown_penalty_score), step=0.05)
+
+st.sidebar.divider()
+st.sidebar.subheader("Váhy ekvivalentnosti (součet 100 %)")
+
+# Auto-balance key for equivalence
+eq_auto_key = st.sidebar.selectbox("Auto-dopočet (ekvivalentnost)", options=EQUIVALENCE_KEYS, index=EQUIVALENCE_KEYS.index("length_mode_match"))
+
+eq_weights = dict(cfg.equivalence_weights_pct)
+eq_sum_manual = 0
+for k in EQUIVALENCE_KEYS:
+    if k == eq_auto_key:
+        continue
+    eq_weights[k] = st.sidebar.number_input(f"{k} (%)", min_value=0, max_value=100, value=int(eq_weights.get(k, 0)), step=1, key=f"eq_{k}")
+    eq_sum_manual += int(eq_weights[k])
+eq_weights[eq_auto_key] = max(0, 100 - eq_sum_manual)
+st.sidebar.caption(f"{eq_auto_key} dopočteno na {eq_weights[eq_auto_key]} % (součet = 100 %)")
+
+st.sidebar.divider()
+st.sidebar.subheader("Finální scoring (součet 100 %)")
+
+# Enabled flags: sales_price disabled until pricing
+cfg.final_enabled["sales_price"] = False
+
+final_auto_key = st.sidebar.selectbox("Auto-dopočet (finální)", options=[k for k in FINAL_KEYS if k != "sales_price"], index=0)
+
+fin_weights = dict(cfg.final_weights_pct)
+fin_sum_manual = 0
+for k in FINAL_KEYS:
+    if k == "sales_price":
+        continue
+    if k == final_auto_key:
+        continue
+    fin_weights[k] = st.sidebar.number_input(f"{k} (%)", min_value=0, max_value=100, value=int(fin_weights.get(k, 0)), step=1, key=f"fin_{k}")
+    fin_sum_manual += int(fin_weights[k])
+
+fin_weights[final_auto_key] = max(0, 100 - fin_sum_manual)
+
+# Sales price shown but disabled
+st.sidebar.caption("sales_price je zatím ignorováno (pricing modul není aktivní).")
+fin_weights["sales_price"] = 0
+
+st.sidebar.caption(f"{final_auto_key} dopočteno na {fin_weights[final_auto_key]} % (součet = 100 %)")
+st.sidebar.divider()
+
+if st.sidebar.button("Uložit nastavení"):
+    cfg.equivalence_weights_pct = {k: int(eq_weights[k]) for k in EQUIVALENCE_KEYS}
+    cfg.final_weights_pct = {k: int(fin_weights.get(k, 0)) for k in FINAL_KEYS}
+    save_config(CONFIG_PATH, cfg)
+    st.sidebar.success("Nastavení uloženo.")
+
+# Main actions
+col1, col2, col3 = st.columns([1,1,1])
+with col1:
+    run_discovery_btn = st.button("Run discovery", width='stretch')
+with col2:
+    run_update_btn = st.button("Run update", width='stretch')
+with col3:
+    export_btn = st.button("Export Excel", width='stretch')
+
+# Session state
+if "registry" not in st.session_state:
+    st.session_state["registry"] = pd.DataFrame()
+if "discovery_debug" not in st.session_state:
+    st.session_state["discovery_debug"] = pd.DataFrame()
+if "products" not in st.session_state:
+    st.session_state["products"] = pd.DataFrame()
+if "comparison" not in st.session_state:
+    st.session_state["comparison"] = pd.DataFrame()
+if "excluded" not in st.session_state:
+    st.session_state["excluded"] = pd.DataFrame()
+if "evidence" not in st.session_state:
+    st.session_state["evidence"] = pd.DataFrame()
+if "bom_options" not in st.session_state:
+    st.session_state["bom_options"] = pd.DataFrame()
+if "last_run_dir" not in st.session_state:
+    st.session_state["last_run_dir"] = ""
+
+# Run discovery
+if run_discovery_btn:
+    run_id = utc_run_id("discovery")
+    rp = create_run_dirs(DATA_DIR, run_id)
+    # snapshot weights
+    save_config(rp.run_dir / "weights.json", cfg)
+
+    reg, dbg = run_discovery(target_length_mm=int(target_length), tolerance_mm=int(tolerance))
+    reg.to_csv(rp.outputs_dir / "registry.csv", index=False)
+    dbg.to_csv(rp.outputs_dir / "discovery_debug.csv", index=False)
+    dbg.to_csv(rp.outputs_dir / "discovery_debug.csv", index=False)
+    st.session_state["registry"] = reg
+    st.session_state["discovery_debug"] = dbg
+    st.session_state["discovery_debug"] = dbg
+    st.session_state["last_run_dir"] = str(rp.run_dir)
+
+    st.success(f"Discovery dokončeno. Kandidátů: {len(reg)}. Run: {run_id}")
+    if len(reg) == 0 and not dbg.empty:
+        st.warning("Discovery nenašlo žádné kandidáty. Níže je diagnostika HTTP požadavků (status kódy / chyby).")
+        st.dataframe(dbg, width='stretch', height=240)
+
+# Run update
+if run_update_btn:
+    run_id = utc_run_id("update")
+    rp = create_run_dirs(DATA_DIR, run_id)
+    save_config(rp.run_dir / "weights.json", cfg)
+
+    reg = st.session_state["registry"]
+    if reg.empty:
+        st.warning("Nejdřív spusť Run discovery (nebo nahraj registry).")
+    else:
+        products, comparison, excluded, evidence, bom_options = run_update(reg, cfg, target_length_mm=int(target_length), tolerance_mm=int(tolerance))
+        st.session_state["products"] = products
+        st.session_state["comparison"] = comparison
+        st.session_state["excluded"] = excluded
+        st.session_state["evidence"] = evidence
+        st.session_state["bom_options"] = bom_options
+
+        # persist snapshots
+        products.to_csv(rp.outputs_dir / "products.csv", index=False)
+        comparison.to_csv(rp.outputs_dir / "comparison.csv", index=False)
+        excluded.to_csv(rp.outputs_dir / "excluded.csv", index=False)
+        evidence.to_csv(rp.outputs_dir / "evidence.csv", index=False)
+        bom_options.to_csv(rp.outputs_dir / "bom_options.csv", index=False)
+
+        st.session_state["last_run_dir"] = str(rp.run_dir)
+        st.success(f"Update dokončen. Eligible: {len(comparison)}. Excluded: {len(excluded)}. Run: {run_id}")
+
+# Results
+st.header("Výsledky")
+
+summary_cols = st.columns(4)
+summary_cols[0].metric("Registry", len(st.session_state["registry"]))
+summary_cols[1].metric("Eligible (Comparison)", len(st.session_state["comparison"]))
+summary_cols[2].metric("Excluded", len(st.session_state["excluded"]))
+summary_cols[3].metric("Evidence rows", len(st.session_state["evidence"]))
+
+st.subheader("Discovery debug")
+if not st.session_state["discovery_debug"].empty:
+    st.dataframe(st.session_state["discovery_debug"].tail(200), width='stretch', height=220)
+
+st.subheader("Comparison (eligible)")
+if st.session_state["comparison"].empty:
+    st.info("Zatím nejsou žádné výsledky. Spusť Run update.")
+else:
+    st.dataframe(st.session_state["comparison"], width='stretch', height=360)
+
+if show_excluded:
+    st.subheader("Excluded (nevyhovující)")
+    st.dataframe(st.session_state["excluded"], width='stretch', height=240)
+
+st.subheader("Evidence (audit)")
+if not st.session_state["evidence"].empty:
+    st.dataframe(st.session_state["evidence"].tail(200), width='stretch', height=240)
+
+# Export Excel
+if export_btn:
+    if st.session_state["comparison"].empty and st.session_state["registry"].empty:
+        st.warning("Není co exportovat. Spusť discovery/update.")
+    else:
+        run_id = utc_run_id("export")
+        rp = create_run_dirs(DATA_DIR, run_id)
+        save_config(rp.run_dir / "weights.json", cfg)
+
+        out_path = rp.outputs_dir / "benchmark_output.xlsx"
+        export_excel(
+            TEMPLATE_PATH, out_path, cfg,
+            products_df=st.session_state["products"],
+            comparison_df=st.session_state["comparison"],
+            excluded_df=st.session_state["excluded"],
+            evidence_df=st.session_state["evidence"],
+            bom_options_df=st.session_state["bom_options"],
+            components_df=None,
+        )
+        st.session_state["last_run_dir"] = str(rp.run_dir)
+        st.success("Excel export hotový.")
+        with open(out_path, "rb") as f:
+            st.download_button("Stáhnout Excel", data=f, file_name="benchmark_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+st.caption(f"Data složka: {DATA_DIR} | Poslední run: {st.session_state['last_run_dir']}")

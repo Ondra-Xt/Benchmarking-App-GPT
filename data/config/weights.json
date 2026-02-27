@@ -1,0 +1,38 @@
+{
+  "version": "1.0",
+  "updated_at_utc": "2026-01-13T14:18:08Z",
+  "unknown_penalty_score": 0.3,
+  "price_enabled": false,
+  "equivalence_weights_pct": {
+    "installation_type": 17,
+    "tileable": 17,
+    "outlet_type_dn": 17,
+    "install_height": 17,
+    "sealing_fleece": 16,
+    "length_mode_match": 16
+  },
+  "final_weights_pct": {
+    "equivalence_overall": 20,
+    "flow_rate": 15,
+    "material_v4a": 15,
+    "din_en_1253": 10,
+    "din_18534": 10,
+    "height_adjustability": 10,
+    "outlet_variants": 10,
+    "sealing_fleece_preassembled": 5,
+    "colours_count": 5,
+    "sales_price": 0
+  },
+  "final_enabled": {
+    "equivalence_overall": true,
+    "flow_rate": true,
+    "material_v4a": true,
+    "din_en_1253": true,
+    "din_18534": true,
+    "height_adjustability": true,
+    "outlet_variants": true,
+    "sealing_fleece_preassembled": true,
+    "colours_count": true,
+    "sales_price": false
+  }
+}

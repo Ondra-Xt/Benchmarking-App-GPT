@@ -1,0 +1,50 @@
+# Drain Benchmark Agent
+
+Benchmarking tool for shower drain systems (Dallmer, Hansgrohe, etc.).
+
+---
+
+## Setup (Windows)
+
+Run once:
+
+```bat
+setup_windows.bat
+```
+
+This will:
+- create local `.venv`
+- install dependencies from `requirements.txt`
+
+---
+
+## Run application
+
+```bat
+run_windows.bat
+```
+
+or manually:
+
+```bash
+.venv\Scripts\activate
+streamlit run app.py
+```
+
+---
+
+## Important
+
+- `.venv` is local only (not part of repository)
+- Generated runs are stored in `data/runs/` (ignored by git)
+- Do not commit `.venv` or runtime artifacts
+
+---
+
+## Architecture Overview
+
+- `src/connectors/` – vendor connectors
+- `pipeline.py` – discovery + update orchestration
+- `scoring.py` – scoring logic
+- `excel_export.py` – Excel export
+- `pdf_text.py` – PDF parsing
