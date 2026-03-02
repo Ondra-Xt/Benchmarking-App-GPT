@@ -98,6 +98,15 @@ def validate_export(xlsx_path: Path) -> None:
             continue
         missing = products[col].isna().mean()
         if missing > 0:
+            if col == "flow_rate_lps":
+                missing_rows = products[products[col].isna()].copy()
+                show_cols = [c for c in ["product_id", "product_url"] if c in missing_rows.columns]
+                if show_cols:
+                    preview = missing_rows[show_cols].head(20).to_dict(orient="records")
+                    fail(
+                        f"Products: '{col}' missing {missing * 100:.1f} % (čekáme 0 %). "
+                        f"Chybějící řádky (max 20): {preview}"
+                    )
             fail(f"Products: '{col}' missing {missing * 100:.1f} % (čekáme 0 %).")
     ok("flow_rate_lps a outlet_dn jsou kompletní (0 % missing).")
 
