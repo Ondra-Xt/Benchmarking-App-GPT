@@ -335,18 +335,66 @@ def _apply_text_extraction(res: Dict[str, Any], text: str, src: str) -> None:
             res["din_18534_compliance"] = "yes"
             res["evidence"].append(("DIN 18534", "found", src))
 
-    # Height range
-    if res.get("height_adj_min_mm") is None or res.get("height_adj_max_mm") is None:
-        m = re.search(r"(\d{1,3})\s*[–-]\s*(\d{1,3})\s*mm", flat)
-        if m:
-            a = int(m.group(1))
-            b = int(m.group(2))
-            if 0 <= a <= 300 and 0 <= b <= 300 and b >= a:
-                res["height_adj_min_mm"] = a
-                res["height_adj_max_mm"] = b
-                lo = max(0, m.start() - 80)
-                hi = min(len(flat), m.end() + 120)
-                res["evidence"].append(("Height adjustability", flat[lo:hi], src))
+    # Height range priority:
+    # A) installation height (preferred)
+    # B) construction height (fallback)
+    # C) installation height can overwrite suspiciously small existing values (e.g., tile thickness)
+    installation_match = re.search(
+        r"(minimale\s+installationsh(?:ö|oe)he\s*:|minimal\s+installation\s+height\s*:)",
+        flat,
+        re.IGNORECASE,
+    )
+    installation_found = False
+    if installation_match:
+        seg_start = installation_match.end()
+        seg_end = min(len(flat), seg_start + 160)
+        seg = flat[seg_start:seg_end]
+        vals = []
+        for vm in re.finditer(r"(\d{1,3})\s*mm", seg, re.IGNORECASE):
+            v = int(vm.group(1))
+            if 1 <= v <= 300:
+                vals.append(v)
+
+        if vals:
+            h_min = min(vals)
+            h_max = max(vals)
+
+            cur_max = res.get("height_adj_max_mm")
+            should_set = (
+                res.get("height_adj_min_mm") is None
+                or cur_max is None
+                or (isinstance(cur_max, (int, float)) and cur_max <= 30)
+            )
+
+            if should_set:
+                res["height_adj_min_mm"] = h_min
+                res["height_adj_max_mm"] = h_max
+
+            ev_lo = max(0, installation_match.start() - 20)
+            ev_hi = min(len(flat), seg_end)
+            res["evidence"].append(("Installation height (mm)", flat[ev_lo:ev_hi], src))
+            installation_found = True
+
+    # Fallback to construction height only if installation height wasn't found
+    if not installation_found and (res.get("height_adj_min_mm") is None or res.get("height_adj_max_mm") is None):
+        c_match = re.search(
+            r"(mindestbauh(?:ö|oe)he\s*:|minimal\s+construction\s+height\s*:|minimum\s+construction\s+height\s*:)",
+            flat,
+            re.IGNORECASE,
+        )
+        if c_match:
+            seg_start = c_match.end()
+            seg_end = min(len(flat), seg_start + 160)
+            seg = flat[seg_start:seg_end]
+            mm = re.search(r"(\d{1,3})\s*mm", seg, re.IGNORECASE)
+            if mm:
+                v = int(mm.group(1))
+                if 1 <= v <= 300:
+                    res["height_adj_min_mm"] = v
+                    res["height_adj_max_mm"] = v
+                    ev_lo = max(0, c_match.start() - 20)
+                    ev_hi = min(len(flat), seg_end)
+                    res["evidence"].append(("Construction height (mm)", flat[ev_lo:ev_hi], src))
 
     # Outlet DN (pokud explicitně v textu)
     if res.get("outlet_dn") is None:
