@@ -1,6 +1,6 @@
 # Drain Benchmark Agent
 
-Benchmarking tool for shower drain systems (Dallmer, Hansgrohe, etc.).
+Benchmarking tool for shower drain systems (Dallmer, Hansgrohe, TECE, etc.).
 
 ---
 
