@@ -66,10 +66,6 @@ python scripts/validate_export.py
 
 Skript vždy vypíše `PASS` nebo `FAIL` a vrací exit code `0` (PASS) / `1` (FAIL).
 
-Skript navíc vypisuje `WARN` pro podezřelé hodnoty výšek (`height_adj_*`), např. velmi nízké max výšky nebo kombinace tile-depth + instalační výšky.
-
-Pokud v `Products` chybí `height_adj_min_mm` nebo `height_adj_max_mm`, validátor vypíše seznam dotčených produktů (manufacturer, product_id, candidate_type, product_url).
-
 
 ## Scoring note
 
