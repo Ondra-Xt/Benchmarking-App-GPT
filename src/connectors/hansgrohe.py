@@ -335,18 +335,81 @@ def _apply_text_extraction(res: Dict[str, Any], text: str, src: str) -> None:
             res["din_18534_compliance"] = "yes"
             res["evidence"].append(("DIN 18534", "found", src))
 
-    # Height range
-    if res.get("height_adj_min_mm") is None or res.get("height_adj_max_mm") is None:
-        m = re.search(r"(\d{1,3})\s*[–-]\s*(\d{1,3})\s*mm", flat)
-        if m:
-            a = int(m.group(1))
-            b = int(m.group(2))
-            if 0 <= a <= 300 and 0 <= b <= 300 and b >= a:
-                res["height_adj_min_mm"] = a
-                res["height_adj_max_mm"] = b
-                lo = max(0, m.start() - 80)
-                hi = min(len(flat), m.end() + 120)
-                res["evidence"].append(("Height adjustability", flat[lo:hi], src))
+    # Height range priority:
+    # 1) Installation height keywords (preferred)
+    # 2) Construction/install fallback keywords
+    # Parse first 1–2 "NNN mm" values from ~0–220 chars after keyword.
+    # This avoids picking unrelated values farther in the text.
+    def _extract_height_after_keyword(match_obj: re.Match) -> Optional[Tuple[int, int, str]]:
+        seg_start = match_obj.end()
+        seg_end = min(len(flat), seg_start + 220)
+        seg = flat[seg_start:seg_end]
+
+        vals: List[int] = []
+        for vm in re.finditer(r"(\d{1,3})\s*mm", seg, re.IGNORECASE):
+            v = int(vm.group(1))
+            if 1 <= v <= 300:
+                vals.append(v)
+            if len(vals) >= 2:
+                break
+
+        if not vals:
+            return None
+
+        if len(vals) == 1:
+            hmin = hmax = vals[0]
+        else:
+            hmin = min(vals[0], vals[1])
+            hmax = max(vals[0], vals[1])
+
+        ev_lo = max(0, match_obj.start() - 20)
+        ev_hi = min(len(flat), seg_end)
+        return hmin, hmax, flat[ev_lo:ev_hi]
+
+    primary_kw = re.search(
+        r"(minimale\s+installationsh(?:ö|oe)he|minimal\s+installation\s+height)\s*:?",
+        flat,
+        re.IGNORECASE,
+    )
+
+    fallback_kw = None
+    if not primary_kw:
+        fallback_kw = re.search(
+            r"(einbauh(?:ö|oe)he|bauh(?:ö|oe)he|aufbauh(?:ö|oe)he|"
+            r"mindestbauh(?:ö|oe)he|minimum\s+construction\s+height|minimal\s+construction\s+height)\s*:?",
+            flat,
+            re.IGNORECASE,
+        )
+
+    selected = primary_kw or fallback_kw
+    if selected:
+        parsed = _extract_height_after_keyword(selected)
+        if parsed:
+            h_min, h_max, snippet = parsed
+            cur_max = res.get("height_adj_max_mm")
+            should_set = (
+                res.get("height_adj_min_mm") is None
+                or cur_max is None
+                or (isinstance(cur_max, (int, float)) and cur_max <= 30)
+            )
+            if should_set:
+                res["height_adj_min_mm"] = h_min
+                res["height_adj_max_mm"] = h_max
+            res["evidence"].append(("Installation/Construction height (mm)", snippet, src))
+
+    # Trap seal can be useful context, but MUST NOT populate height_adj_*
+    trap_match = re.search(r"(sperrwasserh(?:ö|oe)he|water\s+seal\s+height)\s*:?", flat, re.IGNORECASE)
+    if trap_match:
+        seg_start = trap_match.end()
+        seg_end = min(len(flat), seg_start + 220)
+        seg = flat[seg_start:seg_end]
+        mm = re.search(r"(\d{1,3})\s*mm", seg, re.IGNORECASE)
+        if mm:
+            v = int(mm.group(1))
+            if 1 <= v <= 120:
+                ev_lo = max(0, trap_match.start() - 20)
+                ev_hi = min(len(flat), seg_end)
+                res["evidence"].append(("Trap seal height (mm)", flat[ev_lo:ev_hi], src))
 
     # Outlet DN (pokud explicitně v textu)
     if res.get("outlet_dn") is None:
@@ -477,6 +540,53 @@ def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -
         },
     ]
 
+def _extract_height_only_from_source(url: str) -> Tuple[Optional[int], Optional[int], Optional[str], Optional[str]]:
+    st, final, html, err = _safe_get_text(url, timeout=35)
+    if st != 200 or not html:
+        return None, None, None, None
+
+    tmp: Dict[str, Any] = {
+        "flow_rate_lps": None,
+        "flow_rate_raw_text": None,
+        "flow_rate_unit": None,
+        "flow_rate_status": None,
+        "flow_rate_lps_options": None,
+        "material_detail": None,
+        "material_v4a": None,
+        "din_en_1253_cert": None,
+        "din_18534_compliance": None,
+        "height_adj_min_mm": None,
+        "height_adj_max_mm": None,
+        "outlet_dn": None,
+        "outlet_dn_default": None,
+        "outlet_dn_options_json": None,
+        "sealing_fleece_preassembled": None,
+        "colours_count": None,
+        "evidence": [],
+    }
+
+    pdf_url = _find_pdf_url_in_html(html, base_url=_base_from_url(final), article_no=_extract_article_no(url))
+    if pdf_url:
+        pdf_text, _ = extract_pdf_text_from_url(pdf_url, headers=HEADERS)
+        if pdf_text:
+            _apply_text_extraction(tmp, pdf_text, pdf_url)
+
+    soup = BeautifulSoup(html, "lxml")
+    page_text = soup.get_text(" ", strip=True) or ""
+    if page_text:
+        _apply_text_extraction(tmp, page_text, final)
+
+    snippet = None
+    snippet_src = pdf_url or final
+    for lbl, snip, ssrc in reversed(tmp.get("evidence") or []):
+        if "height" in str(lbl).lower():
+            snippet = str(snip)
+            snippet_src = str(ssrc)
+            break
+
+    return tmp.get("height_adj_min_mm"), tmp.get("height_adj_max_mm"), snippet, snippet_src
+
+
 def extract_parameters(product_url: str) -> Dict[str, Any]:
     """
     PDF-first:
@@ -537,6 +647,29 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
         page_text = soup.get_text(" ", strip=True) or ""
         if page_text:
             _apply_text_extraction(res, page_text, final)
+
+    # Base-set inheritance for finish_set: if height missing, try default BOM base-set source
+    if _is_finish_set(src, title) and (res.get("height_adj_min_mm") is None or res.get("height_adj_max_mm") is None):
+        bom_opts = get_bom_options(src, params={"_title": title}) or []
+        chosen = None
+        for opt in bom_opts:
+            if str(opt.get("is_default", "")).lower() == "yes":
+                chosen = opt
+                break
+        if chosen is None:
+            for opt in bom_opts:
+                if str(opt.get("outlet_dn", "")).upper() == "DN50":
+                    chosen = opt
+                    break
+        if chosen is None and bom_opts:
+            chosen = bom_opts[0]
+
+        if chosen and chosen.get("bom_url"):
+            hmin, hmax, hsnip, hsrc = _extract_height_only_from_source(str(chosen.get("bom_url")))
+            if hmin is not None and hmax is not None:
+                res["height_adj_min_mm"] = hmin
+                res["height_adj_max_mm"] = hmax
+                res["evidence"].append(("Height inherited from base-set", hsnip or f"{hmin}-{hmax} mm", hsrc or str(chosen.get("bom_url"))))
 
     # DN pravidla pro finish set
     if _is_finish_set(src, title):
