@@ -155,6 +155,12 @@ def validate_export(xlsx_path: Path) -> None:
         if miss_hg_height > 50:
             warn(f"Hansgrohe height missing {miss_hg_height:.1f}% (další krok: parsing výšek z PDF).")
 
+    if "height_adj_max_mm" in hg_prod.columns:
+        suspicious = hg_prod[hg_prod["height_adj_max_mm"].notna() & (hg_prod["height_adj_max_mm"] <= 30)]
+        if not suspicious.empty:
+            cols = [c for c in ["product_id", "product_url", "height_adj_max_mm"] if c in suspicious.columns]
+            warn(f"Hansgrohe suspicious low heights (<=30 mm): {suspicious[cols].head(20).to_dict(orient='records')}")
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Validace benchmark exportu XLSX.")
