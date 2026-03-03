@@ -336,93 +336,80 @@ def _apply_text_extraction(res: Dict[str, Any], text: str, src: str) -> None:
             res["evidence"].append(("DIN 18534", "found", src))
 
     # Height range priority:
-    # A) installation/construction-style keywords (preferred)
-    # B) explicit construction-height English/German fallback
-    # C) trap seal height fallback (last resort)
-    height_keywords_re = re.compile(
-        r"("
-        r"minimale\s+installationsh(?:ö|oe)he\s*:|"
-        r"minimal\s+installation\s+height\s*:|"
-        r"einbauh(?:ö|oe)he\s*:|"
-        r"bauh(?:ö|oe)he\s*:|"
-        r"aufbauh(?:ö|oe)he\s*:|"
-        r"einbautiefe\s*:|"
-        r"konstruktionsh(?:ö|oe)he\s*:"
-        r")",
-        re.IGNORECASE,
-    )
-
-    installation_found = False
-    for mkw in height_keywords_re.finditer(flat):
-        seg_start = mkw.end()
-        seg_end = min(len(flat), seg_start + 160)
+    # 1) Installation height keywords (preferred)
+    # 2) Construction/install fallback keywords
+    # Parse first 1–2 "NNN mm" values from ~0–220 chars after keyword.
+    # This avoids picking unrelated values farther in the text.
+    def _extract_height_after_keyword(match_obj: re.Match) -> Optional[Tuple[int, int, str]]:
+        seg_start = match_obj.end()
+        seg_end = min(len(flat), seg_start + 220)
         seg = flat[seg_start:seg_end]
-        vals = []
+
+        vals: List[int] = []
         for vm in re.finditer(r"(\d{1,3})\s*mm", seg, re.IGNORECASE):
             v = int(vm.group(1))
             if 1 <= v <= 300:
                 vals.append(v)
+            if len(vals) >= 2:
+                break
 
         if not vals:
-            continue
+            return None
 
-        h_min = min(vals)
-        h_max = max(vals)
+        if len(vals) == 1:
+            hmin = hmax = vals[0]
+        else:
+            hmin = min(vals[0], vals[1])
+            hmax = max(vals[0], vals[1])
 
-        cur_max = res.get("height_adj_max_mm")
-        should_set = (
-            res.get("height_adj_min_mm") is None
-            or cur_max is None
-            or (isinstance(cur_max, (int, float)) and cur_max <= 30)
-        )
-
-        if should_set:
-            res["height_adj_min_mm"] = h_min
-            res["height_adj_max_mm"] = h_max
-
-        ev_lo = max(0, mkw.start() - 20)
+        ev_lo = max(0, match_obj.start() - 20)
         ev_hi = min(len(flat), seg_end)
-        res["evidence"].append(("Installation/Construction height (mm)", flat[ev_lo:ev_hi], src))
-        installation_found = True
-        break
+        return hmin, hmax, flat[ev_lo:ev_hi]
 
-    # Fallback to explicit construction height phrase if not found above
-    if not installation_found and (res.get("height_adj_min_mm") is None or res.get("height_adj_max_mm") is None):
-        c_match = re.search(
-            r"(mindestbauh(?:ö|oe)he\s*:|minimal\s+construction\s+height\s*:|minimum\s+construction\s+height\s*:)",
+    primary_kw = re.search(
+        r"(minimale\s+installationsh(?:ö|oe)he|minimal\s+installation\s+height)\s*:?",
+        flat,
+        re.IGNORECASE,
+    )
+
+    fallback_kw = None
+    if not primary_kw:
+        fallback_kw = re.search(
+            r"(einbauh(?:ö|oe)he|bauh(?:ö|oe)he|aufbauh(?:ö|oe)he|"
+            r"mindestbauh(?:ö|oe)he|minimum\s+construction\s+height|minimal\s+construction\s+height)\s*:?",
             flat,
             re.IGNORECASE,
         )
-        if c_match:
-            seg_start = c_match.end()
-            seg_end = min(len(flat), seg_start + 160)
-            seg = flat[seg_start:seg_end]
-            mm = re.search(r"(\d{1,3})\s*mm", seg, re.IGNORECASE)
-            if mm:
-                v = int(mm.group(1))
-                if 1 <= v <= 300:
-                    res["height_adj_min_mm"] = v
-                    res["height_adj_max_mm"] = v
-                    ev_lo = max(0, c_match.start() - 20)
-                    ev_hi = min(len(flat), seg_end)
-                    res["evidence"].append(("Installation/Construction height (mm)", flat[ev_lo:ev_hi], src))
 
-    # Last fallback: trap seal height
-    if res.get("height_adj_min_mm") is None or res.get("height_adj_max_mm") is None:
-        trap_match = re.search(r"(sperrwasserh(?:ö|oe)he|water\s+seal\s+height)\s*:?", flat, re.IGNORECASE)
-        if trap_match:
-            seg_start = trap_match.end()
-            seg_end = min(len(flat), seg_start + 160)
-            seg = flat[seg_start:seg_end]
-            mm = re.search(r"(\d{1,3})\s*mm", seg, re.IGNORECASE)
-            if mm:
-                v = int(mm.group(1))
-                if 1 <= v <= 120:
-                    res["height_adj_min_mm"] = v
-                    res["height_adj_max_mm"] = v
-                    ev_lo = max(0, trap_match.start() - 20)
-                    ev_hi = min(len(flat), seg_end)
-                    res["evidence"].append(("Trap seal height used as height fallback", flat[ev_lo:ev_hi], src))
+    selected = primary_kw or fallback_kw
+    if selected:
+        parsed = _extract_height_after_keyword(selected)
+        if parsed:
+            h_min, h_max, snippet = parsed
+            cur_max = res.get("height_adj_max_mm")
+            should_set = (
+                res.get("height_adj_min_mm") is None
+                or cur_max is None
+                or (isinstance(cur_max, (int, float)) and cur_max <= 30)
+            )
+            if should_set:
+                res["height_adj_min_mm"] = h_min
+                res["height_adj_max_mm"] = h_max
+            res["evidence"].append(("Installation/Construction height (mm)", snippet, src))
+
+    # Trap seal can be useful context, but MUST NOT populate height_adj_*
+    trap_match = re.search(r"(sperrwasserh(?:ö|oe)he|water\s+seal\s+height)\s*:?", flat, re.IGNORECASE)
+    if trap_match:
+        seg_start = trap_match.end()
+        seg_end = min(len(flat), seg_start + 220)
+        seg = flat[seg_start:seg_end]
+        mm = re.search(r"(\d{1,3})\s*mm", seg, re.IGNORECASE)
+        if mm:
+            v = int(mm.group(1))
+            if 1 <= v <= 120:
+                ev_lo = max(0, trap_match.start() - 20)
+                ev_hi = min(len(flat), seg_end)
+                res["evidence"].append(("Trap seal height (mm)", flat[ev_lo:ev_hi], src))
 
     # Outlet DN (pokud explicitně v textu)
     if res.get("outlet_dn") is None:
