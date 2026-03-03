@@ -48,3 +48,30 @@ streamlit run app.py
 - `scoring.py` – scoring logic
 - `excel_export.py` – Excel export
 - `pdf_text.py` – PDF parsing
+---
+
+## Validation
+
+Pro kontrolu konzistence exportu použijte skript:
+
+```bash
+python scripts/validate_export.py --xlsx data/runs/<run_id>/outputs/benchmark_output.xlsx
+```
+
+Bez argumentu `--xlsx` skript automaticky vyhledá nejnovější export v `data/runs/*/outputs/*.xlsx` a zkontroluje invariants:
+
+```bash
+python scripts/validate_export.py
+```
+
+Skript vždy vypíše `PASS` nebo `FAIL` a vrací exit code `0` (PASS) / `1` (FAIL).
+
+
+## Scoring note
+
+Finální skóre nyní obsahuje i `system_score` (kompletnost systému):
+- `finish_set`: `1.0` pokud existují BOM options, jinak `0.5`
+- `drain`: `1.0`
+- ostatní: `0.5`
+
+Vzorec: `final_score = 0.7*param_score + 0.2*system_score + 0.1*equiv_score` (pokud není v konfiguraci přepsáno).
