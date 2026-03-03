@@ -156,35 +156,10 @@ def validate_export(xlsx_path: Path) -> None:
             warn(f"Hansgrohe height missing {miss_hg_height:.1f}% (další krok: parsing výšek z PDF).")
 
     if "height_adj_max_mm" in hg_prod.columns:
-        suspicious_low = hg_prod[hg_prod["height_adj_max_mm"].notna() & (hg_prod["height_adj_max_mm"] <= 30)]
-        if not suspicious_low.empty:
-            cols = [
-                c
-                for c in ["product_id", "product_url", "height_adj_min_mm", "height_adj_max_mm"]
-                if c in suspicious_low.columns
-            ]
-            warn(
-                "Hansgrohe suspicious height <= 30 mm: "
-                f"{suspicious_low[cols].head(20).to_dict(orient='records')}"
-            )
-
-    if "height_adj_min_mm" in hg_prod.columns and "height_adj_max_mm" in hg_prod.columns:
-        suspicious_mixed = hg_prod[
-            hg_prod["height_adj_min_mm"].notna()
-            & hg_prod["height_adj_max_mm"].notna()
-            & (hg_prod["height_adj_min_mm"] <= 20)
-            & (hg_prod["height_adj_max_mm"] >= 50)
-        ]
-        if not suspicious_mixed.empty:
-            cols = [
-                c
-                for c in ["product_id", "product_url", "height_adj_min_mm", "height_adj_max_mm"]
-                if c in suspicious_mixed.columns
-            ]
-            warn(
-                "Hansgrohe suspicious mixed height (tile depth + install height): "
-                f"{suspicious_mixed[cols].head(20).to_dict(orient='records')}"
-            )
+        suspicious = hg_prod[hg_prod["height_adj_max_mm"].notna() & (hg_prod["height_adj_max_mm"] <= 30)]
+        if not suspicious.empty:
+            cols = [c for c in ["product_id", "product_url", "height_adj_max_mm"] if c in suspicious.columns]
+            warn(f"Hansgrohe suspicious low heights (<=30 mm): {suspicious[cols].head(20).to_dict(orient='records')}")
 
 
 def parse_args() -> argparse.Namespace:
