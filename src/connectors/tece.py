@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
+import gzip
 import json
 import re
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
 
+from ..flowrate import select_flow_rate
+from ..pdf_text import extract_pdf_text_from_url
 
+
+BASE = "https://www.tece.com"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -16,18 +21,12 @@ HEADERS = {
     "Connection": "keep-alive",
 }
 
-PRODUCT_URL_RE = re.compile(r"https?://[^\s\"'>]*/PR/(\d+)/[^\s\"'>]*index\.xhtml", re.IGNORECASE)
-LENGTH_RE = re.compile(r"(\d{3,4})\s*mm", re.IGNORECASE)
-HEIGHT_MM_RE = re.compile(r"(\d{1,3})\s*mm", re.IGNORECASE)
+KEYWORDS = ["drain", "shower-channel", "duschrinne", "tecedrainline", "tecedrainprofile"]
+_LOC_RE = re.compile(r"<loc>(.*?)</loc>", re.IGNORECASE | re.DOTALL)
 
-SEED_URLS = [
-    "https://productdaten.tece.de/PR/601202/index.xhtml",
-    "https://productdaten.tece.de/PR/601201/index.xhtml",
-    "https://productdaten.tece.de/PR/601200/index.xhtml",
-    "https://productdaten.tece.de/PR/671200/index.xhtml",
-]
 
-FLOW_SOURCE_URL = "https://www.tece.com/de/entwaesserungstechnik/duschrinne-tecedrainline/ablaeufe-zubehoer"
+def _abs(href: str, base_url: str) -> str:
+    return urljoin(base_url, href or "")
 
 
 def _safe_get_text(url: str, timeout: int = 35) -> Tuple[Optional[int], str, str, str]:
@@ -38,213 +37,154 @@ def _safe_get_text(url: str, timeout: int = 35) -> Tuple[Optional[int], str, str
         return None, url, "", f"{type(e).__name__}: {e}"
 
 
+def _safe_get_bytes(url: str, timeout: int = 45) -> Tuple[Optional[int], str, bytes, str]:
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=timeout, allow_redirects=True)
+        return r.status_code, str(r.url), (r.content or b""), ""
+    except Exception as e:
+        return None, url, b"", f"{type(e).__name__}: {e}"
+
+
 def _clean_text(s: str) -> str:
     return " ".join((s or "").split())
 
 
-def _extract_product_links(html: str, base_url: str) -> List[str]:
+def _robots_sitemaps(base_url: str) -> List[str]:
+    st, _, txt, _ = _safe_get_text(base_url.rstrip("/") + "/robots.txt", timeout=25)
+    if st != 200 or not txt:
+        return [base_url.rstrip("/") + "/sitemap.xml"]
+
+    out: List[str] = []
+    for line in txt.splitlines():
+        if line.lower().startswith("sitemap:"):
+            u = line.split(":", 1)[1].strip()
+            if u.startswith("http"):
+                out.append(u)
+    out = list(dict.fromkeys(out))
+    return out or [base_url.rstrip("/") + "/sitemap.xml"]
+
+
+def _extract_sitemap_urls(payload: bytes) -> Tuple[List[str], bool]:
+    if not payload:
+        return [], False
+    if payload[:2] == b"\x1f\x8b":
+        try:
+            payload = gzip.decompress(payload)
+        except Exception:
+            return [], False
+
+    txt = payload.decode("utf-8", errors="ignore").strip()
+    if not txt:
+        return [], False
+
+    if "<" not in txt[:200] and "http" in txt:
+        urls = [u.strip() for u in re.split(r"\s+", txt) if u.strip().startswith("http")]
+        xmlish = sum(1 for u in urls if u.lower().endswith((".xml", ".xml.gz", ".gz")))
+        is_index = (xmlish >= max(1, int(0.6 * len(urls)))) if urls else False
+        return urls, is_index
+
+    locs = [m.group(1).strip() for m in _LOC_RE.finditer(txt) if m.group(1).strip()]
+    if not locs:
+        return [], False
+
+    is_index = "<sitemapindex" in txt.lower()
+    if not is_index:
+        xmlish = sum(1 for u in locs if u.lower().endswith((".xml", ".xml.gz", ".gz")))
+        is_index = xmlish >= max(1, int(0.6 * len(locs)))
+    return locs, is_index
+
+
+def _crawl_sitemaps(start_sitemaps: List[str], max_sitemaps: int = 250, max_pages: int = 200000) -> Tuple[List[str], List[Dict[str, Any]]]:
+    seen = set()
+    queue = list(start_sitemaps)
+    pages: List[str] = []
+    debug: List[Dict[str, Any]] = []
+
+    while queue and len(seen) < max_sitemaps and len(pages) < max_pages:
+        sm = queue.pop(0)
+        if sm in seen:
+            continue
+        seen.add(sm)
+
+        st, final, body, err = _safe_get_bytes(sm, timeout=45)
+        if st != 200 or not body:
+            debug.append({"site": "tece", "seed_url": sm, "status_code": st, "final_url": final, "error": err, "candidates_found": 0, "method": "sitemap", "is_index": None})
+            continue
+
+        urls, is_index = _extract_sitemap_urls(body)
+        debug.append({"site": "tece", "seed_url": sm, "status_code": st, "final_url": final, "error": err, "candidates_found": len(urls), "method": "sitemap", "is_index": bool(is_index)})
+
+        if is_index:
+            for u in urls:
+                if u not in seen:
+                    queue.append(u)
+        else:
+            pages.extend(urls)
+
+    return list(dict.fromkeys(pages)), debug
+
+
+def _find_pdf_links(html: str, base_url: str) -> List[str]:
     if not html:
         return []
-
     soup = BeautifulSoup(html.replace("\\/", "/"), "lxml")
-    links: List[str] = []
-
-    for a in soup.select("a[href]"):
-        href = (a.get("href") or "").strip()
-        text = _clean_text(a.get_text(" ", strip=True)).lower()
-        is_variant = ("varianten" in text) or ("alle produkte" in text)
-
-        target = urljoin(base_url, href)
-        if PRODUCT_URL_RE.search(target):
-            links.append(target)
-            continue
-
-        if is_variant:
-            # variant/index pages can link to more product pages; include for BFS traversal
-            links.append(target)
-
-    # regex fallback on raw html
-    for m in PRODUCT_URL_RE.finditer(html.replace("\\/", "/")):
-        links.append(m.group(0))
-
-    return list(dict.fromkeys(links))
+    pdfs = []
+    for a in soup.select("a[href*='.pdf']"):
+        href = a.get("href") or ""
+        if ".pdf" in href.lower():
+            pdfs.append(_abs(href, base_url))
+    return list(dict.fromkeys(pdfs))
 
 
-def _extract_title_text(html: str) -> str:
-    soup = BeautifulSoup(html, "lxml")
-    for sel in ["h1", "title", "h2"]:
-        n = soup.select_one(sel)
-        if n:
-            txt = _clean_text(n.get_text(" ", strip=True))
-            if txt:
-                return txt
-    return _clean_text(soup.get_text(" ", strip=True)[:400])
-
-
-def _extract_length_from_text(name: str) -> Optional[int]:
+def _extract_height_mm(text: str) -> Tuple[Optional[int], Optional[int], Optional[str]]:
+    t = _clean_text(text)
+    m = re.search(r"(installation height|einbauh(?:ö|oe)he|bauh(?:ö|oe)he|mindestbauh(?:ö|oe)he)\s*:?", t, re.IGNORECASE)
+    if not m:
+        return None, None, None
+    seg = t[m.end(): min(len(t), m.end() + 220)]
     vals = []
-    for m in LENGTH_RE.finditer(name or ""):
-        try:
-            v = int(m.group(1))
-            if 300 <= v <= 3000:
-                vals.append(v)
-        except Exception:
-            continue
+    for vm in re.finditer(r"(\d{1,3})\s*mm", seg, re.IGNORECASE):
+        v = int(vm.group(1))
+        if 1 <= v <= 300:
+            vals.append(v)
+        if len(vals) >= 2:
+            break
     if not vals:
-        return None
-    return vals[0]
+        return None, None, None
+    hmin = vals[0]
+    hmax = vals[1] if len(vals) > 1 else vals[0]
+    if hmax < hmin:
+        hmin, hmax = hmax, hmin
+    return hmin, hmax, t[max(0, m.start() - 20):min(len(t), m.end() + 220)]
 
 
 def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
-    min_len = max(0, int(target_length_mm) - int(tolerance_mm))
-    max_len = int(target_length_mm) + int(tolerance_mm)
-
-    debug: List[Dict[str, Any]] = []
-    queue = list(SEED_URLS)
-    seen = set()
-    product_pages: List[str] = []
-
-    while queue and len(seen) < 300:
-        url = queue.pop(0)
-        if url in seen:
-            continue
-        seen.add(url)
-
-        st, final, html, err = _safe_get_text(url, timeout=30)
-        debug.append({
-            "site": "tece",
-            "seed_url": url,
-            "status_code": st,
-            "final_url": final,
-            "error": err,
-            "candidates_found": 0,
-            "method": "seed_bfs",
-            "is_index": None,
-        })
-        if st != 200 or not html:
-            continue
-
-        # collect PR product pages and variant links
-        links = _extract_product_links(html, final)
-        for lk in links:
-            if PRODUCT_URL_RE.search(lk):
-                product_pages.append(lk)
-            if "productdaten.tece.de" in lk and lk not in seen and len(queue) < 500:
-                queue.append(lk)
-
-        # page itself can be a product page
-        if PRODUCT_URL_RE.search(final):
-            product_pages.append(final)
+    _ = target_length_mm, tolerance_mm
+    sitemaps = _robots_sitemaps(BASE)
+    pages, debug = _crawl_sitemaps(sitemaps)
 
     out: List[Dict[str, Any]] = []
-    for u in list(dict.fromkeys(product_pages)):
-        st, final, html, err = _safe_get_text(u, timeout=25)
-        debug.append({
-            "site": "tece",
-            "seed_url": u,
-            "status_code": st,
-            "final_url": final,
-            "error": err,
-            "candidates_found": 0,
-            "method": "product_filter",
-            "is_index": None,
-        })
-        if st != 200 or not html:
+    for u in pages:
+        ul = (u or "").lower()
+        if not u.startswith("http"):
             continue
-
-        name = _extract_title_text(html)
-        length_mm = _extract_length_from_text(name)
-        if length_mm is None or not (min_len <= length_mm <= max_len):
+        if not any(k in ul for k in KEYWORDS):
+            continue
+        if any(k in ul for k in ["download", ".pdf", "service", "news"]):
             continue
 
         out.append({
             "manufacturer": "tece",
-            "product_family": "TECEdrain",
-            "product_name": name,
-            "product_url": final,
-            "sources": final,
+            "product_family": "Drain",
+            "product_name": u.split("/")[-1].replace("-", " "),
+            "product_url": u,
+            "sources": u,
             "candidate_type": "drain",
             "complete_system": "yes",
-            "selected_length_mm": int(target_length_mm),
-            "length_mode": "title",
-            "length_delta_mm": length_mm - int(target_length_mm),
         })
 
+    debug.append({"site": "tece", "seed_url": BASE + "/sitemap.xml", "status_code": 200 if out else None, "final_url": BASE + "/sitemap.xml", "error": "" if out else "No candidates after keyword filters.", "candidates_found": len(out), "method": "final", "is_index": None})
     return out, debug
-
-
-def _extract_height_from_product_html(html: str) -> Tuple[Optional[int], Optional[int], Optional[str]]:
-    soup = BeautifulSoup(html, "lxml")
-
-    # Find block headed by "Bauhöhe bis OKFF (je nach Ablauf)"
-    heading = None
-    for n in soup.find_all(["h1", "h2", "h3", "h4", "h5", "strong", "p", "div", "span", "th", "td"]):
-        txt = _clean_text(n.get_text(" ", strip=True))
-        if "bauhöhe bis okff" in txt.lower() and "ablauf" in txt.lower():
-            heading = n
-            break
-
-    mm_vals: List[int] = []
-    snippet = None
-
-    if heading is not None:
-        parts = [_clean_text(heading.get_text(" ", strip=True))]
-        # Prefer list items right after heading
-        cur = heading
-        for _ in range(8):
-            cur = cur.find_next()
-            if cur is None:
-                break
-            t = _clean_text(cur.get_text(" ", strip=True))
-            if not t:
-                continue
-            parts.append(t)
-            if cur.name in {"li", "td", "p"}:
-                for m in HEIGHT_MM_RE.finditer(t):
-                    v = int(m.group(1))
-                    if 1 <= v <= 300:
-                        mm_vals.append(v)
-            if len(mm_vals) >= 6:
-                break
-        snippet = " | ".join(parts)[:350]
-
-    # fallback text segment if list extraction missed
-    if not mm_vals:
-        flat = _clean_text(soup.get_text(" ", strip=True))
-        m = re.search(r"bauhöhe\s+bis\s+okff\s*\(je\s+nach\s+ablauf\)", flat, re.IGNORECASE)
-        if m:
-            seg = flat[m.end(): min(len(flat), m.end() + 500)]
-            snippet = flat[max(0, m.start() - 20): min(len(flat), m.end() + 300)]
-            for mm in HEIGHT_MM_RE.finditer(seg):
-                v = int(mm.group(1))
-                if 1 <= v <= 300:
-                    mm_vals.append(v)
-
-    if not mm_vals:
-        return None, None, None
-
-    return min(mm_vals), max(mm_vals), snippet
-
-
-def _extract_flow_options_from_official_page() -> Tuple[Optional[List[float]], Optional[str]]:
-    st, final, html, _ = _safe_get_text(FLOW_SOURCE_URL, timeout=35)
-    if st != 200 or not html:
-        return None, final
-
-    flat = _clean_text(BeautifulSoup(html, "lxml").get_text(" ", strip=True))
-    vals: List[float] = []
-    for m in re.finditer(r"leistung\s*(\d+[\.,]\d+)\s*l\s*/\s*s", flat, re.IGNORECASE):
-        try:
-            v = float(m.group(1).replace(",", "."))
-            if 0.05 <= v <= 5.0:
-                vals.append(round(v, 4))
-        except Exception:
-            continue
-
-    vals = sorted(set(vals))
-    if not vals:
-        return None, final
-    return vals, final
 
 
 def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
@@ -277,28 +217,80 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
     st, final, html, err = _safe_get_text(src, timeout=35)
     res["evidence"].append(("HTML fetch", f"status={st} err={err}".strip(), final))
 
+    page_text = ""
+    pdf_links: List[str] = []
     if st == 200 and html:
-        hmin, hmax, hsnip = _extract_height_from_product_html(html)
-        if hmin is not None and hmax is not None:
-            res["height_adj_min_mm"] = hmin
-            res["height_adj_max_mm"] = hmax
-            if hsnip:
-                res["evidence"].append(("Installation/Construction height (mm)", hsnip, final))
+        soup = BeautifulSoup(html, "lxml")
+        page_text = soup.get_text(" ", strip=True) or ""
+        pdf_links = _find_pdf_links(html, final)
 
-    # DN fixed MVP assumption with explicit evidence source as requested
-    res["outlet_dn"] = "DN50"
-    res["outlet_dn_default"] = "DN50"
-    res["outlet_dn_options_json"] = json.dumps(["DN50"], ensure_ascii=False)
-    res["evidence"].append(("Outlet DN", "DN50", FLOW_SOURCE_URL))
+    # PDF first
+    for pdf_url in (pdf_links or [])[:3]:
+        pdf_text, pdf_status = extract_pdf_text_from_url(pdf_url, headers=HEADERS)
+        res["evidence"].append(("PDF status", pdf_status, pdf_url))
+        if not pdf_text:
+            continue
 
-    # flow options from official TECE page (no guessing)
-    opts, flow_src = _extract_flow_options_from_official_page()
-    if opts:
-        res["flow_rate_lps_options"] = json.dumps(opts, ensure_ascii=False)
-        res["flow_rate_lps"] = max(opts)
-        res["flow_rate_unit"] = "l/s"
-        res["flow_rate_status"] = "from_official_page"
-        res["evidence"].append(("Flow rate options", res["flow_rate_lps_options"], flow_src or FLOW_SOURCE_URL))
-        res["evidence"].append(("Flow rate", str(res["flow_rate_lps"]), flow_src or FLOW_SOURCE_URL))
+        if res.get("flow_rate_lps") is None:
+            lps, raw_txt, unit, status = select_flow_rate(pdf_text)
+            if lps is not None:
+                res["flow_rate_lps"] = lps
+                res["flow_rate_raw_text"] = raw_txt
+                res["flow_rate_unit"] = unit
+                res["flow_rate_status"] = status
+                if raw_txt:
+                    res["evidence"].append(("Flow rate", raw_txt, pdf_url))
+
+        if res.get("outlet_dn") is None:
+            m = re.search(r"\bDN\s*0?(\d{2,3})\b", pdf_text, re.IGNORECASE)
+            if m:
+                dn = f"DN{m.group(1)}"
+                res["outlet_dn"] = dn
+                res["outlet_dn_default"] = dn
+                res["outlet_dn_options_json"] = json.dumps([dn], ensure_ascii=False)
+                res["evidence"].append(("Outlet DN", dn, pdf_url))
+
+        if res.get("height_adj_min_mm") is None or res.get("height_adj_max_mm") is None:
+            hmin, hmax, hsnip = _extract_height_mm(pdf_text)
+            if hmin is not None and hmax is not None:
+                res["height_adj_min_mm"] = hmin
+                res["height_adj_max_mm"] = hmax
+                if hsnip:
+                    res["evidence"].append(("Installation/Construction height (mm)", hsnip, pdf_url))
+
+    # HTML fallback
+    if page_text:
+        if res.get("flow_rate_lps") is None:
+            lps, raw_txt, unit, status = select_flow_rate(page_text)
+            if lps is not None:
+                res["flow_rate_lps"] = lps
+                res["flow_rate_raw_text"] = raw_txt
+                res["flow_rate_unit"] = unit
+                res["flow_rate_status"] = status
+                if raw_txt:
+                    res["evidence"].append(("Flow rate", raw_txt, final))
+
+        if res.get("outlet_dn") is None:
+            m = re.search(r"\bDN\s*0?(\d{2,3})\b", page_text, re.IGNORECASE)
+            if m:
+                dn = f"DN{m.group(1)}"
+                res["outlet_dn"] = dn
+                res["outlet_dn_default"] = dn
+                res["outlet_dn_options_json"] = json.dumps([dn], ensure_ascii=False)
+                res["evidence"].append(("Outlet DN", dn, final))
+
+        if res.get("height_adj_min_mm") is None or res.get("height_adj_max_mm") is None:
+            hmin, hmax, hsnip = _extract_height_mm(page_text)
+            if hmin is not None and hmax is not None:
+                res["height_adj_min_mm"] = hmin
+                res["height_adj_max_mm"] = hmax
+                if hsnip:
+                    res["evidence"].append(("Installation/Construction height (mm)", hsnip, final))
+
+    if res.get("outlet_dn") is None:
+        res["outlet_dn"] = "DN50"
+        res["outlet_dn_default"] = "DN50"
+        res["outlet_dn_options_json"] = json.dumps(["DN50"], ensure_ascii=False)
+        res["evidence"].append(("Outlet DN", "DN50 (default)", src))
 
     return res
