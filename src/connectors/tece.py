@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
-import json
 import gzip
+import json
 import re
 from urllib.parse import urljoin, urlparse
 
@@ -13,6 +13,7 @@ from ..flowrate import select_flow_rate
 from ..pdf_text import extract_pdf_text_from_url
 
 
+BASE = "https://www.tece.com"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -20,13 +21,12 @@ HEADERS = {
     "Connection": "keep-alive",
 }
 
-PR_PATH_RE = re.compile(r"/PR/(\d+)/index\.xhtml(?:;jsessionid=[^/?#]+)?$", re.IGNORECASE)
-PR_LINK_RE = re.compile(r"https?://[^\s\"'>]*/PR/\d+/index\.xhtml(?:;jsessionid=[^\s\"'>]+)?", re.IGNORECASE)
-LENGTH_RE = re.compile(r"(\d{3,4})\s*mm", re.IGNORECASE)
-MM_RE = re.compile(r"(\d{1,3})\s*mm", re.IGNORECASE)
-
-BASE = "https://produktdaten.tece.de"
+KEYWORDS = ["drain", "shower-channel", "duschrinne", "tecedrainline", "tecedrainprofile"]
 _LOC_RE = re.compile(r"<loc>(.*?)</loc>", re.IGNORECASE | re.DOTALL)
+
+
+def _abs(href: str, base_url: str) -> str:
+    return urljoin(base_url, href or "")
 
 
 def _safe_get_text(url: str, timeout: int = 35) -> Tuple[Optional[int], str, str, str]:
@@ -37,31 +37,16 @@ def _safe_get_text(url: str, timeout: int = 35) -> Tuple[Optional[int], str, str
         return None, url, "", f"{type(e).__name__}: {e}"
 
 
-
-
-def _canonicalize_url(url: str) -> str:
-    """Drop query and ;jsessionid to avoid duplicate PR URLs."""
-    try:
-        p = urlparse(url or "")
-    except Exception:
-        return url
-
-    params = p.params or ""
-    if params.lower().startswith("jsessionid="):
-        params = ""
-
-    path = p.path or ""
-    path = re.sub(r";jsessionid=[^/?#]+", "", path, flags=re.IGNORECASE)
-
-    return p._replace(path=path, params=params, query="", fragment="").geturl()
-
-
 def _safe_get_bytes(url: str, timeout: int = 45) -> Tuple[Optional[int], str, bytes, str]:
     try:
         r = requests.get(url, headers=HEADERS, timeout=timeout, allow_redirects=True)
         return r.status_code, str(r.url), (r.content or b""), ""
     except Exception as e:
         return None, url, b"", f"{type(e).__name__}: {e}"
+
+
+def _clean_text(s: str) -> str:
+    return " ".join((s or "").split())
 
 
 def _robots_sitemaps(base_url: str) -> List[str]:
@@ -82,7 +67,6 @@ def _robots_sitemaps(base_url: str) -> List[str]:
 def _extract_sitemap_urls(payload: bytes) -> Tuple[List[str], bool]:
     if not payload:
         return [], False
-
     if payload[:2] == b"\x1f\x8b":
         try:
             payload = gzip.decompress(payload)
@@ -107,11 +91,10 @@ def _extract_sitemap_urls(payload: bytes) -> Tuple[List[str], bool]:
     if not is_index:
         xmlish = sum(1 for u in locs if u.lower().endswith((".xml", ".xml.gz", ".gz")))
         is_index = xmlish >= max(1, int(0.6 * len(locs)))
-
     return locs, is_index
 
 
-def _crawl_sitemaps(start_sitemaps: List[str], max_sitemaps: int = 200, max_pages: int = 300000) -> Tuple[List[str], List[Dict[str, Any]]]:
+def _crawl_sitemaps(start_sitemaps: List[str], max_sitemaps: int = 250, max_pages: int = 200000) -> Tuple[List[str], List[Dict[str, Any]]]:
     seen = set()
     queue = list(start_sitemaps)
     pages: List[str] = []
@@ -139,248 +122,69 @@ def _crawl_sitemaps(start_sitemaps: List[str], max_sitemaps: int = 200, max_page
             pages.extend(urls)
 
     return list(dict.fromkeys(pages)), debug
-def _clean_text(s: str) -> str:
-    return " ".join((s or "").split())
 
 
-def _is_allowed_tece_url(url: str) -> bool:
-    url = _canonicalize_url(url)
-    try:
-        p = urlparse(url or "")
-    except Exception:
-        return False
-    if p.netloc.lower() != "produktdaten.tece.de":
-        return False
-    pl = (p.path or "").lower()
-    if "/web/tece/de_de/tece/" not in pl:
-        return False
-    if any(x in pl for x in ["academy", "magazine", "certificates", "instructions"]):
-        return False
-    return True
-
-
-def _is_pr_product_page(url: str) -> bool:
-    url = _canonicalize_url(url)
-    try:
-        p = urlparse(url or "")
-    except Exception:
-        return False
-    return _is_allowed_tece_url(url) and (PR_PATH_RE.search(p.path + (";" + p.params if p.params else "")) is not None)
-
-
-def _extract_pr_number(url: str) -> Optional[str]:
-    url = _canonicalize_url(url)
-    try:
-        p = urlparse(url or "")
-    except Exception:
-        return None
-    m = PR_PATH_RE.search(p.path + (";" + p.params if p.params else ""))
-    return m.group(1) if m else None
-
-
-def _extract_title_text(html: str) -> str:
-    soup = BeautifulSoup(html, "lxml")
-    for sel in ["h1", "title", "h2"]:
-        n = soup.select_one(sel)
-        if n:
-            txt = _clean_text(n.get_text(" ", strip=True))
-            if txt:
-                return txt
-    return _clean_text(soup.get_text(" ", strip=True)[:500])
-
-
-def _extract_product_links(html: str, base_url: str) -> List[str]:
+def _find_pdf_links(html: str, base_url: str) -> List[str]:
     if not html:
         return []
-
     soup = BeautifulSoup(html.replace("\\/", "/"), "lxml")
-    out: List[str] = []
-
-    for a in soup.select("a[href]"):
-        href = (a.get("href") or "").strip()
-        target = _canonicalize_url(urljoin(base_url, href))
-        if not _is_allowed_tece_url(target):
-            continue
-
-        # Only keep PR product pages, but allow variant pages that can lead to PR pages.
-        txt = _clean_text(a.get_text(" ", strip=True)).lower()
-        if _is_pr_product_page(target) or ("varianten" in txt) or ("alle produkte" in txt):
-            out.append(target)
-
-    for m in PR_LINK_RE.finditer(html.replace("\\/", "/")):
-        target = _canonicalize_url(m.group(0))
-        if _is_allowed_tece_url(target):
-            out.append(target)
-
-    return list(dict.fromkeys(out))
+    pdfs = []
+    for a in soup.select("a[href*='.pdf']"):
+        href = a.get("href") or ""
+        if ".pdf" in href.lower():
+            pdfs.append(_abs(href, base_url))
+    return list(dict.fromkeys(pdfs))
 
 
-def _extract_length_from_text(name: str) -> Optional[int]:
+def _extract_height_mm(text: str) -> Tuple[Optional[int], Optional[int], Optional[str]]:
+    t = _clean_text(text)
+    m = re.search(r"(installation height|einbauh(?:ö|oe)he|bauh(?:ö|oe)he|mindestbauh(?:ö|oe)he)\s*:?", t, re.IGNORECASE)
+    if not m:
+        return None, None, None
+    seg = t[m.end(): min(len(t), m.end() + 220)]
     vals = []
-    for m in LENGTH_RE.finditer(name or ""):
-        try:
-            v = int(m.group(1))
-            if 300 <= v <= 3000:
-                vals.append(v)
-        except Exception:
-            continue
-    return vals[0] if vals else None
+    for vm in re.finditer(r"(\d{1,3})\s*mm", seg, re.IGNORECASE):
+        v = int(vm.group(1))
+        if 1 <= v <= 300:
+            vals.append(v)
+        if len(vals) >= 2:
+            break
+    if not vals:
+        return None, None, None
+    hmin = vals[0]
+    hmax = vals[1] if len(vals) > 1 else vals[0]
+    if hmax < hmin:
+        hmin, hmax = hmax, hmin
+    return hmin, hmax, t[max(0, m.start() - 20):min(len(t), m.end() + 220)]
 
 
 def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
-    min_len = max(0, int(target_length_mm) - int(tolerance_mm))
-    max_len = int(target_length_mm) + int(tolerance_mm)
-
-    start_sitemaps = _robots_sitemaps(BASE)
-    all_urls, debug = _crawl_sitemaps(start_sitemaps)
-
-    pr_urls = []
-    for raw in all_urls:
-        u = _canonicalize_url(raw)
-        if _is_pr_product_page(u):
-            pr_urls.append(u)
-
-    pr_urls = list(dict.fromkeys(pr_urls))
+    _ = target_length_mm, tolerance_mm
+    sitemaps = _robots_sitemaps(BASE)
+    pages, debug = _crawl_sitemaps(sitemaps)
 
     out: List[Dict[str, Any]] = []
-    filtered_no_length = 0
-    filtered_out_of_window = 0
-
-    for u in pr_urls:
-        if len(out) >= 300:
-            break
-
-        st, final, html, err = _safe_get_text(u, timeout=25)
-        final_c = _canonicalize_url(final)
-        if st != 200 or not html or not _is_pr_product_page(final_c):
-            debug.append({
-                "site": "tece",
-                "seed_url": u,
-                "status_code": st,
-                "final_url": final_c,
-                "error": err,
-                "candidates_found": 0,
-                "candidates_accepted": 0,
-                "method": "product_filter",
-                "is_index": None,
-            })
+    for u in pages:
+        ul = (u or "").lower()
+        if not u.startswith("http"):
             continue
-
-        name = _extract_title_text(html)
-        length_mm = _extract_length_from_text(name)
-        if length_mm is None:
-            filtered_no_length += 1
+        if not any(k in ul for k in KEYWORDS):
             continue
-        if not (min_len <= length_mm <= max_len):
-            filtered_out_of_window += 1
-            continue
-
-        pr_no = _extract_pr_number(final_c)
-        if not pr_no:
+        if any(k in ul for k in ["download", ".pdf", "service", "news"]):
             continue
 
         out.append({
             "manufacturer": "tece",
-            "product_id": f"tece-{pr_no}",
-            "product_family": "TECEdrain",
-            "product_name": name,
-            "product_url": final_c,
-            "sources": final_c,
+            "product_family": "Drain",
+            "product_name": u.split("/")[-1].replace("-", " "),
+            "product_url": u,
+            "sources": u,
             "candidate_type": "drain",
             "complete_system": "yes",
-            "selected_length_mm": int(target_length_mm),
-            "length_mode": "title",
-            "length_delta_mm": length_mm - int(target_length_mm),
         })
 
-    debug.append({
-        "site": "tece",
-        "seed_url": "summary",
-        "status_code": 200,
-        "final_url": BASE,
-        "error": "",
-        "candidates_found": len(pr_urls),
-        "candidates_accepted": len(out),
-        "filtered_no_length": filtered_no_length,
-        "filtered_out_of_window": filtered_out_of_window,
-        "method": "final",
-        "is_index": None,
-    })
-
+    debug.append({"site": "tece", "seed_url": BASE + "/sitemap.xml", "status_code": 200 if out else None, "final_url": BASE + "/sitemap.xml", "error": "" if out else "No candidates after keyword filters.", "candidates_found": len(out), "method": "final", "is_index": None})
     return out, debug
-
-
-def _extract_height_from_product_html(html: str) -> Tuple[Optional[int], Optional[int], Optional[str]]:
-    soup = BeautifulSoup(html, "lxml")
-
-    heading = None
-    for n in soup.find_all(["h1", "h2", "h3", "h4", "h5", "strong", "p", "div", "span", "th", "td"]):
-        txt = _clean_text(n.get_text(" ", strip=True)).lower()
-        if "bauhöhe" in txt and "okff" in txt:
-            heading = n
-            break
-
-    mm_vals: List[int] = []
-    snippet = None
-
-    if heading is not None:
-        parts = [_clean_text(heading.get_text(" ", strip=True))]
-        cur = heading
-        for _ in range(14):
-            cur = cur.find_next()
-            if cur is None:
-                break
-            t = _clean_text(cur.get_text(" ", strip=True))
-            if not t:
-                continue
-            parts.append(t)
-            for m in MM_RE.finditer(t):
-                v = int(m.group(1))
-                if 1 <= v <= 300:
-                    mm_vals.append(v)
-            if len(mm_vals) >= 8:
-                break
-        snippet = " | ".join(parts)[:420]
-
-    if not mm_vals:
-        flat = _clean_text(soup.get_text(" ", strip=True))
-        m = re.search(r"bauhöhe[^\.;:]{0,120}okff[^\.;:]{0,80}", flat, re.IGNORECASE)
-        if m:
-            seg = flat[m.end(): min(len(flat), m.end() + 550)]
-            snippet = flat[max(0, m.start() - 20): min(len(flat), m.end() + 320)]
-            for mm in MM_RE.finditer(seg):
-                v = int(mm.group(1))
-                if 1 <= v <= 300:
-                    mm_vals.append(v)
-
-    if not mm_vals:
-        return None, None, None
-    return min(mm_vals), max(mm_vals), snippet
-
-
-def _find_datasheet_pdf_links(html: str, base_url: str) -> List[str]:
-    if not html:
-        return []
-    soup = BeautifulSoup(html.replace("\\/", "/"), "lxml")
-    out: List[str] = []
-
-    for a in soup.select("a[href*='.pdf']"):
-        href = (a.get("href") or "").strip()
-        txt = _clean_text(a.get_text(" ", strip=True)).lower()
-        target = _canonicalize_url(urljoin(base_url, href))
-        if ".pdf" not in target.lower():
-            continue
-        if any(k in txt for k in ["produktdaten", "datenblatt", "datasheet", "technical"]):
-            out.append(target)
-        else:
-            out.append(target)
-
-    return list(dict.fromkeys(out))
-
-
-def _extract_dn_from_text(text: str) -> Optional[str]:
-    m = re.search(r"\bDN\s*0?(\d{2,3})\b", text or "", re.IGNORECASE)
-    return f"DN{m.group(1)}" if m else None
 
 
 def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
@@ -412,20 +216,16 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
     src = (product_url or "").strip()
     st, final, html, err = _safe_get_text(src, timeout=35)
     res["evidence"].append(("HTML fetch", f"status={st} err={err}".strip(), final))
-    if st != 200 or not html:
-        return res
 
-    # height from Produktdaten HTML
-    hmin, hmax, hsnip = _extract_height_from_product_html(html)
-    if hmin is not None and hmax is not None:
-        res["height_adj_min_mm"] = hmin
-        res["height_adj_max_mm"] = hmax
-        if hsnip:
-            res["evidence"].append(("Installation/Construction height (mm)", hsnip, final))
+    page_text = ""
+    pdf_links: List[str] = []
+    if st == 200 and html:
+        soup = BeautifulSoup(html, "lxml")
+        page_text = soup.get_text(" ", strip=True) or ""
+        pdf_links = _find_pdf_links(html, final)
 
-    # flow/DN from datasheet PDF links on PR page
-    pdf_links = _find_datasheet_pdf_links(html, final)
-    for pdf_url in pdf_links[:5]:
+    # PDF first
+    for pdf_url in (pdf_links or [])[:3]:
         pdf_text, pdf_status = extract_pdf_text_from_url(pdf_url, headers=HEADERS)
         res["evidence"].append(("PDF status", pdf_status, pdf_url))
         if not pdf_text:
@@ -442,14 +242,55 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
                     res["evidence"].append(("Flow rate", raw_txt, pdf_url))
 
         if res.get("outlet_dn") is None:
-            dn = _extract_dn_from_text(pdf_text)
-            if dn:
+            m = re.search(r"\bDN\s*0?(\d{2,3})\b", pdf_text, re.IGNORECASE)
+            if m:
+                dn = f"DN{m.group(1)}"
                 res["outlet_dn"] = dn
                 res["outlet_dn_default"] = dn
                 res["outlet_dn_options_json"] = json.dumps([dn], ensure_ascii=False)
                 res["evidence"].append(("Outlet DN", dn, pdf_url))
 
-        if res.get("flow_rate_lps") is not None and res.get("outlet_dn") is not None:
-            break
+        if res.get("height_adj_min_mm") is None or res.get("height_adj_max_mm") is None:
+            hmin, hmax, hsnip = _extract_height_mm(pdf_text)
+            if hmin is not None and hmax is not None:
+                res["height_adj_min_mm"] = hmin
+                res["height_adj_max_mm"] = hmax
+                if hsnip:
+                    res["evidence"].append(("Installation/Construction height (mm)", hsnip, pdf_url))
+
+    # HTML fallback
+    if page_text:
+        if res.get("flow_rate_lps") is None:
+            lps, raw_txt, unit, status = select_flow_rate(page_text)
+            if lps is not None:
+                res["flow_rate_lps"] = lps
+                res["flow_rate_raw_text"] = raw_txt
+                res["flow_rate_unit"] = unit
+                res["flow_rate_status"] = status
+                if raw_txt:
+                    res["evidence"].append(("Flow rate", raw_txt, final))
+
+        if res.get("outlet_dn") is None:
+            m = re.search(r"\bDN\s*0?(\d{2,3})\b", page_text, re.IGNORECASE)
+            if m:
+                dn = f"DN{m.group(1)}"
+                res["outlet_dn"] = dn
+                res["outlet_dn_default"] = dn
+                res["outlet_dn_options_json"] = json.dumps([dn], ensure_ascii=False)
+                res["evidence"].append(("Outlet DN", dn, final))
+
+        if res.get("height_adj_min_mm") is None or res.get("height_adj_max_mm") is None:
+            hmin, hmax, hsnip = _extract_height_mm(page_text)
+            if hmin is not None and hmax is not None:
+                res["height_adj_min_mm"] = hmin
+                res["height_adj_max_mm"] = hmax
+                if hsnip:
+                    res["evidence"].append(("Installation/Construction height (mm)", hsnip, final))
+
+    if res.get("outlet_dn") is None:
+        res["outlet_dn"] = "DN50"
+        res["outlet_dn_default"] = "DN50"
+        res["outlet_dn_options_json"] = json.dumps(["DN50"], ensure_ascii=False)
+        res["evidence"].append(("Outlet DN", "DN50 (default)", src))
 
     return res
