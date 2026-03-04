@@ -7,6 +7,7 @@ import json
 import gzip
 import re
 from urllib.parse import unquote, urljoin, urlparse
+import hashlib
 
 import requests
 from bs4 import BeautifulSoup
@@ -26,14 +27,10 @@ PR_PATH_RE = re.compile(r"/PR/(\d+)/index\.xhtml(?:;jsessionid=[^/?#]+)?$", re.I
 PR_LINK_RE = re.compile(r"https?://[^\s\"'>]*/PR/\d+/index\.xhtml(?:;jsessionid=[^\s\"'>]+)?", re.IGNORECASE)
 LENGTH_RE = re.compile(r"(\d{3,4})\s*mm", re.IGNORECASE)
 MM_RE = re.compile(r"(\d{1,3})\s*mm", re.IGNORECASE)
-DE_TECE_PATH_RE = re.compile(r"^/web/[^/]+/de_DE/tece/.*", re.IGNORECASE)
-BASE = "https://produktdaten.tece.de"
-SEED_PR_URLS = [
-    "https://produktdaten.tece.de/web/tece/de_DE/tece/KAT03RINNEGERADE/TECEdrainline-Evo%20Duschrinne%2C%201200%20mm/%24catalogue/teceData/PR/601202/index.xhtml",
-    "https://produktdaten.tece.de/web/tece/de_DE/tece/KAT03RINNEGERADE/TECEdrainline%20Duschrinne%20gerade%201200%20mm%20mit%20Seal%20System%20Dichtband/%24catalogue/teceData/PR/601200/index.xhtml",
-    "https://produktdaten.tece.de/web/tece/de_DE/tece/KAT03RINNEGERADE/TECEdrainline%20Duschrinne%20gerade%201200%20mm%20mit%20Seal%20System%20Dichtband/%24catalogue/teceData/PR/601201/index.xhtml",
-    "https://produktdaten.tece.de/web/tece_LT/de_DE/tece/KAT03TCDRAINPROFILEDUPRO/TECEdrainprofile%20Duschprofil%2C%20geb%C3%BCrstet%2C%201200%20mm/%24catalogue/teceData/PR/671200/index.xhtml",
-]
+TECE_COM_BASE = "https://www.tece.com"
+TECE_INCLUDE = ("entwaesserungstechnik", "dusch", "drain", "drainline", "drainprofile")
+TECE_EXCLUDE = ("academy", "service", "servicios", "dokumente", "download", "presse", "magazin", "montage", "anleitung", "instruk", "instruction", "manual", "datenblatt", "zubehoer", ".pdf")
+PRODUCT_HINTS = ("tecedrainline", "tecedrainprofile", "duschrinne", "duschprofil")
 _LOC_RE = re.compile(r"<loc>(.*?)</loc>", re.IGNORECASE | re.DOTALL)
 
 
@@ -152,38 +149,16 @@ def _clean_text(s: str) -> str:
 
 
 def _is_allowed_tece_url(url: str) -> bool:
-    url = _canonicalize_url(url)
-    try:
-        p = urlparse(url or "")
-    except Exception:
-        return False
-    if p.netloc.lower() != "produktdaten.tece.de":
-        return False
-    path_decoded = unquote(p.path or "")
-    if DE_TECE_PATH_RE.search(path_decoded) is None:
-        return False
-    if any(x in path_decoded.lower() for x in ["academy", "magazine", "certificates", "instructions"]):
-        return False
-    return True
+    return _is_tececom_de_html(url) and _passes_include_exclude(url)
 
 
 def _is_pr_product_page(url: str) -> bool:
-    url = _canonicalize_url(url)
-    try:
-        p = urlparse(url or "")
-    except Exception:
-        return False
-    path_decoded = unquote(p.path or "")
-    return _is_allowed_tece_url(url) and (PR_PATH_RE.search(path_decoded) is not None)
+    # kept for compatibility; tece.com discovery no longer relies on produktdaten PR paths
+    return _is_allowed_tece_url(url)
 
 
 def _extract_pr_number(url: str) -> Optional[str]:
-    url = _canonicalize_url(url)
-    try:
-        p = urlparse(url or "")
-    except Exception:
-        return None
-    m = PR_PATH_RE.search(unquote(p.path or ""))
+    m = re.search(r"\b(\d{6})\b", unquote(url or ""))
     return m.group(1) if m else None
 
 
@@ -202,22 +177,12 @@ def _extract_product_links(html: str, base_url: str) -> List[str]:
     if not html:
         return []
 
-    soup = BeautifulSoup(html.replace("\\/", "/"), "lxml")
+    soup = BeautifulSoup(html.replace("\/", "/"), "lxml")
     out: List[str] = []
 
     for a in soup.select("a[href]"):
         href = (a.get("href") or "").strip()
         target = _canonicalize_url(urljoin(base_url, href))
-        if not _is_allowed_tece_url(target):
-            continue
-
-        # Only keep PR product pages, but allow variant pages that can lead to PR pages.
-        txt = _clean_text(a.get_text(" ", strip=True)).lower()
-        if _is_pr_product_page(target) or ("varianten" in txt) or ("alle produkte" in txt):
-            out.append(target)
-
-    for m in PR_LINK_RE.finditer(html.replace("\\/", "/")):
-        target = _canonicalize_url(m.group(0))
         if _is_allowed_tece_url(target):
             out.append(target)
 
@@ -249,86 +214,69 @@ def _extract_length_from_text(name: str) -> Optional[int]:
     return vals[0] if vals else None
 
 
-def _discover_from_seeds(debug: List[Dict[str, Any]]) -> List[str]:
-    out: List[str] = []
+def _is_tececom_de_html(url: str) -> bool:
+    try:
+        p = urlparse(url or "")
+    except Exception:
+        return False
+    if p.netloc.lower() != "www.tece.com":
+        return False
+    path = unquote(p.path or "").lower()
+    if not path.startswith("/de/"):
+        return False
+    if path.endswith(".pdf"):
+        return False
+    return True
 
-    for seed in SEED_PR_URLS:
-        st, final, html, err = _safe_get_text(seed, timeout=25)
-        final_c = _canonicalize_url(final)
-        n_pr_links = 0
 
-        if st == 200 and html:
-            soup = BeautifulSoup(html.replace("\/", "/"), "lxml")
-            for a in soup.select("a[href]"):
-                href = (a.get("href") or "").strip()
-                if not href or "/PR/" not in href or "index.xhtml" not in href:
-                    continue
-                target = _canonicalize_url(urljoin(final_c, href))
-                if _is_pr_product_page(target):
-                    out.append(target)
-                    n_pr_links += 1
+def _passes_include_exclude(url: str) -> bool:
+    path = unquote(urlparse(url or "").path or "").lower()
+    if not any(k in path for k in TECE_INCLUDE):
+        return False
+    if any(k in path for k in TECE_EXCLUDE):
+        return False
+    return True
 
-            for m in PR_LINK_RE.finditer(html.replace("\/", "/")):
-                target = _canonicalize_url(m.group(0))
-                if _is_pr_product_page(target):
-                    out.append(target)
-                    n_pr_links += 1
 
-            if _is_pr_product_page(final_c):
-                out.append(final_c)
-                n_pr_links += 1
+def _extract_heading_text(html: str) -> str:
+    soup = BeautifulSoup(html, "lxml")
+    title = _clean_text((soup.title.get_text(" ", strip=True) if soup.title else ""))
+    h1n = soup.select_one("h1")
+    h1 = _clean_text((h1n.get_text(" ", strip=True) if h1n else ""))
+    return _clean_text(f"{title} {h1}")
 
-        debug.append({
-            "site": "tece",
-            "seed_url": seed,
-            "status_code": st,
-            "final_url": final_c,
-            "error": err if err else ("" if st == 200 else f"status={st}"),
-            "candidates_found": n_pr_links,
-            "method": "seed_fetch",
-            "is_index": None,
-        })
 
-    return list(dict.fromkeys(out))
+def _is_product_like_heading(txt: str) -> bool:
+    t = (txt or "").lower()
+    return any(h in t for h in PRODUCT_HINTS)
 
 
 def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     min_len = max(0, int(target_length_mm) - int(tolerance_mm))
     max_len = int(target_length_mm) + int(tolerance_mm)
 
-    start_sitemaps = _robots_sitemaps(BASE)
+    start_sitemaps = _robots_sitemaps(TECE_COM_BASE)
     all_urls, debug = _crawl_sitemaps(start_sitemaps)
 
-    total = len(all_urls)
-    host_filtered_urls = [_canonicalize_url(u) for u in all_urls if _is_allowed_tece_url(_canonicalize_url(u))]
-    after_host_filter = len(set(host_filtered_urls))
+    total_crawled = len(all_urls)
+    de_urls = [_canonicalize_url(u) for u in all_urls if _is_tececom_de_html(_canonicalize_url(u))]
+    de_urls = list(dict.fromkeys(de_urls))
+    after_de_filter = len(de_urls)
 
-    pr_urls = [_canonicalize_url(u) for u in host_filtered_urls if _is_pr_product_page(_canonicalize_url(u))]
-    pr_urls = list(dict.fromkeys(pr_urls))
-    after_pr_filter = len(pr_urls)
-
-    sitemap_status_ok = any((d.get("method") == "sitemap" and d.get("status_code") == 200) for d in debug)
-    sitemap_status = "ok" if sitemap_status_ok else "fail"
-    fallback_seeds_used = False
-
-    if (not sitemap_status_ok) or (not pr_urls):
-        fallback_seeds_used = True
-        seed_pr_urls = _discover_from_seeds(debug)
-        if seed_pr_urls:
-            pr_urls = list(dict.fromkeys(pr_urls + seed_pr_urls))
-            after_pr_filter = len(pr_urls)
+    scoped_urls = [_canonicalize_url(u) for u in de_urls if _passes_include_exclude(_canonicalize_url(u))]
+    scoped_urls = list(dict.fromkeys(scoped_urls))
+    after_include_exclude = len(scoped_urls)
 
     out: List[Dict[str, Any]] = []
-    filtered_no_length = 0
-    filtered_out_of_window = 0
+    after_length_filter = 0
 
-    for u in pr_urls:
+    for u in scoped_urls:
         if len(out) >= 300:
             break
 
         st, final, html, err = _safe_get_text(u, timeout=25)
         final_c = _canonicalize_url(final)
-        if st != 200 or not html or not _is_pr_product_page(final_c):
+        if st != 200 or not html or not _is_tececom_de_html(final_c):
             debug.append({
                 "site": "tece",
                 "seed_url": u,
@@ -342,24 +290,25 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             })
             continue
 
-        name = _extract_title_text(html)
-        length_mm = _extract_length_from_text(unquote(final_c)) or _extract_length_from_text(name)
-        if length_mm is None:
-            filtered_no_length += 1
-            continue
-        if not (min_len <= length_mm <= max_len):
-            filtered_out_of_window += 1
+        heading = _extract_heading_text(html)
+        if not _is_product_like_heading(heading):
             continue
 
-        pr_no = _extract_pr_number(final_c)
-        if not pr_no:
+        length_mm = _extract_length_from_text(unquote(final_c)) or _extract_length_from_text(heading)
+        if length_mm is None:
             continue
+        if not (min_len <= length_mm <= max_len):
+            continue
+        after_length_filter += 1
+
+        article_m = re.search(r"\b(\d{6})\b", heading)
+        product_id = f"tece-{article_m.group(1)}" if article_m else f"tece-{hashlib.sha1(final_c.encode('utf-8')).hexdigest()[:12]}"
 
         out.append({
             "manufacturer": "tece",
-            "product_id": f"tece-{pr_no}",
+            "product_id": product_id,
             "product_family": "TECEdrain",
-            "product_name": name,
+            "product_name": heading or final_c,
             "product_url": final_c,
             "sources": final_c,
             "candidate_type": "drain",
@@ -373,24 +322,15 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "site": "tece",
         "seed_url": "summary",
         "status_code": 200,
-        "final_url": BASE,
+        "final_url": TECE_COM_BASE,
         "error": "",
-        "total": total,
-        "after_host_filter": after_host_filter,
-        "after_pr_filter": after_pr_filter,
-        "sitemap_status": sitemap_status,
-        "total_urls_from_sitemaps": total,
-        "pr_urls_after_filters": after_pr_filter,
-        "accepted_candidates": len(out),
-        "fallback_seeds_used": "yes" if fallback_seeds_used else "no",
-        "total_urls": len(pr_urls),
-        "pr_urls_af": after_pr_filter,
-        "after_len": after_pr_filter - filtered_no_length - filtered_out_of_window,
+        "total_crawled": total_crawled,
+        "after_de_filter": after_de_filter,
+        "after_include_exclude": after_include_exclude,
+        "after_length_filter": after_length_filter,
         "final_count": len(out),
-        "candidates_found": len(pr_urls),
+        "candidates_found": len(scoped_urls),
         "candidates_accepted": len(out),
-        "filtered_no_length": filtered_no_length,
-        "filtered_out_of_window": filtered_out_of_window,
         "method": "final",
         "is_index": None,
     })
@@ -471,6 +411,41 @@ def _extract_dn_from_text(text: str) -> Optional[str]:
     return f"DN{m.group(1)}" if m else None
 
 
+
+
+def _extract_flow_from_html_text(text: str) -> Tuple[Optional[float], Optional[str]]:
+    if not text:
+        return None, None
+    m = re.search(r"leistung[^\n\r]{0,80}?([0-9]+(?:[\.,][0-9]+)?)\s*l\s*/\s*s", text, re.IGNORECASE)
+    if not m:
+        m = re.search(r"([0-9]+(?:[\.,][0-9]+)?)\s*l\s*/\s*s", text, re.IGNORECASE)
+    if not m:
+        return None, None
+    try:
+        return float(m.group(1).replace(',', '.')), m.group(0)
+    except Exception:
+        return None, None
+
+
+def _extract_height_from_text_blob(text: str) -> Tuple[Optional[int], Optional[int], Optional[str]]:
+    if not text:
+        return None, None, None
+    m = re.search(r"(einbauhöhe|bauhöhe|installationshöhe)[^\n\r\.]{0,140}", text, re.IGNORECASE)
+    if not m:
+        return None, None, None
+    start = max(0, m.start() - 20)
+    end = min(len(text), m.end() + 260)
+    snippet = text[start:end]
+    vals: List[int] = []
+    for mm in MM_RE.finditer(snippet):
+        v = int(mm.group(1))
+        if 20 <= v <= 300:
+            vals.append(v)
+    if not vals:
+        return None, None, snippet
+    return min(vals), max(vals), snippet
+
+
 def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     _ = product_url, params
     return []
@@ -503,16 +478,18 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
     if st != 200 or not html:
         return res
 
-    # height from Produktdaten HTML
-    hmin, hmax, hsnip = _extract_height_from_product_html(html)
+    full_text = _clean_text(BeautifulSoup(html, "lxml").get_text(" ", strip=True))
+    pdf_links = _find_datasheet_pdf_links(html, final)
+
+    # Height from HTML first.
+    hmin, hmax, hsnip = _extract_height_from_text_blob(full_text)
     if hmin is not None and hmax is not None:
         res["height_adj_min_mm"] = hmin
         res["height_adj_max_mm"] = hmax
         if hsnip:
-            res["evidence"].append(("Installation/Construction height (mm)", hsnip, final))
+            res["evidence"].append(("Height", hsnip[:420], final))
 
-    # flow/DN from datasheet PDF links on PR page
-    pdf_links = _find_datasheet_pdf_links(html, final)
+    # Prefer PDF for flow/DN (and height fallback).
     for pdf_url in pdf_links[:5]:
         pdf_text, pdf_status = extract_pdf_text_from_url(pdf_url, headers=HEADERS)
         res["evidence"].append(("PDF status", pdf_status, pdf_url))
@@ -526,8 +503,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
                 res["flow_rate_raw_text"] = raw_txt
                 res["flow_rate_unit"] = unit
                 res["flow_rate_status"] = status
-                if raw_txt:
-                    res["evidence"].append(("Flow rate", raw_txt, pdf_url))
+                res["evidence"].append(("Flow rate", raw_txt or f"{lps} {unit or 'l/s'}", pdf_url))
 
         if res.get("outlet_dn") is None:
             dn = _extract_dn_from_text(pdf_text)
@@ -537,7 +513,33 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
                 res["outlet_dn_options_json"] = json.dumps([dn], ensure_ascii=False)
                 res["evidence"].append(("Outlet DN", dn, pdf_url))
 
-        if res.get("flow_rate_lps") is not None and res.get("outlet_dn") is not None:
+        if res.get("height_adj_min_mm") is None:
+            phmin, phmax, phsnip = _extract_height_from_text_blob(_clean_text(pdf_text))
+            if phmin is not None and phmax is not None:
+                res["height_adj_min_mm"] = phmin
+                res["height_adj_max_mm"] = phmax
+                if phsnip:
+                    res["evidence"].append(("Height", phsnip[:420], pdf_url))
+
+        if res.get("flow_rate_lps") is not None and res.get("outlet_dn") is not None and res.get("height_adj_min_mm") is not None:
             break
 
+    # If no PDFs present, fall back to HTML for flow/DN.
+    if not pdf_links:
+        flow_html, flow_raw = _extract_flow_from_html_text(full_text)
+        if flow_html is not None:
+            res["flow_rate_lps"] = flow_html
+            res["flow_rate_raw_text"] = flow_raw
+            res["flow_rate_unit"] = "l/s"
+            res["flow_rate_status"] = "parsed_html"
+            res["evidence"].append(("Flow rate", flow_raw or f"{flow_html} l/s", final))
+
+        dn_html = _extract_dn_from_text(full_text)
+        if dn_html:
+            res["outlet_dn"] = dn_html
+            res["outlet_dn_default"] = dn_html
+            res["outlet_dn_options_json"] = json.dumps([dn_html], ensure_ascii=False)
+            res["evidence"].append(("Outlet DN", dn_html, final))
+
     return res
+
