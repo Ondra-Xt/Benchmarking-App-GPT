@@ -26,14 +26,11 @@ PR_PATH_RE = re.compile(r"/PR/(\d+)/index\.xhtml(?:;jsessionid=[^/?#]+)?$", re.I
 PR_LINK_RE = re.compile(r"https?://[^\s\"'>]*/PR/\d+/index\.xhtml(?:;jsessionid=[^\s\"'>]+)?", re.IGNORECASE)
 LENGTH_RE = re.compile(r"(\d{3,4})\s*mm", re.IGNORECASE)
 MM_RE = re.compile(r"(\d{1,3})\s*mm", re.IGNORECASE)
-DE_TECE_PATH_RE = re.compile(r"^/web/[^/]+/de_DE/tece/", re.IGNORECASE)
+DE_TECE_PATH_RE = re.compile(r"^/web/[^/]+/de_DE/tece/.*", re.IGNORECASE)
 BASE = "https://produktdaten.tece.de"
-SEED_PR_URLS = [
-    "https://produktdaten.tece.de/web/tece/de_DE/tece/produktdetails/PR/601202/index.xhtml",
-    "https://produktdaten.tece.de/web/tece/de_DE/tece/produktdetails/PR/601201/index.xhtml",
-    "https://produktdaten.tece.de/web/tece/de_DE/tece/produktdetails/PR/601200/index.xhtml",
-    "https://produktdaten.tece.de/web/tece_LT/de_DE/tece/produktdetails/PR/671200/index.xhtml",
-]
+TECE_COM_BASE = "https://www.tece.com"
+TECE_COM_INCLUDE = ("entwaesserungstechnik", "duschrinne", "drainline", "drainprofile")
+TECE_COM_EXCLUDE = ("academy", "service", "download", "presse", "magazin", "zubehoer", "datenblatt", "montage", "anleitung", ".pdf")
 _LOC_RE = re.compile(r"<loc>(.*?)</loc>", re.IGNORECASE | re.DOTALL)
 
 
@@ -249,30 +246,65 @@ def _extract_length_from_text(name: str) -> Optional[int]:
     return vals[0] if vals else None
 
 
-def _expand_pr_urls_from_seed(seed_url: str) -> List[str]:
-    st, final, html, err = _safe_get_text(seed_url, timeout=25)
-    if st != 200 or not html:
-        return []
+def _is_allowed_tececom_url(url: str) -> bool:
+    try:
+        p = urlparse(url or "")
+    except Exception:
+        return False
+    if p.netloc.lower() != "www.tece.com":
+        return False
+    path = unquote(p.path or "").lower()
+    if not path.startswith("/de/"):
+        return False
+    if not any(k in path for k in TECE_COM_INCLUDE):
+        return False
+    if any(k in path for k in TECE_COM_EXCLUDE):
+        return False
+    return True
 
-    final_c = _canonicalize_url(final)
+
+def _discover_from_tececom(max_pages: int = 80) -> Tuple[List[str], int, int, int]:
+    start_sitemaps = _robots_sitemaps(TECE_COM_BASE)
+    all_urls, _ = _crawl_sitemaps(start_sitemaps, max_sitemaps=200, max_pages=120000)
+
+    considered = 0
+    pages_fetched = 0
+    pr_links_found = 0
     out: List[str] = []
-    for a in BeautifulSoup(html.replace("\/", "/"), "lxml").select("a[href]"):
-        href = (a.get("href") or "").strip()
-        if not href or "/PR/" not in href or "index.xhtml" not in href:
+
+    tece_pages: List[str] = []
+    for u in all_urls:
+        cu = _canonicalize_url(u)
+        if _is_allowed_tececom_url(cu):
+            considered += 1
+            tece_pages.append(cu)
+
+    for page_url in tece_pages[:max_pages]:
+        st, final, html, _ = _safe_get_text(page_url, timeout=25)
+        if st != 200 or not html:
             continue
-        target = _canonicalize_url(urljoin(final_c, href))
-        if _is_pr_product_page(target):
-            out.append(target)
+        pages_fetched += 1
 
-    for m in PR_LINK_RE.finditer(html.replace("\/", "/")):
-        target = _canonicalize_url(m.group(0))
-        if _is_pr_product_page(target):
-            out.append(target)
+        final_c = _canonicalize_url(final)
+        soup = BeautifulSoup(html.replace('\/', '/'), 'lxml')
+        for a in soup.select('a[href]'):
+            href = (a.get('href') or '').strip()
+            if not href:
+                continue
+            if '/PR/' not in href or 'index.xhtml' not in href:
+                continue
+            target = _canonicalize_url(urljoin(final_c, href))
+            if _is_pr_product_page(target):
+                pr_links_found += 1
+                out.append(target)
 
-    if _is_pr_product_page(final_c):
-        out.append(final_c)
+        for m in PR_LINK_RE.finditer(html.replace('\/', '/')):
+            target = _canonicalize_url(m.group(0))
+            if _is_pr_product_page(target):
+                pr_links_found += 1
+                out.append(target)
 
-    return list(dict.fromkeys(out))
+    return list(dict.fromkeys(out)), considered, pages_fetched, pr_links_found
 
 
 def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
@@ -291,14 +323,17 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     after_pr_filter = len(pr_urls)
 
     sitemap_status_ok = any((d.get("method") == "sitemap" and d.get("status_code") == 200) for d in debug)
-    fallback_seeds_used = False
-    if (not all_urls) or (not sitemap_status_ok) or (not pr_urls):
-        fallback_seeds_used = True
-        seed_pr_urls: List[str] = []
-        for seed in SEED_PR_URLS:
-            seed_pr_urls.extend(_expand_pr_urls_from_seed(seed))
-        if seed_pr_urls:
-            pr_urls = list(dict.fromkeys(pr_urls + seed_pr_urls))
+    sitemap_status = "ok" if sitemap_status_ok else "fail"
+    fallback_used = False
+    total_tececom_pages_considered = 0
+    pages_fetched = 0
+    pr_links_found = 0
+
+    if (not sitemap_status_ok) or (not pr_urls):
+        fallback_used = True
+        fallback_pr_urls, total_tececom_pages_considered, pages_fetched, pr_links_found = _discover_from_tececom(max_pages=80)
+        if fallback_pr_urls:
+            pr_urls = list(dict.fromkeys(pr_urls + fallback_pr_urls))
             after_pr_filter = len(pr_urls)
 
     out: List[Dict[str, Any]] = []
@@ -361,10 +396,14 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "total": total,
         "after_host_filter": after_host_filter,
         "after_pr_filter": after_pr_filter,
+        "sitemap_status": sitemap_status,
         "total_urls_from_sitemaps": total,
+        "total_tececom_pages_considered": total_tececom_pages_considered,
+        "pages_fetched": pages_fetched,
+        "pr_links_found": pr_links_found,
         "pr_urls_after_filters": after_pr_filter,
         "accepted_candidates": len(out),
-        "fallback_seeds_used": "yes" if fallback_seeds_used else "no",
+        "fallback_used": "yes" if fallback_used else "no",
         "after_length_filter": after_pr_filter - filtered_no_length,
         "final_count": len(out),
         "candidates_found": len(pr_urls),
