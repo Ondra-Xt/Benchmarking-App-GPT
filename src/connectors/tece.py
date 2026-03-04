@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import json
 import gzip
 import re
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -26,6 +26,7 @@ PR_PATH_RE = re.compile(r"/PR/(\d+)/index\.xhtml(?:;jsessionid=[^/?#]+)?$", re.I
 PR_LINK_RE = re.compile(r"https?://[^\s\"'>]*/PR/\d+/index\.xhtml(?:;jsessionid=[^\s\"'>]+)?", re.IGNORECASE)
 LENGTH_RE = re.compile(r"(\d{3,4})\s*mm", re.IGNORECASE)
 MM_RE = re.compile(r"(\d{1,3})\s*mm", re.IGNORECASE)
+DE_PR_PATH_RE = re.compile(r"/web/[^/]+/de_DE/tece/.*/PR/(\d+)/index\.xhtml$", re.IGNORECASE)
 
 BASE = "https://produktdaten.tece.de"
 _LOC_RE = re.compile(r"<loc>(.*?)</loc>", re.IGNORECASE | re.DOTALL)
@@ -153,10 +154,8 @@ def _is_allowed_tece_url(url: str) -> bool:
         return False
     if p.netloc.lower() != "produktdaten.tece.de":
         return False
-    pl = (p.path or "").lower()
-    if "/web/tece/de_de/tece/" not in pl:
-        return False
-    if any(x in pl for x in ["academy", "magazine", "certificates", "instructions"]):
+    path_decoded = unquote(p.path or "")
+    if any(x in path_decoded.lower() for x in ["academy", "magazine", "certificates", "instructions"]):
         return False
     return True
 
@@ -167,7 +166,8 @@ def _is_pr_product_page(url: str) -> bool:
         p = urlparse(url or "")
     except Exception:
         return False
-    return _is_allowed_tece_url(url) and (PR_PATH_RE.search(p.path + (";" + p.params if p.params else "")) is not None)
+    path_decoded = unquote(p.path or "")
+    return _is_allowed_tece_url(url) and (DE_PR_PATH_RE.search(path_decoded) is not None)
 
 
 def _extract_pr_number(url: str) -> Optional[str]:
@@ -176,7 +176,7 @@ def _extract_pr_number(url: str) -> Optional[str]:
         p = urlparse(url or "")
     except Exception:
         return None
-    m = PR_PATH_RE.search(p.path + (";" + p.params if p.params else ""))
+    m = DE_PR_PATH_RE.search(unquote(p.path or ""))
     return m.group(1) if m else None
 
 
@@ -217,6 +217,19 @@ def _extract_product_links(html: str, base_url: str) -> List[str]:
     return list(dict.fromkeys(out))
 
 
+def _extract_length_from_url(url: str) -> Optional[int]:
+    path_decoded = unquote(urlparse(url or "").path or "")
+    vals = []
+    for m in LENGTH_RE.finditer(path_decoded):
+        try:
+            v = int(m.group(1))
+            if 300 <= v <= 3000:
+                vals.append(v)
+        except Exception:
+            continue
+    return vals[0] if vals else None
+
+
 def _extract_length_from_text(name: str) -> Optional[int]:
     vals = []
     for m in LENGTH_RE.finditer(name or ""):
@@ -236,13 +249,13 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     start_sitemaps = _robots_sitemaps(BASE)
     all_urls, debug = _crawl_sitemaps(start_sitemaps)
 
-    pr_urls = []
-    for raw in all_urls:
-        u = _canonicalize_url(raw)
-        if _is_pr_product_page(u):
-            pr_urls.append(u)
+    total = len(all_urls)
+    host_filtered_urls = [_canonicalize_url(u) for u in all_urls if _is_allowed_tece_url(_canonicalize_url(u))]
+    after_host_filter = len(set(host_filtered_urls))
 
+    pr_urls = [_canonicalize_url(u) for u in host_filtered_urls if _is_pr_product_page(_canonicalize_url(u))]
     pr_urls = list(dict.fromkeys(pr_urls))
+    after_pr_filter = len(pr_urls)
 
     out: List[Dict[str, Any]] = []
     filtered_no_length = 0
@@ -269,7 +282,9 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             continue
 
         name = _extract_title_text(html)
-        length_mm = _extract_length_from_text(name)
+        length_mm = _extract_length_from_url(final_c)
+        if length_mm is None:
+            length_mm = _extract_length_from_text(name)
         if length_mm is None:
             filtered_no_length += 1
             continue
@@ -301,6 +316,11 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "status_code": 200,
         "final_url": BASE,
         "error": "",
+        "total": total,
+        "after_host_filter": after_host_filter,
+        "after_pr_filter": after_pr_filter,
+        "after_length_filter": after_pr_filter - filtered_no_length,
+        "final_count": len(out),
         "candidates_found": len(pr_urls),
         "candidates_accepted": len(out),
         "filtered_no_length": filtered_no_length,
