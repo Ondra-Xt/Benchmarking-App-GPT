@@ -2,6 +2,9 @@
 
 Benchmarking tool for shower drain systems (Dallmer, Hansgrohe, TECE, etc.).
 
+TECE MVP konektor je postavený na `productdaten.tece.de` (German locale `/web/tece/de_DE/`), seed PR stránkách a datasheet PDF odkazech na PR produktových stránkách.
+
+
 ---
 
 ## Setup (Windows)
@@ -65,6 +68,10 @@ python scripts/validate_export.py
 ```
 
 Skript vždy vypíše `PASS` nebo `FAIL` a vrací exit code `0` (PASS) / `1` (FAIL).
+
+Skript navíc vypisuje `WARN` pro podezřelé hodnoty výšek (`height_adj_*`) v sheetech `Products` i `Components` (např. velmi nízké max výšky nebo kombinace tile-depth + instalační výšky).
+
+Pokud v `Products` nebo `Components` chybí `height_adj_min_mm` nebo `height_adj_max_mm`, validátor vypíše seznam dotčených řádků (manufacturer, product_id, candidate_type, product_url).
 
 
 ## Scoring note
