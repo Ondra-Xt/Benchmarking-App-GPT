@@ -26,10 +26,13 @@ PR_PATH_RE = re.compile(r"/PR/(\d+)/index\.xhtml(?:;jsessionid=[^/?#]+)?$", re.I
 PR_LINK_RE = re.compile(r"https?://[^\s\"'>]*/PR/\d+/index\.xhtml(?:;jsessionid=[^\s\"'>]+)?", re.IGNORECASE)
 LENGTH_RE = re.compile(r"(\d{3,4})\s*mm", re.IGNORECASE)
 MM_RE = re.compile(r"(\d{1,3})\s*mm", re.IGNORECASE)
-DE_PR_PATH_RE = re.compile(r"/web/[^/]+/de_DE/tece/.*/PR/(\d+)/index\.xhtml$", re.IGNORECASE)
-DE_TECE_PATH_RE = re.compile(r"^/web/[^/]+/de_DE/tece/", re.IGNORECASE)
-
 BASE = "https://produktdaten.tece.de"
+SEED_PR_URLS = [
+    "https://produktdaten.tece.de/web/tece/de_DE/tece/produktdetails/PR/601202/index.xhtml",
+    "https://produktdaten.tece.de/web/tece/de_DE/tece/produktdetails/PR/601201/index.xhtml",
+    "https://produktdaten.tece.de/web/tece/de_DE/tece/produktdetails/PR/601200/index.xhtml",
+    "https://produktdaten.tece.de/web/tece_LT/de_DE/tece/produktdetails/PR/671200/index.xhtml",
+]
 _LOC_RE = re.compile(r"<loc>(.*?)</loc>", re.IGNORECASE | re.DOTALL)
 
 
@@ -156,7 +159,7 @@ def _is_allowed_tece_url(url: str) -> bool:
     if p.netloc.lower() != "produktdaten.tece.de":
         return False
     path_decoded = unquote(p.path or "")
-    if DE_TECE_PATH_RE.search(path_decoded) is None:
+    if "/de_DE/" not in path_decoded:
         return False
     if any(x in path_decoded.lower() for x in ["academy", "magazine", "certificates", "instructions"]):
         return False
@@ -170,7 +173,7 @@ def _is_pr_product_page(url: str) -> bool:
     except Exception:
         return False
     path_decoded = unquote(p.path or "")
-    return _is_allowed_tece_url(url) and (DE_PR_PATH_RE.search(path_decoded) is not None)
+    return _is_allowed_tece_url(url) and (PR_PATH_RE.search(path_decoded) is not None)
 
 
 def _extract_pr_number(url: str) -> Optional[str]:
@@ -179,7 +182,7 @@ def _extract_pr_number(url: str) -> Optional[str]:
         p = urlparse(url or "")
     except Exception:
         return None
-    m = DE_PR_PATH_RE.search(unquote(p.path or ""))
+    m = PR_PATH_RE.search(unquote(p.path or ""))
     return m.group(1) if m else None
 
 
@@ -245,6 +248,32 @@ def _extract_length_from_text(name: str) -> Optional[int]:
     return vals[0] if vals else None
 
 
+def _expand_pr_urls_from_seed(seed_url: str) -> List[str]:
+    st, final, html, err = _safe_get_text(seed_url, timeout=25)
+    if st != 200 or not html:
+        return []
+
+    final_c = _canonicalize_url(final)
+    out: List[str] = []
+    for a in BeautifulSoup(html.replace("\/", "/"), "lxml").select("a[href]"):
+        href = (a.get("href") or "").strip()
+        if not href:
+            continue
+        target = _canonicalize_url(urljoin(final_c, href))
+        if _is_pr_product_page(target):
+            out.append(target)
+
+    for m in PR_LINK_RE.finditer(html.replace("\/", "/")):
+        target = _canonicalize_url(m.group(0))
+        if _is_pr_product_page(target):
+            out.append(target)
+
+    if _is_pr_product_page(final_c):
+        out.append(final_c)
+
+    return list(dict.fromkeys(out))
+
+
 def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     min_len = max(0, int(target_length_mm) - int(tolerance_mm))
     max_len = int(target_length_mm) + int(tolerance_mm)
@@ -259,6 +288,17 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     pr_urls = [_canonicalize_url(u) for u in host_filtered_urls if _is_pr_product_page(_canonicalize_url(u))]
     pr_urls = list(dict.fromkeys(pr_urls))
     after_pr_filter = len(pr_urls)
+
+    sitemap_status_ok = any((d.get("method") == "sitemap" and d.get("status_code") == 200) for d in debug)
+    fallback_seeds_used = False
+    if (not all_urls) or (not sitemap_status_ok) or (not pr_urls):
+        fallback_seeds_used = True
+        seed_pr_urls: List[str] = []
+        for seed in SEED_PR_URLS:
+            seed_pr_urls.extend(_expand_pr_urls_from_seed(seed))
+        if seed_pr_urls:
+            pr_urls = list(dict.fromkeys(pr_urls + seed_pr_urls))
+            after_pr_filter = len(pr_urls)
 
     out: List[Dict[str, Any]] = []
     filtered_no_length = 0
@@ -323,6 +363,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "total_urls_from_sitemaps": total,
         "pr_urls_after_filters": after_pr_filter,
         "accepted_candidates": len(out),
+        "fallback_seeds_used": "yes" if fallback_seeds_used else "no",
         "after_length_filter": after_pr_filter - filtered_no_length,
         "final_count": len(out),
         "candidates_found": len(pr_urls),
