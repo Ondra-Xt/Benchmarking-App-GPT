@@ -26,6 +26,7 @@ PR_PATH_RE = re.compile(r"/PR/(\d+)/index\.xhtml(?:;jsessionid=[^/?#]+)?$", re.I
 PR_LINK_RE = re.compile(r"https?://[^\s\"'>]*/PR/\d+/index\.xhtml(?:;jsessionid=[^\s\"'>]+)?", re.IGNORECASE)
 LENGTH_RE = re.compile(r"(\d{3,4})\s*mm", re.IGNORECASE)
 MM_RE = re.compile(r"(\d{1,3})\s*mm", re.IGNORECASE)
+DE_TECE_PATH_RE = re.compile(r"^/web/[^/]+/de_DE/tece/", re.IGNORECASE)
 BASE = "https://produktdaten.tece.de"
 SEED_PR_URLS = [
     "https://produktdaten.tece.de/web/tece/de_DE/tece/produktdetails/PR/601202/index.xhtml",
@@ -159,7 +160,7 @@ def _is_allowed_tece_url(url: str) -> bool:
     if p.netloc.lower() != "produktdaten.tece.de":
         return False
     path_decoded = unquote(p.path or "")
-    if "/de_DE/" not in path_decoded:
+    if DE_TECE_PATH_RE.search(path_decoded) is None:
         return False
     if any(x in path_decoded.lower() for x in ["academy", "magazine", "certificates", "instructions"]):
         return False
@@ -257,7 +258,7 @@ def _expand_pr_urls_from_seed(seed_url: str) -> List[str]:
     out: List[str] = []
     for a in BeautifulSoup(html.replace("\/", "/"), "lxml").select("a[href]"):
         href = (a.get("href") or "").strip()
-        if not href:
+        if not href or "/PR/" not in href or "index.xhtml" not in href:
             continue
         target = _canonicalize_url(urljoin(final_c, href))
         if _is_pr_product_page(target):
