@@ -27,6 +27,7 @@ PR_LINK_RE = re.compile(r"https?://[^\s\"'>]*/PR/\d+/index\.xhtml(?:;jsessionid=
 LENGTH_RE = re.compile(r"(\d{3,4})\s*mm", re.IGNORECASE)
 MM_RE = re.compile(r"(\d{1,3})\s*mm", re.IGNORECASE)
 DE_PR_PATH_RE = re.compile(r"/web/[^/]+/de_DE/tece/.*/PR/(\d+)/index\.xhtml$", re.IGNORECASE)
+DE_TECE_PATH_RE = re.compile(r"^/web/[^/]+/de_DE/tece/", re.IGNORECASE)
 
 BASE = "https://produktdaten.tece.de"
 _LOC_RE = re.compile(r"<loc>(.*?)</loc>", re.IGNORECASE | re.DOTALL)
@@ -155,6 +156,8 @@ def _is_allowed_tece_url(url: str) -> bool:
     if p.netloc.lower() != "produktdaten.tece.de":
         return False
     path_decoded = unquote(p.path or "")
+    if DE_TECE_PATH_RE.search(path_decoded) is None:
+        return False
     if any(x in path_decoded.lower() for x in ["academy", "magazine", "certificates", "instructions"]):
         return False
     return True
@@ -282,9 +285,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             continue
 
         name = _extract_title_text(html)
-        length_mm = _extract_length_from_url(final_c)
-        if length_mm is None:
-            length_mm = _extract_length_from_text(name)
+        length_mm = _extract_length_from_text(unquote(final_c)) or _extract_length_from_text(name)
         if length_mm is None:
             filtered_no_length += 1
             continue
@@ -319,6 +320,9 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "total": total,
         "after_host_filter": after_host_filter,
         "after_pr_filter": after_pr_filter,
+        "total_urls_from_sitemaps": total,
+        "pr_urls_after_filters": after_pr_filter,
+        "accepted_candidates": len(out),
         "after_length_filter": after_pr_filter - filtered_no_length,
         "final_count": len(out),
         "candidates_found": len(pr_urls),
