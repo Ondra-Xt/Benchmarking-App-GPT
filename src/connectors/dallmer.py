@@ -7,7 +7,7 @@ import json
 import gzip
 import csv
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -694,6 +694,42 @@ def _extract_flow_options_json(text: str) -> Optional[str]:
     return json.dumps(opts, ensure_ascii=False) if opts else None
 
 
+
+
+def _guess_pdb_pdf_links(product_url: str) -> List[str]:
+    m = re.search(r"/(\d{6})_", product_url or "")
+    if not m:
+        return []
+
+    sku = m.group(1)
+    ul = (product_url or "").lower()
+
+    lang_variants: List[Tuple[str, str]] = []
+    if "/en/" in ul:
+        lang_variants = [("en", "EN")]
+    elif "/de/" in ul:
+        lang_variants = [("de", "DE")]
+    else:
+        lang_variants = [("en", "EN"), ("de", "DE")]
+
+    bases = [BASE_COM]
+    try:
+        pu = urlparse(product_url or "")
+        if pu.scheme and pu.netloc:
+            bases.append(f"{pu.scheme}://{pu.netloc}")
+    except Exception:
+        pass
+
+    out: List[str] = []
+    for base in list(dict.fromkeys(bases)):
+        b = base.rstrip("/")
+        for lang, lang_up in lang_variants:
+            out.append(f"{b}/default-wAssets/docs/{lang}/pdb/_{sku}_{lang_up}.pdf")
+            out.append(f"{b}/default-wAssets/docs/{lang}/pdb/{sku}_{lang_up}.pdf")
+
+    return list(dict.fromkeys(out))
+
+
 def _find_pdf_links(html: str, base_url: str) -> List[str]:
     if not html:
         return []
@@ -751,6 +787,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
 
     page_text = ""
     pdf_links: List[str] = []
+    guessed_pdf_links: List[str] = []
     if st == 200 and html:
         soup = BeautifulSoup(html.replace("\\/", "/"), "lxml")
         page_text = soup.get_text(" ", strip=True) or ""
@@ -794,10 +831,18 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
 
     # PDF only if needed (speed-up)
     need_pdf = (res.get("flow_rate_lps") is None) or (res.get("height_adj_min_mm") is None)
+    if not pdf_links and (res.get("flow_rate_lps") is None or need_pdf):
+        guessed_pdf_links = _guess_pdb_pdf_links(final)
+        pdf_links = list(guessed_pdf_links)
+
+    guessed_pdf_links_set = set(guessed_pdf_links)
     if need_pdf:
         for pdf_url in (pdf_links or [])[:3]:
             pdf_text, pdf_status = extract_pdf_text_from_url(pdf_url, headers=HEADERS)
             res["evidence"].append(("PDF status", pdf_status, pdf_url))
+            status_ok = str(pdf_status).lower().startswith("ok") or str(pdf_status).strip() == "200"
+            if status_ok and pdf_url in guessed_pdf_links_set:
+                res["evidence"].append(("PDF guess", pdf_url, product_url))
             if not pdf_text:
                 continue
 
