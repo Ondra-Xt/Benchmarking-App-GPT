@@ -105,23 +105,41 @@ def compute_equivalence_score(row: Dict[str, Any], cfg: Union[Dict[str, Any], We
     return 1.0
 
 
-def compute_final_score(param_score: float, equiv_score: float, cfg: Union[Dict[str, Any], WeightConfig]) -> float:
+def compute_system_score(candidate_type: str, has_bom_options: bool) -> float:
+    ct = str(candidate_type or "").lower()
+    if ct == "finish_set":
+        return 1.0 if has_bom_options else 0.5
+    if ct == "drain":
+        return 1.0
+    return 0.5
+
+
+def compute_final_score(
+    param_score: float,
+    system_score: float,
+    equiv_score: float,
+    cfg: Union[Dict[str, Any], WeightConfig],
+) -> float:
     """
-    cfg může mít w_param/w_equiv buď jako 0..1 nebo jako % (0..100).
+    cfg může mít w_param/w_system/w_equiv buď jako 0..1 nebo jako % (0..100).
+    Default: 0.7 / 0.2 / 0.1
     """
     w_param = float(_cfg_get(cfg, "w_param", 0.7) or 0.7)
-    w_equiv = float(_cfg_get(cfg, "w_equiv", 0.3) or 0.3)
+    w_system = float(_cfg_get(cfg, "w_system", 0.2) or 0.2)
+    w_equiv = float(_cfg_get(cfg, "w_equiv", 0.1) or 0.1)
 
     # Pokud jsou v procentech, převeď:
-    if w_param > 1.0 or w_equiv > 1.0:
+    if w_param > 1.0 or w_system > 1.0 or w_equiv > 1.0:
         w_param /= 100.0
+        w_system /= 100.0
         w_equiv /= 100.0
 
-    s = (w_param + w_equiv) or 1.0
+    s = (w_param + w_system + w_equiv) or 1.0
     w_param /= s
+    w_system /= s
     w_equiv /= s
 
-    out = (param_score * w_param) + (equiv_score * w_equiv)
+    out = (param_score * w_param) + (system_score * w_system) + (equiv_score * w_equiv)
     # clamp 0..1
     if out < 0:
         out = 0.0
