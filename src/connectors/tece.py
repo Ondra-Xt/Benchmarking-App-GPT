@@ -29,8 +29,13 @@ LENGTH_RE = re.compile(r"(?:\b(?:l|länge)\s*[=:]?\s*)?(\d{1,2}(?:\.\d{3})|\d{3,
 MM_RE = re.compile(r"(\d{1,3})\s*mm", re.IGNORECASE)
 TECE_COM_BASE = "https://www.tece.com"
 TECE_INCLUDE = ("drainline", "drainprofile", "duschrinne", "duschprofil")
-TECE_EXCLUDE = ("academy", "service", "servicios", "dokumente", "download", "presse", "magazin", "montage", "anleitung", "instruk", "instruction", "manual", "datenblatt", "zubehoer", ".pdf", "badkeramiken", "dusch-wc", "teceone", "teceneo")
+TECE_EXCLUDE = ("academy", "service", "servicios", "dokumente", "download", "presse", "magazin", "montage", "anleitung", "instruk", "instruction", "manual", "datenblatt", "zubehoer", ".pdf", "badkeramiken", "dusch-wc", "teceone", "teceneo", "baukasten")
 PRODUCT_HINTS = ("tecedrainline", "tecedrainprofile", "duschrinne", "duschprofil")
+PRODUKTDATEN_SEEDS = [
+    "https://produktdaten.tece.de/web/tece_DE/de_DE/tece/KAT03RINNEGERADE/Duschrinnen/index.xhtml",
+    "https://produktdaten.tece.de/web/tece_DE/de_DE/tece/KAT03RINNEGERADE/TECEdrainline-Evo%20Duschrinne/%24catalogue/teceData/PG/3006000010%200090/index.xhtml",
+    "https://produktdaten.tece.de/web/tece_DE/de_DE/tece/KAT03RINNEGERADE/TECEdrainline%20Duschrinne%2C%20mit%20Seal%20System%20Dichtband/%24catalogue/teceData/PG/3006000010%200010/index.xhtml",
+]
 _LOC_RE = re.compile(r"<loc>(.*?)</loc>", re.IGNORECASE | re.DOTALL)
 
 
@@ -230,6 +235,8 @@ def _is_tececom_de_html(url: str) -> bool:
         return False
     if path.endswith(".pdf"):
         return False
+    if "/baukasten" in path:
+        return False
     return True
 
 
@@ -255,101 +262,170 @@ def _is_product_like_heading(txt: str) -> bool:
     return any(h in t for h in PRODUCT_HINTS)
 
 
+def _is_baukasten_url(url: str) -> bool:
+    path = unquote(urlparse(url or "").path or "").lower()
+    return "/baukasten" in path
+
+
+def _extract_article_from_text(text: str) -> Optional[str]:
+    m = re.search(r"\b(\d{6})\b", text or "")
+    return m.group(1) if m else None
+
+
+def _extract_length_near_article(text: str) -> Optional[int]:
+    if not text:
+        return None
+    return parse_length_mm(text)
+
+
+def _extract_produktdaten_candidates_from_html(html: str, base_url: str) -> Tuple[List[Dict[str, Any]], List[str]]:
+    soup = BeautifulSoup((html or "").replace("\/", "/"), "lxml")
+    items: List[Dict[str, Any]] = []
+    index_only: List[str] = []
+
+    for a in soup.select("a[href]"):
+        href = (a.get("href") or "").strip()
+        txt = _clean_text(a.get_text(" ", strip=True))
+        target = _canonicalize_url(urljoin(base_url, href))
+
+        if _is_baukasten_url(target):
+            index_only.append(target)
+            continue
+
+        if "produktdaten.tece.de" not in (urlparse(target).netloc or "").lower():
+            continue
+
+        line = _clean_text(f"{txt} {unquote(target)}")
+        article = _extract_article_from_text(line)
+        length_mm = _extract_length_near_article(line)
+
+        if not article:
+            continue
+
+        pr_match = PR_PATH_RE.search(unquote(urlparse(target).path or ""))
+        if pr_match:
+            product_url = target
+        else:
+            # keep item link when PR is not available/reliable
+            product_url = target
+
+        items.append({
+            "article": article,
+            "length_mm": length_mm,
+            "name": txt or line,
+            "url": product_url,
+        })
+
+    # Also parse plain text lines with article + length if anchors are sparse.
+    flat = _clean_text(soup.get_text(" ", strip=True))
+    for m in re.finditer(r"(\b\d{6}\b)[^\n\r]{0,120}?(\d{3,4}|\d{1,2}\.\d{3})\s*mm", flat, re.IGNORECASE):
+        art = m.group(1)
+        ln = parse_length_mm(m.group(0))
+        if art and ln is not None:
+            items.append({"article": art, "length_mm": ln, "name": m.group(0), "url": base_url})
+
+    uniq = {}
+    for it in items:
+        k = it["article"]
+        if k not in uniq:
+            uniq[k] = it
+    return list(uniq.values()), list(dict.fromkeys(index_only))
+
+
+def _guess_tcdb_pdf(article: str) -> str:
+    return f"https://documents.pdod.de/tece/tcdb_{article}.pdf"
+
+
 def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     min_len = max(0, int(target_length_mm) - int(tolerance_mm))
     max_len = int(target_length_mm) + int(tolerance_mm)
 
-    start_sitemaps = _robots_sitemaps(TECE_COM_BASE)
-    all_urls, debug = _crawl_sitemaps(start_sitemaps)
-
-    total_crawled = len(all_urls)
-    de_urls = [_canonicalize_url(u) for u in all_urls if _is_tececom_de_html(_canonicalize_url(u))]
-    de_urls = list(dict.fromkeys(de_urls))
-    after_de_filter = len(de_urls)
-
-    scoped_urls = [_canonicalize_url(u) for u in de_urls if _passes_include_exclude(_canonicalize_url(u))]
-    scoped_urls = list(dict.fromkeys(scoped_urls))
-    after_include_exclude = len(scoped_urls)
-
+    debug: List[Dict[str, Any]] = []
     out: List[Dict[str, Any]] = []
-    after_length_filter = 0
-    sample_before_length_filter = scoped_urls[:10]
-    sample_dropped_by_length: List[Dict[str, Any]] = []
+
     sample_accepted_urls: List[str] = []
+    sample_index_only_urls: List[str] = []
+    sample_dropped_by_length: List[Dict[str, Any]] = []
 
-    for idx, u in enumerate(scoped_urls):
-        if len(out) >= 300:
-            break
-
-        st, final, html, err = _safe_get_text(u, timeout=25)
+    collected_items: List[Dict[str, Any]] = []
+    for seed in PRODUKTDATEN_SEEDS:
+        st, final, html, err = _safe_get_text(seed, timeout=30)
         final_c = _canonicalize_url(final)
-        if st != 200 or not html or not _is_tececom_de_html(final_c):
-            debug.append({
-                "site": "tece",
-                "seed_url": u,
-                "status_code": st,
-                "final_url": final_c,
-                "error": err,
-                "candidates_found": 0,
-                "candidates_accepted": 0,
-                "method": "product_filter",
-                "is_index": None,
-            })
+        items, index_only = _extract_produktdaten_candidates_from_html(html, final_c) if (st == 200 and html) else ([], [])
+        debug.append({
+            "site": "tece",
+            "seed_url": seed,
+            "status_code": st,
+            "final_url": final_c,
+            "error": err,
+            "candidates_found": len(items),
+            "method": "produktdaten_seed",
+            "is_index": None,
+        })
+        collected_items.extend(items)
+        for u in index_only:
+            if len(sample_index_only_urls) < 20 and u not in sample_index_only_urls:
+                sample_index_only_urls.append(u)
+
+    # dedupe by article
+    by_article: Dict[str, Dict[str, Any]] = {}
+    for it in collected_items:
+        art = it.get("article")
+        if not art:
             continue
+        if art not in by_article:
+            by_article[art] = it
 
-        heading = _extract_heading_text(html)
-        if not _is_product_like_heading(heading):
+    after_include_exclude = len(by_article)
+    after_length_filter = 0
+
+    for art, it in by_article.items():
+        length_mm = it.get("length_mm")
+        if length_mm is None:
+            if len(sample_dropped_by_length) < 20:
+                sample_dropped_by_length.append({"url": it.get("url"), "length_mm": None})
             continue
-
-        length_mm = _extract_length_from_text(unquote(final_c)) or _extract_length_from_text(heading)
-        if length_mm is None and idx < 50:
-            full_text = _clean_text(BeautifulSoup(html, "lxml").get_text(" ", strip=True))
-            length_mm = parse_length_mm(full_text)
-            if length_mm is None:
-                target_pat = rf"(?:\b{int(target_length_mm)}\s*mm\b|\b{str(int(target_length_mm))[0]}\.{str(int(target_length_mm))[1:]}\s*mm\b|\b{int(target_length_mm)}mm\b)"
-                if re.search(target_pat, full_text, re.IGNORECASE):
-                    length_mm = int(target_length_mm)
-
-        if length_mm is None or not (min_len <= length_mm <= max_len):
-            if len(sample_dropped_by_length) < 10:
-                sample_dropped_by_length.append({"url": final_c, "length_mm": length_mm})
+        if not (min_len <= int(length_mm) <= max_len):
+            if len(sample_dropped_by_length) < 20:
+                sample_dropped_by_length.append({"url": it.get("url"), "length_mm": int(length_mm)})
             continue
         after_length_filter += 1
 
-        article_m = re.search(r"\b(\d{6})\b", heading)
-        product_id = f"tece-{article_m.group(1)}" if article_m else f"tece-{hashlib.sha1(final_c.encode('utf-8')).hexdigest()[:12]}"
+        purl = _canonicalize_url(it.get("url") or PRODUKTDATEN_SEEDS[0])
+        if _is_baukasten_url(purl):
+            if len(sample_index_only_urls) < 20 and purl not in sample_index_only_urls:
+                sample_index_only_urls.append(purl)
+            continue
 
         out.append({
             "manufacturer": "tece",
-            "product_id": product_id,
+            "product_id": f"tece-{art}",
             "product_family": "TECEdrain",
-            "product_name": heading or final_c,
-            "product_url": final_c,
-            "sources": final_c,
+            "product_name": it.get("name") or f"TECE article {art}",
+            "product_url": purl,
+            "sources": purl,
             "candidate_type": "drain",
             "complete_system": "yes",
             "selected_length_mm": int(target_length_mm),
             "length_mode": "title",
-            "length_delta_mm": length_mm - int(target_length_mm),
+            "length_delta_mm": int(length_mm) - int(target_length_mm),
         })
         if len(sample_accepted_urls) < 20:
-            sample_accepted_urls.append(final_c)
+            sample_accepted_urls.append(purl)
 
     debug.append({
         "site": "tece",
         "seed_url": "summary",
         "status_code": 200,
-        "final_url": TECE_COM_BASE,
+        "final_url": "https://produktdaten.tece.de",
         "error": "",
-        "total_crawled": total_crawled,
-        "after_de_filter": after_de_filter,
         "after_include_exclude": after_include_exclude,
         "after_length_filter": after_length_filter,
-        "sample_before_length_filter": json.dumps(sample_before_length_filter, ensure_ascii=False),
         "sample_dropped_by_length": json.dumps(sample_dropped_by_length, ensure_ascii=False),
         "sample_accepted_urls": json.dumps(sample_accepted_urls, ensure_ascii=False),
+        "sample_index_only_urls": json.dumps(sample_index_only_urls, ensure_ascii=False),
         "final_count": len(out),
-        "candidates_found": len(scoped_urls),
+        "candidates_found": len(by_article),
         "candidates_accepted": len(out),
         "method": "final",
         "is_index": None,
@@ -495,11 +571,12 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
     src = (product_url or "").strip()
     st, final, html, err = _safe_get_text(src, timeout=35)
     res["evidence"].append(("HTML fetch", f"status={st} err={err}".strip(), final))
-    if st != 200 or not html:
-        return res
 
-    full_text = _clean_text(BeautifulSoup(html, "lxml").get_text(" ", strip=True))
-    pdf_links = _find_datasheet_pdf_links(html, final)
+    full_text = _clean_text(BeautifulSoup(html, "lxml").get_text(" ", strip=True)) if (st == 200 and html) else ""
+    pdf_links = _find_datasheet_pdf_links(html, final) if (st == 200 and html) else []
+
+    article = _extract_article_from_text(unquote(src))
+    tcdb_pdf = _guess_tcdb_pdf(article) if article else None
 
     # Height from HTML first.
     hmin, hmax, hsnip = _extract_height_from_text_blob(full_text)
@@ -510,6 +587,10 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
             res["evidence"].append(("Height", hsnip[:420], final))
 
     # Prefer PDF for flow/DN (and height fallback).
+    if tcdb_pdf and (not pdf_links or st != 200 or not html):
+        pdf_links = [tcdb_pdf] + [u for u in pdf_links if u != tcdb_pdf]
+        res["evidence"].append(("PDF fallback", tcdb_pdf, src))
+
     for pdf_url in pdf_links[:5]:
         pdf_text, pdf_status = extract_pdf_text_from_url(pdf_url, headers=HEADERS)
         res["evidence"].append(("PDF status", pdf_status, pdf_url))
@@ -545,7 +626,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
             break
 
     # If no PDFs present, fall back to HTML for flow/DN.
-    if not pdf_links:
+    if (not pdf_links) and full_text:
         flow_html, flow_raw = _extract_flow_from_html_text(full_text)
         if flow_html is not None:
             res["flow_rate_lps"] = flow_html
