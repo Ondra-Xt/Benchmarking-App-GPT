@@ -25,7 +25,7 @@ HEADERS = {
 
 PR_PATH_RE = re.compile(r"/PR/(\d+)/index\.xhtml(?:;jsessionid=[^/?#]+)?$", re.IGNORECASE)
 PR_LINK_RE = re.compile(r"https?://[^\s\"'>]*/PR/\d+/index\.xhtml(?:;jsessionid=[^\s\"'>]+)?", re.IGNORECASE)
-LENGTH_RE = re.compile(r"(\d{3,4})\s*mm", re.IGNORECASE)
+LENGTH_RE = re.compile(r"(?:\b(?:l|länge)\s*[=:]?\s*)?(\d{1,2}(?:\.\d{3})|\d{3,4})\s*mm\b", re.IGNORECASE)
 MM_RE = re.compile(r"(\d{1,3})\s*mm", re.IGNORECASE)
 TECE_COM_BASE = "https://www.tece.com"
 TECE_INCLUDE = ("entwaesserungstechnik", "dusch", "drain", "drainline", "drainprofile")
@@ -189,29 +189,33 @@ def _extract_product_links(html: str, base_url: str) -> List[str]:
     return list(dict.fromkeys(out))
 
 
-def _extract_length_from_url(url: str) -> Optional[int]:
-    path_decoded = unquote(urlparse(url or "").path or "")
-    vals = []
-    for m in LENGTH_RE.finditer(path_decoded):
+def parse_length_mm(text: str) -> Optional[int]:
+    txt = unquote(text or "")
+    if not txt:
+        return None
+
+    # Normalize German thousands separator in lengths, e.g., 1.200 mm -> 1200 mm.
+    txt = re.sub(r"(?<=\d)\.(?=\d{3}\b)", "", txt)
+
+    vals: List[int] = []
+    for m in LENGTH_RE.finditer(txt):
+        raw = (m.group(1) or "").replace(".", "")
         try:
-            v = int(m.group(1))
+            v = int(raw)
             if 300 <= v <= 3000:
                 vals.append(v)
         except Exception:
             continue
+
     return vals[0] if vals else None
+
+
+def _extract_length_from_url(url: str) -> Optional[int]:
+    return parse_length_mm(urlparse(url or "").path or "")
 
 
 def _extract_length_from_text(name: str) -> Optional[int]:
-    vals = []
-    for m in LENGTH_RE.finditer(name or ""):
-        try:
-            v = int(m.group(1))
-            if 300 <= v <= 3000:
-                vals.append(v)
-        except Exception:
-            continue
-    return vals[0] if vals else None
+    return parse_length_mm(name)
 
 
 def _is_tececom_de_html(url: str) -> bool:
@@ -269,6 +273,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
     out: List[Dict[str, Any]] = []
     after_length_filter = 0
+    sample_before_length_filter = scoped_urls[:10]
+    sample_dropped_by_length: List[Dict[str, Any]] = []
 
     for u in scoped_urls:
         if len(out) >= 300:
@@ -296,8 +302,16 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
         length_mm = _extract_length_from_text(unquote(final_c)) or _extract_length_from_text(heading)
         if length_mm is None:
-            continue
-        if not (min_len <= length_mm <= max_len):
+            full_text = _clean_text(BeautifulSoup(html, "lxml").get_text(" ", strip=True))
+            length_mm = parse_length_mm(full_text)
+            if length_mm is None:
+                target_pat = rf"(?:\b{int(target_length_mm)}\s*mm\b|\b{str(int(target_length_mm))[0]}\.{str(int(target_length_mm))[1:]}\s*mm\b|\b{int(target_length_mm)}mm\b)"
+                if re.search(target_pat, full_text, re.IGNORECASE):
+                    length_mm = int(target_length_mm)
+
+        if length_mm is None or not (min_len <= length_mm <= max_len):
+            if len(sample_dropped_by_length) < 10:
+                sample_dropped_by_length.append({"url": final_c, "length_mm": length_mm})
             continue
         after_length_filter += 1
 
@@ -328,6 +342,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "after_de_filter": after_de_filter,
         "after_include_exclude": after_include_exclude,
         "after_length_filter": after_length_filter,
+        "sample_before_length_filter": json.dumps(sample_before_length_filter, ensure_ascii=False),
+        "sample_dropped_by_length": json.dumps(sample_dropped_by_length, ensure_ascii=False),
         "final_count": len(out),
         "candidates_found": len(scoped_urls),
         "candidates_accepted": len(out),
