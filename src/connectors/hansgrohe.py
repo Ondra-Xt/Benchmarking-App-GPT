@@ -344,6 +344,20 @@ def _apply_text_extraction(res: Dict[str, Any], text: str, src: str) -> None:
         seg_end = min(len(flat), seg_start + 220)
         seg = flat[seg_start:seg_end]
 
+        # Prefer explicit range first (e.g., 70-95 mm)
+        rm = re.search(r"(\d{1,3})\s*[-–]\s*(\d{1,3})\s*mm", seg, re.IGNORECASE)
+        if rm:
+            try:
+                ra = int(rm.group(1))
+                rb = int(rm.group(2))
+                if 1 <= ra <= 300 and 1 <= rb <= 300:
+                    hmin, hmax = (ra, rb) if ra <= rb else (rb, ra)
+                    ev_lo = max(0, match_obj.start() - 20)
+                    ev_hi = min(len(flat), seg_end)
+                    return hmin, hmax, flat[ev_lo:ev_hi]
+            except Exception:
+                pass
+
         filtered_vals: List[int] = []
         for vm in re.finditer(r"(\d{1,3})\s*mm", seg, re.IGNORECASE):
             v = int(vm.group(1))
@@ -385,8 +399,7 @@ def _apply_text_extraction(res: Dict[str, Any], text: str, src: str) -> None:
 
     keyword_match = re.search(
         r"(minimale\s+installationsh(?:ö|oe)he|minimal\s+installation\s+height|"
-        r"einbauh(?:ö|oe)he|bauh(?:ö|oe)he|aufbauh(?:ö|oe)he|"
-        r"mindestbauh(?:ö|oe)he|minimum\s+construction\s+height|minimal\s+construction\s+height)\s*:?",
+        r"einbauh(?:ö|oe)he|bauh(?:ö|oe)he|aufbauh(?:ö|oe)he)\s*:?",
         flat,
         re.IGNORECASE,
     )
@@ -405,6 +418,27 @@ def _apply_text_extraction(res: Dict[str, Any], text: str, src: str) -> None:
                 res["height_adj_min_mm"] = h_min
                 res["height_adj_max_mm"] = h_max
             res["evidence"].append(("Installation/Construction height (mm)", snippet, src))
+
+    # Explicit minimum construction-height forms (single value), e.g. uBox 01000180
+    # - "minimum construction height: XX mm"
+    # - "minimale Bauhöhe: XX mm" / "Mindestbauhöhe: XX mm"
+    if res.get("height_adj_min_mm") is None or res.get("height_adj_max_mm") is None:
+        min_constr = re.search(
+            r"(?:minimum\s+construction\s+height|minimale\s+bauh(?:ö|oe)he|mindestbauh(?:ö|oe)he)\s*:?\s*(\d{1,3})\s*mm",
+            flat,
+            re.IGNORECASE,
+        )
+        if min_constr:
+            try:
+                v = int(min_constr.group(1))
+            except Exception:
+                v = None
+            if v is not None and 1 <= v <= 300:
+                res["height_adj_min_mm"] = v
+                res["height_adj_max_mm"] = v
+                lo = max(0, min_constr.start() - 30)
+                hi = min(len(flat), min_constr.end() + 60)
+                res["evidence"].append(("Installation/Construction height (mm)", flat[lo:hi], src))
 
     # Trap seal can be useful context, but MUST NOT populate height_adj_*
     trap_match = re.search(r"(sperrwasserh(?:ö|oe)he|water\s+seal\s+height)\s*:?", flat, re.IGNORECASE)
