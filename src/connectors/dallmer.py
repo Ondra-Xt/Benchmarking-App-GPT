@@ -7,7 +7,7 @@ import json
 import gzip
 import csv
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -339,17 +339,44 @@ def _classify_candidate(url: str) -> str:
 # Discovery
 # ----------------------------
 
-def _length_from_url(u: str) -> Optional[int]:
-    ul = (u or "").lower()
-    m = re.search(r"-(\d{3,4})-mm", ul)
-    if m:
+def _parse_length_mm(text: str) -> Optional[int]:
+    if not text:
+        return None
+
+    txt = unquote(text)
+    txt = re.sub(r"(?<=\d)\.(?=\d{3}\b)", "", txt)
+
+    # Ignore 2D dimensions such as 300 x 100 mm.
+    dim_spans = [m.span() for m in re.finditer(r"\b\d{2,4}\s*[x×]\s*\d{2,4}\s*mm\b", txt, re.IGNORECASE)]
+
+    def in_dim_span(pos: int) -> bool:
+        return any(a <= pos < b for a, b in dim_spans)
+
+    vals: List[int] = []
+    for m in re.finditer(r"\b(\d{3,4})\s*mm\b", txt, re.IGNORECASE):
+        if in_dim_span(m.start()):
+            continue
         try:
             v = int(m.group(1))
-            if 300 <= v <= 2000:
-                return v
+            if 300 <= v <= 2500:
+                vals.append(v)
         except Exception:
-            return None
-    return None
+            continue
+
+    # URL style: w-1200-mm (or similar token prefixes)
+    for m in re.finditer(r"(?:^|[-_/])(?:w|l|laenge|lange)?-?(\d{3,4})-mm(?:$|[-_/])", txt, re.IGNORECASE):
+        try:
+            v = int(m.group(1))
+            if 300 <= v <= 2500:
+                vals.append(v)
+        except Exception:
+            continue
+
+    return vals[0] if vals else None
+
+
+def _length_from_url(u: str) -> Optional[int]:
+    return _parse_length_mm(u or "")
 
 # ============================================================
 # SKU DEDUPLICATION HELPER
@@ -497,7 +524,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                 BASE_DE + "/sitemap.xml.gz",
             ]
 
-        urls, dbg_rows = _crawl_sitemaps(sitemaps, max_to_crawl=18)
+        urls, dbg_rows = _crawl_sitemaps(sitemaps, max_sitemaps=18)
         debug.extend(dbg_rows)
 
         for u in urls:
@@ -550,6 +577,10 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
     # final filters + build
     out: List[Dict[str, Any]] = []
+    after_length_filter = 0
+
+    total_found_links = len(found_links)
+    after_dedupe = len(found_links)
 
     for u in sorted(found_links):
         ul = u.lower()
@@ -560,23 +591,27 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         if not any(k in ul for k in KEYWORDS):
             continue
 
-        L = _length_from_url(u)
-        if L is not None and not (min_len <= L <= max_len):
+        title_guess = u.split("/")[-1].replace("-", " ")
+        length_mm = _parse_length_mm(unquote(u)) or _parse_length_mm(title_guess)
+        if length_mm is None:
             continue
+        if not (min_len <= length_mm <= max_len):
+            continue
+        after_length_filter += 1
 
         ct = _classify_candidate(u)
 
         out.append({
             "manufacturer": "dallmer",
             "product_family": "Drain",
-            "product_name": u.split("/")[-1].replace("-", " "),
+            "product_name": title_guess,
             "product_url": u,
             "sources": sources_map.get(u, u),
             "candidate_type": ct,
             "complete_system": "yes" if ct == "product" else "component",
             "selected_length_mm": want,
-            "length_mode": "url" if L is not None else "unknown",
-            "length_delta_mm": (L - want) if L is not None else None,
+            "length_mode": "parsed",
+            "length_delta_mm": length_mm - want,
         })
 
         if len(out) >= 700:
@@ -589,6 +624,10 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "final_url": "search+sitemap+local",
         "error": "",
         "candidates_found": len(out),
+        "total_found_links": total_found_links,
+        "after_dedupe": after_dedupe,
+        "after_length_filter": after_length_filter,
+        "final_count": len(out),
         "method": "final",
         "is_index": None,
     })
