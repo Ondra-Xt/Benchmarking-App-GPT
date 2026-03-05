@@ -28,8 +28,8 @@ PR_LINK_RE = re.compile(r"https?://[^\s\"'>]*/PR/\d+/index\.xhtml(?:;jsessionid=
 LENGTH_RE = re.compile(r"(?:\b(?:l|länge)\s*[=:]?\s*)?(\d{1,2}(?:\.\d{3})|\d{3,4})\s*mm\b", re.IGNORECASE)
 MM_RE = re.compile(r"(\d{1,3})\s*mm", re.IGNORECASE)
 TECE_COM_BASE = "https://www.tece.com"
-TECE_INCLUDE = ("entwaesserungstechnik", "dusch", "drain", "drainline", "drainprofile")
-TECE_EXCLUDE = ("academy", "service", "servicios", "dokumente", "download", "presse", "magazin", "montage", "anleitung", "instruk", "instruction", "manual", "datenblatt", "zubehoer", ".pdf")
+TECE_INCLUDE = ("drainline", "drainprofile", "duschrinne", "duschprofil")
+TECE_EXCLUDE = ("academy", "service", "servicios", "dokumente", "download", "presse", "magazin", "montage", "anleitung", "instruk", "instruction", "manual", "datenblatt", "zubehoer", ".pdf", "badkeramiken", "dusch-wc", "teceone", "teceneo")
 PRODUCT_HINTS = ("tecedrainline", "tecedrainprofile", "duschrinne", "duschprofil")
 _LOC_RE = re.compile(r"<loc>(.*?)</loc>", re.IGNORECASE | re.DOTALL)
 
@@ -226,7 +226,7 @@ def _is_tececom_de_html(url: str) -> bool:
     if p.netloc.lower() != "www.tece.com":
         return False
     path = unquote(p.path or "").lower()
-    if not path.startswith("/de/"):
+    if not path.startswith("/de/entwaesserungstechnik/"):
         return False
     if path.endswith(".pdf"):
         return False
@@ -275,8 +275,9 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     after_length_filter = 0
     sample_before_length_filter = scoped_urls[:10]
     sample_dropped_by_length: List[Dict[str, Any]] = []
+    sample_accepted_urls: List[str] = []
 
-    for u in scoped_urls:
+    for idx, u in enumerate(scoped_urls):
         if len(out) >= 300:
             break
 
@@ -301,7 +302,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             continue
 
         length_mm = _extract_length_from_text(unquote(final_c)) or _extract_length_from_text(heading)
-        if length_mm is None:
+        if length_mm is None and idx < 50:
             full_text = _clean_text(BeautifulSoup(html, "lxml").get_text(" ", strip=True))
             length_mm = parse_length_mm(full_text)
             if length_mm is None:
@@ -331,6 +332,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             "length_mode": "title",
             "length_delta_mm": length_mm - int(target_length_mm),
         })
+        if len(sample_accepted_urls) < 20:
+            sample_accepted_urls.append(final_c)
 
     debug.append({
         "site": "tece",
@@ -344,6 +347,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "after_length_filter": after_length_filter,
         "sample_before_length_filter": json.dumps(sample_before_length_filter, ensure_ascii=False),
         "sample_dropped_by_length": json.dumps(sample_dropped_by_length, ensure_ascii=False),
+        "sample_accepted_urls": json.dumps(sample_accepted_urls, ensure_ascii=False),
         "final_count": len(out),
         "candidates_found": len(scoped_urls),
         "candidates_accepted": len(out),
