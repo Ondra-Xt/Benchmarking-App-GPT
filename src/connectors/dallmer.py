@@ -637,7 +637,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 # Extraction helpers (smart height / DN / flow options)
 # ----------------------------
 
-def _extract_best_height_mm(text: str) -> Tuple[Optional[int], Optional[int], Optional[str], Optional[str]]:
+def _extract_best_height_mm(text: str) -> Tuple[Optional[int], Optional[int], Optional[str], Optional[str], Optional[int]]:
     """
     Height extraction with contextual scoring:
     - +3 if snippet contains install-height keywords (Bauhöhe/Einbauhöhe/Installationshöhe/Aufbauhöhe)
@@ -645,12 +645,12 @@ def _extract_best_height_mm(text: str) -> Tuple[Optional[int], Optional[int], Op
     - pick the highest-score candidate; if best score < 0, return empty.
     """
     if not text:
-        return None, None, None, None
+        return None, None, None, None, None
 
     t = " ".join(text.split())
 
     POS_KEYS = ["bauhöhe", "einbauhöhe", "installationshöhe", "aufbauhöhe"]
-    NEG_KEYS = ["rost", "rahmen", "abdeckung", "aufsatz", "fliesenmulde"]
+    NEG_KEYS = ["rost", "rahmen", "abdeckung", "aufsatz", "fliesenmulde", "water seal", "sperrwasser", "geruchsverschluss", "trap insert"]
 
     def ok(a: int, b: int) -> bool:
         return 1 <= a <= 300 and 1 <= b <= 300 and b >= a
@@ -697,16 +697,39 @@ def _extract_best_height_mm(text: str) -> Tuple[Optional[int], Optional[int], Op
         candidates.append((score, a, a, snippet, label))
 
     if not candidates:
-        return None, None, None, None
+        return None, None, None, None, None
 
     # Prefer higher score; tie-break by range-candidate preference and larger install-like values.
     best = sorted(candidates, key=lambda x: (-x[0], -(1 if x[2] > x[1] else 0), -x[2], x[1]))[0]
     best_score, hmin, hmax, hsnip, hlabel = best
     if best_score < 0:
-        return None, None, None, None
+        return None, None, None, None, None
 
-    return hmin, hmax, hsnip, hlabel
+    if hmax <= 30 and best_score < 1:
+        return None, None, None, None, best_score
 
+    return hmin, hmax, hsnip, hlabel, best_score
+
+
+
+def _extract_trap_seal_height_snippets(text: str) -> List[str]:
+    if not text:
+        return []
+    t = " ".join(text.split())
+    out: List[str] = []
+    seen = set()
+    pat = re.compile(r"(water seal|sperrwasser|geruchsverschluss|trap insert)[^\n\r]{0,80}?\d{1,4}\s*mm", re.IGNORECASE)
+    for m in pat.finditer(t):
+        s0 = max(0, m.start() - 40)
+        s1 = min(len(t), m.end() + 40)
+        sn = t[s0:s1]
+        if sn in seen:
+            continue
+        seen.add(sn)
+        out.append(sn)
+        if len(out) >= 3:
+            break
+    return out
 
 def _dns_from_text(text: str) -> List[str]:
     if not text:
@@ -883,7 +906,10 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
             res["evidence"].append(("Flow rate options", opts_json, final))
 
         # smart height
-        hmin, hmax, hsnip, hlabel = _extract_best_height_mm(page_text)
+        for trap_snip in _extract_trap_seal_height_snippets(page_text):
+            res["evidence"].append(("Trap seal height (mm)", trap_snip, final))
+
+        hmin, hmax, hsnip, hlabel, hscore = _extract_best_height_mm(page_text)
         if hmin is not None and hmax is not None:
             res["height_adj_min_mm"] = hmin
             res["height_adj_max_mm"] = hmax
@@ -924,7 +950,10 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
                     res["evidence"].append(("Flow rate options", opts_json, pdf_url))
 
             if res.get("height_adj_min_mm") is None or res.get("height_adj_max_mm") is None:
-                hmin, hmax, hsnip, hlabel = _extract_best_height_mm(pdf_text)
+                for trap_snip in _extract_trap_seal_height_snippets(pdf_text):
+                    res["evidence"].append(("Trap seal height (mm)", trap_snip, pdf_url))
+
+                hmin, hmax, hsnip, hlabel, hscore = _extract_best_height_mm(pdf_text)
                 if hmin is not None and hmax is not None:
                     res["height_adj_min_mm"] = hmin
                     res["height_adj_max_mm"] = hmax
