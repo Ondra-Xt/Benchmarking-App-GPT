@@ -731,6 +731,53 @@ def _extract_trap_seal_height_snippets(text: str) -> List[str]:
             break
     return out
 
+
+
+def _extract_bauhoehe_from_pdf_text(text: str) -> Tuple[Optional[int], Optional[int], Optional[str]]:
+    if not text:
+        return None, None, None
+
+    t = " ".join(text.split())
+    pos_keys = ["bauhöhe", "einbauhöhe", "installationshöhe", "aufbauhöhe"]
+    neg_keys = ["water seal", "sperrwasser", "geruchsverschluss"]
+
+    best: Optional[Tuple[int, int, str]] = None
+
+    for key in pos_keys:
+        for m in re.finditer(re.escape(key), t, flags=re.IGNORECASE):
+            start = m.start()
+            window = t[start: min(len(t), m.end() + 160)]
+            win_l = window.lower()
+            if any(nk in win_l for nk in neg_keys):
+                continue
+
+            # range first
+            rm = re.search(r"(\d{1,3})\s*[-–]\s*(\d{1,3})\s*mm", window, re.IGNORECASE)
+            if rm:
+                try:
+                    a, b = int(rm.group(1)), int(rm.group(2))
+                    if 1 <= a <= 300 and 1 <= b <= 300 and b >= a:
+                        sn = window[:220]
+                        best = (a, b, sn)
+                        break
+                except Exception:
+                    pass
+
+            sm = re.search(r"(\d{1,3})\s*mm", window, re.IGNORECASE)
+            if sm:
+                try:
+                    v = int(sm.group(1))
+                    if 1 <= v <= 300:
+                        sn = window[:220]
+                        best = (v, v, sn)
+                        break
+                except Exception:
+                    pass
+        if best is not None:
+            break
+
+    return best if best is not None else (None, None, None)
+
 def _dns_from_text(text: str) -> List[str]:
     if not text:
         return []
@@ -959,6 +1006,13 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
                     res["height_adj_max_mm"] = hmax
                     if hsnip:
                         res["evidence"].append((f"Height ({hlabel or 'fallback'})", hsnip, pdf_url))
+                else:
+                    bh_min, bh_max, bh_snip = _extract_bauhoehe_from_pdf_text(pdf_text)
+                    if bh_min is not None and bh_max is not None:
+                        res["height_adj_min_mm"] = bh_min
+                        res["height_adj_max_mm"] = bh_max
+                        if bh_snip:
+                            res["evidence"].append(("Height (Bauhöhe from PDF)", bh_snip, pdf_url))
 
             if res.get("outlet_dn_options_json") is None:
                 dns2 = _dns_from_text(pdf_text)
