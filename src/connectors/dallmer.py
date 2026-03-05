@@ -7,7 +7,7 @@ import json
 import gzip
 import csv
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import unquote, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -339,17 +339,44 @@ def _classify_candidate(url: str) -> str:
 # Discovery
 # ----------------------------
 
-def _length_from_url(u: str) -> Optional[int]:
-    ul = (u or "").lower()
-    m = re.search(r"-(\d{3,4})-mm", ul)
-    if m:
+def _parse_length_mm(text: str) -> Optional[int]:
+    if not text:
+        return None
+
+    txt = unquote(text)
+    txt = re.sub(r"(?<=\d)\.(?=\d{3}\b)", "", txt)
+
+    # Ignore 2D dimensions such as 300 x 100 mm.
+    dim_spans = [m.span() for m in re.finditer(r"\b\d{2,4}\s*[x×]\s*\d{2,4}\s*mm\b", txt, re.IGNORECASE)]
+
+    def in_dim_span(pos: int) -> bool:
+        return any(a <= pos < b for a, b in dim_spans)
+
+    vals: List[int] = []
+    for m in re.finditer(r"\b(\d{3,4})\s*mm\b", txt, re.IGNORECASE):
+        if in_dim_span(m.start()):
+            continue
         try:
             v = int(m.group(1))
-            if 300 <= v <= 2000:
-                return v
+            if 300 <= v <= 2500:
+                vals.append(v)
         except Exception:
-            return None
-    return None
+            continue
+
+    # URL style: w-1200-mm (or similar token prefixes)
+    for m in re.finditer(r"(?:^|[-_/])(?:w|l|laenge|lange)?-?(\d{3,4})-mm(?:$|[-_/])", txt, re.IGNORECASE):
+        try:
+            v = int(m.group(1))
+            if 300 <= v <= 2500:
+                vals.append(v)
+        except Exception:
+            continue
+
+    return vals[0] if vals else None
+
+
+def _length_from_url(u: str) -> Optional[int]:
+    return _parse_length_mm(u or "")
 
 # ============================================================
 # SKU DEDUPLICATION HELPER
@@ -497,7 +524,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                 BASE_DE + "/sitemap.xml.gz",
             ]
 
-        urls, dbg_rows = _crawl_sitemaps(sitemaps, max_to_crawl=18)
+        urls, dbg_rows = _crawl_sitemaps(sitemaps, max_sitemaps=18)
         debug.extend(dbg_rows)
 
         for u in urls:
@@ -550,6 +577,10 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
     # final filters + build
     out: List[Dict[str, Any]] = []
+    after_length_filter = 0
+
+    total_found_links = len(found_links)
+    after_dedupe = len(found_links)
 
     for u in sorted(found_links):
         ul = u.lower()
@@ -560,23 +591,27 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         if not any(k in ul for k in KEYWORDS):
             continue
 
-        L = _length_from_url(u)
-        if L is not None and not (min_len <= L <= max_len):
+        title_guess = u.split("/")[-1].replace("-", " ")
+        length_mm = _parse_length_mm(unquote(u)) or _parse_length_mm(title_guess)
+        if length_mm is None:
             continue
+        if not (min_len <= length_mm <= max_len):
+            continue
+        after_length_filter += 1
 
         ct = _classify_candidate(u)
 
         out.append({
             "manufacturer": "dallmer",
             "product_family": "Drain",
-            "product_name": u.split("/")[-1].replace("-", " "),
+            "product_name": title_guess,
             "product_url": u,
             "sources": sources_map.get(u, u),
             "candidate_type": ct,
             "complete_system": "yes" if ct == "product" else "component",
             "selected_length_mm": want,
-            "length_mode": "url" if L is not None else "unknown",
-            "length_delta_mm": (L - want) if L is not None else None,
+            "length_mode": "parsed",
+            "length_delta_mm": length_mm - want,
         })
 
         if len(out) >= 700:
@@ -589,6 +624,10 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "final_url": "search+sitemap+local",
         "error": "",
         "candidates_found": len(out),
+        "total_found_links": total_found_links,
+        "after_dedupe": after_dedupe,
+        "after_length_filter": after_length_filter,
+        "final_count": len(out),
         "method": "final",
         "is_index": None,
     })
@@ -598,54 +637,99 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 # Extraction helpers (smart height / DN / flow options)
 # ----------------------------
 
-def _extract_best_height_mm(text: str) -> Tuple[Optional[int], Optional[int], Optional[str]]:
+def _extract_best_height_mm(text: str) -> Tuple[Optional[int], Optional[int], Optional[str], Optional[str], Optional[int]]:
     """
-    Smart height extraction:
-    1) preferuje keyword + range A–B mm
-    2) potom keyword + single
-    3) potom fallback range kdekoliv
-    Ochrana: hodnoty musí být <= 300 mm (aby se nechytaly délky 900–1200 mm).
+    Height extraction with contextual scoring:
+    - +3 if snippet contains install-height keywords (Bauhöhe/Einbauhöhe/Installationshöhe/Aufbauhöhe)
+    - -3 if snippet contains cover/grate keywords (Rost/Rahmen/Abdeckung/Aufsatz/Fliesenmulde)
+    - pick the highest-score candidate; if best score < 0, return empty.
     """
     if not text:
-        return None, None, None
+        return None, None, None, None, None
 
     t = " ".join(text.split())
-    KEY = r"(?:Höheneinstellung|Höhenverstellung|höhenverstellbar|Adjustable height|Einbauhöhe|Bauhöhe|Installation height|Höhe|Height)"
+
+    POS_KEYS = ["bauhöhe", "einbauhöhe", "installationshöhe", "aufbauhöhe"]
+    NEG_KEYS = ["rost", "rahmen", "abdeckung", "aufsatz", "fliesenmulde", "water seal", "sperrwasser", "geruchsverschluss", "trap insert"]
 
     def ok(a: int, b: int) -> bool:
         return 1 <= a <= 300 and 1 <= b <= 300 and b >= a
 
-    # 1) keyword + range
-    for m in re.finditer(rf"{KEY}.{{0,80}}?(\d{{1,4}})\s*[-–]\s*(\d{{1,4}})\s*mm", t, flags=re.IGNORECASE):
+    def score_snippet(snippet: str) -> Tuple[int, str]:
+        sl = (snippet or "").lower()
+        score = 0
+        if any(k in sl for k in POS_KEYS):
+            score += 3
+        if any(k in sl for k in NEG_KEYS):
+            score -= 3
+        label = "Bauhöhe" if any(k in sl for k in POS_KEYS) else "fallback"
+        return score, label
+
+    candidates: List[Tuple[int, int, int, str, str]] = []  # score, min, max, snippet, label
+
+    # range candidates
+    for m in re.finditer(r"(\d{1,4})\s*[-–]\s*(\d{1,4})\s*mm", t, flags=re.IGNORECASE):
         try:
             a = int(m.group(1))
             b = int(m.group(2))
-            if ok(a, b):
-                return a, b, m.group(0)
         except Exception:
             continue
+        if not ok(a, b):
+            continue
+        s0 = max(0, m.start() - 60)
+        s1 = min(len(t), m.end() + 60)
+        snippet = t[s0:s1]
+        score, label = score_snippet(snippet)
+        candidates.append((score, a, b, snippet, label))
 
-    # 2) keyword + single
-    for m in re.finditer(rf"{KEY}.{{0,50}}?(\d{{1,4}})\s*mm", t, flags=re.IGNORECASE):
+    # single-value candidates
+    for m in re.finditer(r"(\d{1,4})\s*mm", t, flags=re.IGNORECASE):
         try:
             a = int(m.group(1))
-            if ok(a, a):
-                return a, a, m.group(0)
         except Exception:
             continue
-
-    # 3) fallback range anywhere
-    for m in re.finditer(r"(\d{1,4})\s*[-–]\s*(\d{1,4})\s*mm", t):
-        try:
-            a = int(m.group(1))
-            b = int(m.group(2))
-            if ok(a, b):
-                return a, b, m.group(0)
-        except Exception:
+        if not ok(a, a):
             continue
+        s0 = max(0, m.start() - 60)
+        s1 = min(len(t), m.end() + 60)
+        snippet = t[s0:s1]
+        score, label = score_snippet(snippet)
+        candidates.append((score, a, a, snippet, label))
 
-    return None, None, None
+    if not candidates:
+        return None, None, None, None, None
 
+    # Prefer higher score; tie-break by range-candidate preference and larger install-like values.
+    best = sorted(candidates, key=lambda x: (-x[0], -(1 if x[2] > x[1] else 0), -x[2], x[1]))[0]
+    best_score, hmin, hmax, hsnip, hlabel = best
+    if best_score < 0:
+        return None, None, None, None, None
+
+    if hmax <= 30 and best_score < 1:
+        return None, None, None, None, best_score
+
+    return hmin, hmax, hsnip, hlabel, best_score
+
+
+
+def _extract_trap_seal_height_snippets(text: str) -> List[str]:
+    if not text:
+        return []
+    t = " ".join(text.split())
+    out: List[str] = []
+    seen = set()
+    pat = re.compile(r"(water seal|sperrwasser|geruchsverschluss|trap insert)[^\n\r]{0,80}?\d{1,4}\s*mm", re.IGNORECASE)
+    for m in pat.finditer(t):
+        s0 = max(0, m.start() - 40)
+        s1 = min(len(t), m.end() + 40)
+        sn = t[s0:s1]
+        if sn in seen:
+            continue
+        seen.add(sn)
+        out.append(sn)
+        if len(out) >= 3:
+            break
+    return out
 
 def _dns_from_text(text: str) -> List[str]:
     if not text:
@@ -692,6 +776,42 @@ def _extract_flow_options_json(text: str) -> Optional[str]:
             pass
     opts = sorted(set(opts))
     return json.dumps(opts, ensure_ascii=False) if opts else None
+
+
+
+
+def _guess_pdb_pdf_links(product_url: str) -> List[str]:
+    m = re.search(r"/(\d{6})_", product_url or "")
+    if not m:
+        return []
+
+    sku = m.group(1)
+    ul = (product_url or "").lower()
+
+    lang_variants: List[Tuple[str, str]] = []
+    if "/en/" in ul:
+        lang_variants = [("en", "EN")]
+    elif "/de/" in ul:
+        lang_variants = [("de", "DE")]
+    else:
+        lang_variants = [("en", "EN"), ("de", "DE")]
+
+    bases = [BASE_COM]
+    try:
+        pu = urlparse(product_url or "")
+        if pu.scheme and pu.netloc:
+            bases.append(f"{pu.scheme}://{pu.netloc}")
+    except Exception:
+        pass
+
+    out: List[str] = []
+    for base in list(dict.fromkeys(bases)):
+        b = base.rstrip("/")
+        for lang, lang_up in lang_variants:
+            out.append(f"{b}/default-wAssets/docs/{lang}/pdb/_{sku}_{lang_up}.pdf")
+            out.append(f"{b}/default-wAssets/docs/{lang}/pdb/{sku}_{lang_up}.pdf")
+
+    return list(dict.fromkeys(out))
 
 
 def _find_pdf_links(html: str, base_url: str) -> List[str]:
@@ -751,6 +871,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
 
     page_text = ""
     pdf_links: List[str] = []
+    guessed_pdf_links: List[str] = []
     if st == 200 and html:
         soup = BeautifulSoup(html.replace("\\/", "/"), "lxml")
         page_text = soup.get_text(" ", strip=True) or ""
@@ -785,19 +906,30 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
             res["evidence"].append(("Flow rate options", opts_json, final))
 
         # smart height
-        hmin, hmax, hsnip = _extract_best_height_mm(page_text)
+        for trap_snip in _extract_trap_seal_height_snippets(page_text):
+            res["evidence"].append(("Trap seal height (mm)", trap_snip, final))
+
+        hmin, hmax, hsnip, hlabel, hscore = _extract_best_height_mm(page_text)
         if hmin is not None and hmax is not None:
             res["height_adj_min_mm"] = hmin
             res["height_adj_max_mm"] = hmax
             if hsnip:
-                res["evidence"].append(("Height adjustability", hsnip, final))
+                res["evidence"].append((f"Height ({hlabel or 'fallback'})", hsnip, final))
 
     # PDF only if needed (speed-up)
     need_pdf = (res.get("flow_rate_lps") is None) or (res.get("height_adj_min_mm") is None)
+    if not pdf_links and (res.get("flow_rate_lps") is None or need_pdf):
+        guessed_pdf_links = _guess_pdb_pdf_links(final)
+        pdf_links = list(guessed_pdf_links)
+
+    guessed_pdf_links_set = set(guessed_pdf_links)
     if need_pdf:
         for pdf_url in (pdf_links or [])[:3]:
             pdf_text, pdf_status = extract_pdf_text_from_url(pdf_url, headers=HEADERS)
             res["evidence"].append(("PDF status", pdf_status, pdf_url))
+            status_ok = str(pdf_status).lower().startswith("ok") or str(pdf_status).strip() == "200"
+            if status_ok and pdf_url in guessed_pdf_links_set:
+                res["evidence"].append(("PDF guess", pdf_url, product_url))
             if not pdf_text:
                 continue
 
@@ -818,12 +950,15 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
                     res["evidence"].append(("Flow rate options", opts_json, pdf_url))
 
             if res.get("height_adj_min_mm") is None or res.get("height_adj_max_mm") is None:
-                hmin, hmax, hsnip = _extract_best_height_mm(pdf_text)
+                for trap_snip in _extract_trap_seal_height_snippets(pdf_text):
+                    res["evidence"].append(("Trap seal height (mm)", trap_snip, pdf_url))
+
+                hmin, hmax, hsnip, hlabel, hscore = _extract_best_height_mm(pdf_text)
                 if hmin is not None and hmax is not None:
                     res["height_adj_min_mm"] = hmin
                     res["height_adj_max_mm"] = hmax
                     if hsnip:
-                        res["evidence"].append(("Height adjustability", hsnip, pdf_url))
+                        res["evidence"].append((f"Height ({hlabel or 'fallback'})", hsnip, pdf_url))
 
             if res.get("outlet_dn_options_json") is None:
                 dns2 = _dns_from_text(pdf_text)
