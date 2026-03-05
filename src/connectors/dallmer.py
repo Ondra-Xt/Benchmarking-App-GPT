@@ -637,53 +637,75 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 # Extraction helpers (smart height / DN / flow options)
 # ----------------------------
 
-def _extract_best_height_mm(text: str) -> Tuple[Optional[int], Optional[int], Optional[str]]:
+def _extract_best_height_mm(text: str) -> Tuple[Optional[int], Optional[int], Optional[str], Optional[str]]:
     """
-    Smart height extraction:
-    1) preferuje keyword + range A–B mm
-    2) potom keyword + single
-    3) potom fallback range kdekoliv
-    Ochrana: hodnoty musí být <= 300 mm (aby se nechytaly délky 900–1200 mm).
+    Height extraction with contextual scoring:
+    - +3 if snippet contains install-height keywords (Bauhöhe/Einbauhöhe/Installationshöhe/Aufbauhöhe)
+    - -3 if snippet contains cover/grate keywords (Rost/Rahmen/Abdeckung/Aufsatz/Fliesenmulde)
+    - pick the highest-score candidate; if best score < 0, return empty.
     """
     if not text:
-        return None, None, None
+        return None, None, None, None
 
     t = " ".join(text.split())
-    KEY = r"(?:Höheneinstellung|Höhenverstellung|höhenverstellbar|Adjustable height|Einbauhöhe|Bauhöhe|Installation height|Höhe|Height)"
+
+    POS_KEYS = ["bauhöhe", "einbauhöhe", "installationshöhe", "aufbauhöhe"]
+    NEG_KEYS = ["rost", "rahmen", "abdeckung", "aufsatz", "fliesenmulde"]
 
     def ok(a: int, b: int) -> bool:
         return 1 <= a <= 300 and 1 <= b <= 300 and b >= a
 
-    # 1) keyword + range
-    for m in re.finditer(rf"{KEY}.{{0,80}}?(\d{{1,4}})\s*[-–]\s*(\d{{1,4}})\s*mm", t, flags=re.IGNORECASE):
+    def score_snippet(snippet: str) -> Tuple[int, str]:
+        sl = (snippet or "").lower()
+        score = 0
+        if any(k in sl for k in POS_KEYS):
+            score += 3
+        if any(k in sl for k in NEG_KEYS):
+            score -= 3
+        label = "Bauhöhe" if any(k in sl for k in POS_KEYS) else "fallback"
+        return score, label
+
+    candidates: List[Tuple[int, int, int, str, str]] = []  # score, min, max, snippet, label
+
+    # range candidates
+    for m in re.finditer(r"(\d{1,4})\s*[-–]\s*(\d{1,4})\s*mm", t, flags=re.IGNORECASE):
         try:
             a = int(m.group(1))
             b = int(m.group(2))
-            if ok(a, b):
-                return a, b, m.group(0)
         except Exception:
             continue
+        if not ok(a, b):
+            continue
+        s0 = max(0, m.start() - 60)
+        s1 = min(len(t), m.end() + 60)
+        snippet = t[s0:s1]
+        score, label = score_snippet(snippet)
+        candidates.append((score, a, b, snippet, label))
 
-    # 2) keyword + single
-    for m in re.finditer(rf"{KEY}.{{0,50}}?(\d{{1,4}})\s*mm", t, flags=re.IGNORECASE):
+    # single-value candidates
+    for m in re.finditer(r"(\d{1,4})\s*mm", t, flags=re.IGNORECASE):
         try:
             a = int(m.group(1))
-            if ok(a, a):
-                return a, a, m.group(0)
         except Exception:
             continue
-
-    # 3) fallback range anywhere
-    for m in re.finditer(r"(\d{1,4})\s*[-–]\s*(\d{1,4})\s*mm", t):
-        try:
-            a = int(m.group(1))
-            b = int(m.group(2))
-            if ok(a, b):
-                return a, b, m.group(0)
-        except Exception:
+        if not ok(a, a):
             continue
+        s0 = max(0, m.start() - 60)
+        s1 = min(len(t), m.end() + 60)
+        snippet = t[s0:s1]
+        score, label = score_snippet(snippet)
+        candidates.append((score, a, a, snippet, label))
 
-    return None, None, None
+    if not candidates:
+        return None, None, None, None
+
+    # Prefer higher score; tie-break by range-candidate preference and larger install-like values.
+    best = sorted(candidates, key=lambda x: (-x[0], -(1 if x[2] > x[1] else 0), -x[2], x[1]))[0]
+    best_score, hmin, hmax, hsnip, hlabel = best
+    if best_score < 0:
+        return None, None, None, None
+
+    return hmin, hmax, hsnip, hlabel
 
 
 def _dns_from_text(text: str) -> List[str]:
@@ -861,12 +883,12 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
             res["evidence"].append(("Flow rate options", opts_json, final))
 
         # smart height
-        hmin, hmax, hsnip = _extract_best_height_mm(page_text)
+        hmin, hmax, hsnip, hlabel = _extract_best_height_mm(page_text)
         if hmin is not None and hmax is not None:
             res["height_adj_min_mm"] = hmin
             res["height_adj_max_mm"] = hmax
             if hsnip:
-                res["evidence"].append(("Height adjustability", hsnip, final))
+                res["evidence"].append((f"Height ({hlabel or 'fallback'})", hsnip, final))
 
     # PDF only if needed (speed-up)
     need_pdf = (res.get("flow_rate_lps") is None) or (res.get("height_adj_min_mm") is None)
@@ -902,12 +924,12 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
                     res["evidence"].append(("Flow rate options", opts_json, pdf_url))
 
             if res.get("height_adj_min_mm") is None or res.get("height_adj_max_mm") is None:
-                hmin, hmax, hsnip = _extract_best_height_mm(pdf_text)
+                hmin, hmax, hsnip, hlabel = _extract_best_height_mm(pdf_text)
                 if hmin is not None and hmax is not None:
                     res["height_adj_min_mm"] = hmin
                     res["height_adj_max_mm"] = hmax
                     if hsnip:
-                        res["evidence"].append(("Height adjustability", hsnip, pdf_url))
+                        res["evidence"].append((f"Height ({hlabel or 'fallback'})", hsnip, pdf_url))
 
             if res.get("outlet_dn_options_json") is None:
                 dns2 = _dns_from_text(pdf_text)
