@@ -29,7 +29,7 @@ LENGTH_RE = re.compile(r"(?:\b(?:l|länge)\s*[=:]?\s*)?(\d{1,2}(?:\.\d{3})|\d{3,
 MM_RE = re.compile(r"(\d{1,3})\s*mm", re.IGNORECASE)
 TECE_COM_BASE = "https://www.tece.com"
 TECE_INCLUDE = ("drainline", "drainprofile", "duschrinne", "duschprofil")
-TECE_EXCLUDE = ("academy", "service", "servicios", "dokumente", "download", "presse", "magazin", "montage", "anleitung", "instruk", "instruction", "manual", "datenblatt", "zubehoer", ".pdf", "badkeramiken", "dusch-wc", "teceone", "teceneo", "baukasten")
+TECE_EXCLUDE = ("academy", "service", "servicios", "dokumente", "download", "presse", "magazin", "montage", "anleitung", "instruk", "instruction", "manual", "datenblatt", "zubehoer", ".pdf", "badkeramiken", "dusch-wc", "teceone", "teceneo")
 PRODUCT_HINTS = ("tecedrainline", "tecedrainprofile", "duschrinne", "duschprofil")
 _LOC_RE = re.compile(r"<loc>(.*?)</loc>", re.IGNORECASE | re.DOTALL)
 
@@ -230,8 +230,6 @@ def _is_tececom_de_html(url: str) -> bool:
         return False
     if path.endswith(".pdf"):
         return False
-    if "/baukasten" in path:
-        return False
     return True
 
 
@@ -271,29 +269,21 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
     scoped_urls = [_canonicalize_url(u) for u in de_urls if _passes_include_exclude(_canonicalize_url(u))]
     scoped_urls = list(dict.fromkeys(scoped_urls))
+    after_include_exclude = len(scoped_urls)
 
     out: List[Dict[str, Any]] = []
     after_length_filter = 0
     sample_before_length_filter = scoped_urls[:10]
     sample_dropped_by_length: List[Dict[str, Any]] = []
-    sample_dropped_by_nonproduct: List[str] = []
     sample_accepted_urls: List[str] = []
 
-    processed = set()
-    idx = 0
-    while idx < len(scoped_urls):
+    for idx, u in enumerate(scoped_urls):
         if len(out) >= 300:
             break
 
-        u = scoped_urls[idx]
-        idx += 1
-        if u in processed:
-            continue
-        processed.add(u)
-
         st, final, html, err = _safe_get_text(u, timeout=25)
         final_c = _canonicalize_url(final)
-        if st != 200 or not html or not _is_tececom_de_html(final_c) or not _passes_include_exclude(final_c):
+        if st != 200 or not html or not _is_tececom_de_html(final_c):
             debug.append({
                 "site": "tece",
                 "seed_url": u,
@@ -307,19 +297,12 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             })
             continue
 
-        # Index pages are allowed as sources for further product links but not accepted as candidates unless product-like.
-        for lu in _extract_product_links(html, final_c):
-            if lu not in processed and lu not in scoped_urls and len(scoped_urls) < 600:
-                scoped_urls.append(lu)
-
         heading = _extract_heading_text(html)
         if not _is_product_like_heading(heading):
-            if len(sample_dropped_by_nonproduct) < 20:
-                sample_dropped_by_nonproduct.append(final_c)
             continue
 
         length_mm = _extract_length_from_text(unquote(final_c)) or _extract_length_from_text(heading)
-        if length_mm is None and idx <= 50:
+        if length_mm is None and idx < 50:
             full_text = _clean_text(BeautifulSoup(html, "lxml").get_text(" ", strip=True))
             length_mm = parse_length_mm(full_text)
             if length_mm is None:
@@ -328,7 +311,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                     length_mm = int(target_length_mm)
 
         if length_mm is None or not (min_len <= length_mm <= max_len):
-            if len(sample_dropped_by_length) < 20:
+            if len(sample_dropped_by_length) < 10:
                 sample_dropped_by_length.append({"url": final_c, "length_mm": length_mm})
             continue
         after_length_filter += 1
@@ -352,8 +335,6 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         if len(sample_accepted_urls) < 20:
             sample_accepted_urls.append(final_c)
 
-    after_include_exclude = len(scoped_urls)
-
     debug.append({
         "site": "tece",
         "seed_url": "summary",
@@ -366,7 +347,6 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "after_length_filter": after_length_filter,
         "sample_before_length_filter": json.dumps(sample_before_length_filter, ensure_ascii=False),
         "sample_dropped_by_length": json.dumps(sample_dropped_by_length, ensure_ascii=False),
-        "sample_dropped_by_nonproduct": json.dumps(sample_dropped_by_nonproduct, ensure_ascii=False),
         "sample_accepted_urls": json.dumps(sample_accepted_urls, ensure_ascii=False),
         "final_count": len(out),
         "candidates_found": len(scoped_urls),
