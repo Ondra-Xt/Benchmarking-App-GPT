@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import re
 import json
 import gzip
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -42,6 +42,21 @@ def _base_from_url(url: str) -> str:
     except Exception:
         pass
     return BASE
+
+
+def _canonicalize_hansgrohe_url(url: str) -> str:
+    """Normalizuje Hansgrohe URL na .de doménu kvůli konzistentním datům."""
+    src = (url or "").strip()
+    if not src:
+        return src
+    try:
+        p = urlparse(src)
+        host = (p.netloc or "").lower()
+        if "hansgrohe" in host and host not in {"hansgrohe.de", "www.hansgrohe.de"}:
+            return urlunparse((p.scheme or "https", "www.hansgrohe.de", p.path, p.params, p.query, p.fragment))
+    except Exception:
+        return src
+    return src
 
 
 def _safe_get_text(url: str, timeout: int = 35) -> Tuple[Optional[int], str, str, str]:
@@ -501,8 +516,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             "manufacturer": "hansgrohe",
             "product_family": "RainDrain",
             "product_name": title,
-            "product_url": u,
-            "sources": u,
+            "product_url": _canonicalize_hansgrohe_url(u),
+            "sources": _canonicalize_hansgrohe_url(u),
             "candidate_type": ct,
             "complete_system": "requires_base" if ct == "finish_set" else "yes",
             "selected_length_mm": want,
@@ -522,12 +537,13 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         },
     ]
     for it in ubox_items:
+        canonical_url = _canonicalize_hansgrohe_url(it["url"])
         out.append({
             "manufacturer": "hansgrohe",
             "product_family": "uBox",
             "product_name": it["name"],
-            "product_url": it["url"],
-            "sources": it["url"],
+            "product_url": canonical_url,
+            "sources": canonical_url,
             "candidate_type": "base_set",
             "complete_system": "component/base-set",
             "selected_length_mm": want,
@@ -550,6 +566,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
 
 def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    product_url = _canonicalize_hansgrohe_url(product_url)
     title = ""
     if params and isinstance(params, dict):
         title = str(params.get("_title") or params.get("product_name") or "")
@@ -572,7 +589,7 @@ def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -
         {
             "bom_code": "UBOX-FLAT-DN40",
             "bom_name": "uBox universal – flat installation (DN40)",
-            "bom_url": "https://www.hansgrohe.cz/articledetail-ubox-universal-zakladni-teleso-pro-sprchove-zlaby-pro-plochou-instalaci-01000180",
+            "bom_url": "https://www.hansgrohe.de/articledetail-ubox-universal-zakladni-teleso-pro-sprchove-zlaby-pro-plochou-instalaci-01000180",
             "outlet_dn": "DN40",
             "is_default": "no",
         },
@@ -659,7 +676,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
         "evidence": [],
     }
 
-    src = (product_url or "").strip()
+    src = _canonicalize_hansgrohe_url((product_url or "").strip())
     base_url = _base_from_url(src)
     article_no = _extract_article_no(src)
     title = src.split("/")[-1].replace("-", " ")
