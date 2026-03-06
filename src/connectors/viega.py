@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
-import gzip
-import hashlib
 import json
 import re
 from urllib.parse import urljoin
@@ -14,7 +12,6 @@ from ..flowrate import select_flow_rate
 from ..pdf_text import extract_pdf_text_from_url
 
 
-BASE = "https://www.viega.de"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -22,8 +19,10 @@ HEADERS = {
     "Connection": "keep-alive",
 }
 
-INCLUDE_KWS = ("duschrinne", "duschablauf", "rinne", "advantix", "duschrinnen")
-EXCLUDE_KWS = ("service", "kontakt", "presse", "karriere", "download", "katalog", "video", "news")
+SEED_URLS = [
+    "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Cleviva-Duschrinnen/Einbauhoehe-ab-70-mm/Advantix-Cleviva-Duschrinne-4981-11.html",
+    "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Vario-Duschrinnen/Einbauhoehe-ab-70-mm/Advantix-Vario-Duschrinnen-4966-10.html",
+]
 
 LENGTH_RE_LIST = [
     re.compile(r"\b(\d{3,4})\s*mm\b", re.IGNORECASE),
@@ -31,7 +30,7 @@ LENGTH_RE_LIST = [
     re.compile(r"\bl(?:ä|ae)nge\s*(\d{3,4})\b", re.IGNORECASE),
     re.compile(r"\b(\d{3,4})mm\b", re.IGNORECASE),
 ]
-
+ARTICLE_FROM_URL_RE = re.compile(r"-(\d{3,5}-\d{2})\.html$", re.IGNORECASE)
 DN_RE = re.compile(r"(?:nennweite\s*)?dn\s*(40|50|70)\b", re.IGNORECASE)
 FLOW_LPS_RE = re.compile(r"(?P<val>\d+(?:[.,]\d+)?)\s*l\s*/\s*s\b", re.IGNORECASE)
 FLOW_REJECT_RE = re.compile(r"reduziert\s+um|reduziert|reduzieren|reduzierung", re.IGNORECASE)
@@ -44,7 +43,6 @@ HEIGHT_SINGLE_RE = re.compile(
     re.IGNORECASE,
 )
 TRAP_SEAL_RE = re.compile(r"sperrwasserh(?:ö|oe)he|geruchsverschluss|water\s+seal", re.IGNORECASE)
-LOC_RE = re.compile(r"<loc>(.*?)</loc>", re.IGNORECASE | re.DOTALL)
 
 
 def _safe_get_text(url: str, timeout: int = 35) -> Tuple[Optional[int], str, str, str]:
@@ -55,20 +53,8 @@ def _safe_get_text(url: str, timeout: int = 35) -> Tuple[Optional[int], str, str
         return None, url, "", f"{type(e).__name__}: {e}"
 
 
-def _safe_get_bytes(url: str, timeout: int = 45) -> Tuple[Optional[int], str, bytes, str]:
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=timeout, allow_redirects=True)
-        return r.status_code, str(r.url), (r.content or b""), ""
-    except Exception as e:
-        return None, url, b"", f"{type(e).__name__}: {e}"
-
-
 def _clean_text(s: str) -> str:
     return " ".join((s or "").split())
-
-
-def _abs(href: str, base: str) -> str:
-    return urljoin(base, href or "")
 
 
 def _main_flat_text(html: str) -> str:
@@ -89,143 +75,56 @@ def _extract_title(html: str, fallback_url: str) -> str:
         txt = _clean_text(h1.get_text(" ", strip=True))
         if txt:
             return txt
-    title = soup.select_one("title")
-    if title:
-        txt = _clean_text(title.get_text(" ", strip=True))
+    t = soup.select_one("title")
+    if t:
+        txt = _clean_text(t.get_text(" ", strip=True))
         if txt:
             return txt
     return fallback_url.rstrip("/").split("/")[-1].replace("-", " ")
 
 
-def _extract_length_mm(text: str) -> Optional[int]:
+def _extract_length_options(text: str) -> List[int]:
+    out: List[int] = []
+    seen = set()
     src = text or ""
     for rx in LENGTH_RE_LIST:
-        m = rx.search(src)
-        if not m:
-            continue
-        try:
-            if len(m.groups()) == 2:
-                v = int(m.group(1) + m.group(2))
-            else:
-                v = int(m.group(1))
-            if 300 <= v <= 2500:
-                return v
-        except Exception:
-            continue
-    return None
+        for m in rx.finditer(src):
+            try:
+                if len(m.groups()) == 2:
+                    v = int(m.group(1) + m.group(2))
+                else:
+                    v = int(m.group(1))
+            except Exception:
+                continue
+            if 300 <= v <= 2500 and v not in seen:
+                seen.add(v)
+                out.append(v)
+    return sorted(out)
 
 
-def _extract_article_digits(text: str) -> Optional[str]:
-    if not text:
-        return None
-    # common Viega-like article patterns with separators or longer digit chunks
-    m = re.search(r"\b(?:\d{2,3}[.\-/]\d{2,3}[.\-/]\d{2,3}|\d{7,10})\b", text)
-    if not m:
-        return None
-    digits = re.sub(r"\D", "", m.group(0))
-    if len(digits) < 6:
-        return None
-    return digits
+def _digits_only(s: str) -> str:
+    return re.sub(r"\D", "", s or "")
 
 
-def _make_product_id(url: str, title: str = "") -> str:
-    art = _extract_article_digits(f"{url} {title}")
-    if art:
-        return f"viega-{art}"
-    h = hashlib.sha1((url or "").encode("utf-8", errors="ignore")).hexdigest()[:12]
-    return f"viega-{h}"
-
-
-def _robots_sitemaps(base_url: str) -> List[str]:
-    robots_url = base_url.rstrip("/") + "/robots.txt"
-    st, _, txt, _ = _safe_get_text(robots_url, timeout=25)
-    if st != 200 or not txt:
-        return [base_url.rstrip("/") + "/sitemap.xml"]
-
-    out: List[str] = []
-    for line in txt.splitlines():
-        if line.lower().startswith("sitemap:"):
-            u = line.split(":", 1)[1].strip()
-            if u.startswith("http"):
-                out.append(u)
-    return list(dict.fromkeys(out)) or [base_url.rstrip("/") + "/sitemap.xml"]
-
-
-def _extract_sitemap_urls(payload: bytes) -> Tuple[List[str], bool]:
-    if not payload:
-        return [], False
-
-    if payload[:2] == b"\x1f\x8b":
-        try:
-            payload = gzip.decompress(payload)
-        except Exception:
-            return [], False
-
-    txt = payload.decode("utf-8", errors="ignore").strip()
-    if not txt:
-        return [], False
-
-    if "<" not in txt[:200] and "http" in txt:
-        urls = [u.strip() for u in re.split(r"\s+", txt) if u.strip().startswith("http")]
-        xmlish = sum(1 for u in urls if u.lower().endswith((".xml", ".xml.gz", ".gz")))
-        is_index = (xmlish >= max(1, int(0.6 * len(urls)))) if urls else False
-        return urls, is_index
-
-    locs = [m.group(1).strip() for m in LOC_RE.finditer(txt) if m.group(1).strip()]
-    if not locs:
-        return [], False
-
-    is_index = "<sitemapindex" in txt.lower()
-    if not is_index:
-        xmlish = sum(1 for u in locs if u.lower().endswith((".xml", ".xml.gz", ".gz")))
-        is_index = (xmlish >= max(1, int(0.6 * len(locs))))
-
-    return locs, is_index
-
-
-def _crawl_sitemaps(start_sitemaps: List[str], max_sitemaps: int = 120, max_pages: int = 80000) -> Tuple[List[str], List[Dict[str, Any]]]:
-    seen = set()
-    queue = list(start_sitemaps)
-    pages: List[str] = []
-    debug: List[Dict[str, Any]] = []
-
-    while queue and len(seen) < max_sitemaps and len(pages) < max_pages:
-        sm = queue.pop(0)
-        if sm in seen:
-            continue
-        seen.add(sm)
-
-        st, final, body, err = _safe_get_bytes(sm, timeout=45)
-        if st != 200 or not body:
-            debug.append({"site": "viega", "seed_url": sm, "status_code": st, "final_url": final, "error": err, "candidates_found": 0, "method": "sitemap", "is_index": None})
-            continue
-
-        urls, is_index = _extract_sitemap_urls(body)
-        debug.append({"site": "viega", "seed_url": sm, "status_code": st, "final_url": final, "error": err, "candidates_found": len(urls), "method": "sitemap", "is_index": bool(is_index)})
-
-        if is_index:
-            for u in urls:
-                if u not in seen:
-                    queue.append(u)
-        else:
-            pages.extend(urls)
-
-    return list(dict.fromkeys(pages)), debug
-
-
-def _relevant_channel_url(url: str) -> bool:
-    u = (url or "").lower()
-    if not u.startswith("http"):
-        return False
-    if any(k in u for k in EXCLUDE_KWS):
-        return False
-    return any(k in u for k in INCLUDE_KWS)
+def _product_id_from_url(url: str) -> str:
+    m = ARTICLE_FROM_URL_RE.search(url or "")
+    if m:
+        return f"viega-{_digits_only(m.group(1))}"
+    tail = (url or "").rstrip("/").split("/")[-1]
+    d = _digits_only(tail)
+    if len(d) >= 6:
+        return f"viega-{d}"
+    return f"viega-{abs(hash(url or ''))}"
 
 
 def _snippet(flat: str, start: int, end: int, pad: int = 80) -> str:
     lo = max(0, start - pad)
     hi = min(len(flat), end + pad)
     return flat[lo:hi]
+
+
+def _abs(href: str, base: str) -> str:
+    return urljoin(base, href or "")
 
 
 def _extract_pdf_candidates(html: str, base_url: str) -> List[Tuple[str, int]]:
@@ -237,17 +136,17 @@ def _extract_pdf_candidates(html: str, base_url: str) -> List[Tuple[str, int]]:
         href = a.get("href") or ""
         if ".pdf" not in href.lower():
             continue
-        url = _abs(href, base_url)
-        if url in seen:
+        u = _abs(href, base_url)
+        if u in seen:
             continue
-        seen.add(url)
+        seen.add(u)
         txt = _clean_text(a.get_text(" ", strip=True)).lower()
         score = 0
-        if "datenblatt" in txt or "technische daten" in txt or "product" in txt:
+        if "technische daten" in txt or "datenblatt" in txt:
             score += 4
         if "montage" in txt or "anleitung" in txt:
             score += 1
-        out.append((url, score))
+        out.append((u, score))
 
     out.sort(key=lambda x: x[1], reverse=True)
     return out
@@ -257,7 +156,7 @@ def _apply_text_extraction(res: Dict[str, Any], flat: str, src: str) -> None:
     if not flat:
         return
 
-    # outlet DN (contextual)
+    # outlet DN
     dns = sorted({f"DN{m.group(1)}" for m in DN_RE.finditer(flat)})
     if dns and res.get("outlet_dn") is None:
         res["outlet_dn"] = "/".join(dns)
@@ -267,12 +166,12 @@ def _apply_text_extraction(res: Dict[str, Any], flat: str, src: str) -> None:
         if first:
             res["evidence"].append(("Outlet DN", _snippet(flat, first.start(), first.end()), src))
 
-    # flow options with reduction filter
+    # flow l/s options
     lps_vals: List[float] = []
     for m in FLOW_LPS_RE.finditer(flat):
-        sn = _snippet(flat, m.start(), m.end(), pad=40).lower()
-        prefix = flat[max(0, m.start() - 6):m.start()]
-        if FLOW_REJECT_RE.search(sn) or "-" in prefix:
+        ctx = _snippet(flat, m.start(), m.end(), pad=40).lower()
+        pref = flat[max(0, m.start() - 4):m.start()]
+        if FLOW_REJECT_RE.search(ctx) or "-" in pref:
             continue
         try:
             v = float(m.group("val").replace(",", "."))
@@ -295,7 +194,7 @@ def _apply_text_extraction(res: Dict[str, Any], flat: str, src: str) -> None:
         res["flow_rate_unit"] = unit
         res["flow_rate_status"] = status
 
-    # heights - ignore trap seal contexts
+    # heights excluding trap seal contexts
     h = HEIGHT_RE.search(flat)
     if h and not TRAP_SEAL_RE.search(_snippet(flat, h.start(), h.end(), pad=30)):
         a = int(h.group(1))
@@ -324,47 +223,76 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     out: List[Dict[str, Any]] = []
     debug: List[Dict[str, Any]] = []
 
-    sitemaps = _robots_sitemaps(BASE)
-    pages, dbg = _crawl_sitemaps(sitemaps)
-    debug.extend(dbg)
-
-    cands = [u for u in pages if _relevant_channel_url(u)]
-
-    # Conservative: first pass length from URL only
-    for u in sorted(set(cands)):
-        length = _extract_length_mm(u)
-        title = u.rstrip("/").split("/")[-1].replace("-", " ")
-        if length is None:
-            # limited title fetch for unresolved lengths
-            st, final, html, err = _safe_get_text(u, timeout=20)
-            debug.append({"site": "viega", "seed_url": u, "status_code": st, "final_url": final, "error": err, "candidates_found": 0, "method": "title_probe", "is_index": None})
-            if st == 200 and html:
-                title = _extract_title(html, u)
-                length = _extract_length_mm(title)
-
-        if length is None or not (min_len <= length <= max_len):
+    for seed in SEED_URLS:
+        st, final, html, err = _safe_get_text(seed, timeout=35)
+        if st != 200 or not html:
+            debug.append({
+                "site": "viega",
+                "seed_url": seed,
+                "status_code": st,
+                "final_url": final,
+                "error": err,
+                "candidates_found": 0,
+                "method": "seed",
+                "is_index": None,
+            })
             continue
 
-        out.append({
-            "manufacturer": "viega",
-            "product_id": _make_product_id(u, title),
-            "product_family": "Advantix",
-            "product_name": f"{title} ({length} mm)",
-            "product_url": u,
-            "sources": u,
-            "candidate_type": "drain",
-            "complete_system": "yes",
-            "selected_length_mm": want,
-            "length_mode": "url_or_title",
-            "length_delta_mm": length - want,
+        title = _extract_title(html, final)
+        flat = _main_flat_text(html)
+        lengths = _extract_length_options(f"{title} {flat}")
+
+        kept = 0
+        if lengths:
+            for length in lengths:
+                if not (min_len <= length <= max_len):
+                    continue
+                kept += 1
+                out.append({
+                    "manufacturer": "viega",
+                    "product_id": _product_id_from_url(seed),
+                    "product_family": "Advantix",
+                    "product_name": f"{title} ({length} mm)",
+                    "product_url": seed,
+                    "sources": seed,
+                    "candidate_type": "drain",
+                    "complete_system": "yes",
+                    "selected_length_mm": want,
+                    "length_mode": "html",
+                    "length_delta_mm": length - want,
+                })
+        else:
+            kept += 1
+            out.append({
+                "manufacturer": "viega",
+                "product_id": _product_id_from_url(seed),
+                "product_family": "Advantix",
+                "product_name": title,
+                "product_url": seed,
+                "sources": seed,
+                "candidate_type": "drain",
+                "complete_system": "yes",
+                "selected_length_mm": want,
+                "length_mode": "unknown",
+                "length_delta_mm": None,
+            })
+
+        debug.append({
+            "site": "viega",
+            "seed_url": seed,
+            "status_code": st,
+            "final_url": final,
+            "error": err,
+            "candidates_found": kept,
+            "method": "seed",
+            "is_index": None,
         })
 
-    # de-dup by URL
+    # de-dup by product_id + url + name
     dedup = {}
     for r in out:
-        dedup[(r["manufacturer"], r["product_url"])] = r
+        dedup[(r["product_id"], r["product_url"], r["product_name"])] = r
 
-    debug.append({"site": "viega", "seed_url": BASE + "/sitemap.xml", "status_code": 200 if dedup else None, "final_url": BASE + "/sitemap.xml", "error": "" if dedup else "No candidates after filters.", "candidates_found": len(dedup), "method": "final", "is_index": None})
     return list(dedup.values()), debug
 
 
@@ -398,11 +326,10 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
     flat = _main_flat_text(html)
     _apply_text_extraction(res, flat, final)
 
-    if re.search(r"\b(?:DIN\s*)?EN\s*1253(?:-1)?\b", flat, re.IGNORECASE):
+    m_en = re.search(r"\b(?:DIN\s*)?EN\s*1253(?:-1)?\b", flat, re.IGNORECASE)
+    if m_en:
         res["din_en_1253_cert"] = "yes"
-        m = re.search(r"\b(?:DIN\s*)?EN\s*1253(?:-1)?\b", flat, re.IGNORECASE)
-        if m:
-            res["evidence"].append(("DIN EN 1253", _snippet(flat, m.start(), m.end()), final))
+        res["evidence"].append(("DIN EN 1253", _snippet(flat, m_en.start(), m_en.end()), final))
 
     need_pdf = any(res.get(k) is None for k in ["outlet_dn", "flow_rate_lps", "height_adj_min_mm", "height_adj_max_mm"])
     if need_pdf:
@@ -412,7 +339,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
             if not pdf_text:
                 continue
             _apply_text_extraction(res, _clean_text(pdf_text), pdf_url)
-            if re.search(r"\b(?:DIN\s*)?EN\s*1253(?:-1)?\b", pdf_text, re.IGNORECASE) and res.get("din_en_1253_cert") is None:
+            if res.get("din_en_1253_cert") is None and re.search(r"\b(?:DIN\s*)?EN\s*1253(?:-1)?\b", pdf_text, re.IGNORECASE):
                 res["din_en_1253_cert"] = "yes"
 
             done = all(res.get(k) is not None for k in ["outlet_dn", "flow_rate_lps", "height_adj_min_mm", "height_adj_max_mm"])
