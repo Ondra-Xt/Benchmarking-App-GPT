@@ -32,6 +32,8 @@ HEIGHT_OE_RE = re.compile(
 HEIGHT_RE = re.compile(r"einbauh(?:ö|oe)he[^\d]{0,25}(\d{2,3})\s*[-–]\s*(\d{2,3})\s*mm", re.IGNORECASE)
 DN_RE = re.compile(r"\bDN\s*(\d{2})\b", re.IGNORECASE)
 EN1253_RE = re.compile(r"\b(?:DIN\s*)?EN\s*1253(?:-1)?\b", re.IGNORECASE)
+DN_CONTEXT_RE = re.compile(r"ablaufstutzen|ablauf|anschluss|stutzen|\bdn\b", re.IGNORECASE)
+FLOW_REJECT_RE = re.compile(r"reduziert|reduzieren|reduziert\s+die\s+abflussleistung", re.IGNORECASE)
 
 
 def _safe_get_text(url: str, timeout: int = 35) -> Tuple[Optional[int], str, str, str]:
@@ -44,6 +46,18 @@ def _safe_get_text(url: str, timeout: int = 35) -> Tuple[Optional[int], str, str
 
 def _clean_text(s: str) -> str:
     return " ".join((s or "").split())
+
+
+def _main_flat_text_from_html(html: str) -> str:
+    soup = BeautifulSoup(html or "", "lxml")
+    main = soup.select_one("main")
+    if main is not None:
+        return _clean_text(main.get_text(" ", strip=True) or "")
+
+    for sel in ["header", "nav", "footer", "aside"]:
+        for tag in soup.select(sel):
+            tag.decompose()
+    return _clean_text(soup.get_text(" ", strip=True) or "")
 
 
 def _extract_title(html: str, fallback_url: str) -> str:
@@ -201,6 +215,28 @@ def _snippet(flat: str, start: int, end: int, pad: int = 80) -> str:
     return flat[lo:hi]
 
 
+def _has_dn_context(flat: str, start: int, end: int, window: int = 60) -> bool:
+    lo = max(0, start - window)
+    hi = min(len(flat), end + window)
+    return bool(DN_CONTEXT_RE.search(flat[lo:hi]))
+
+
+def _is_valid_flow_context(flat: str, start: int, end: int) -> bool:
+    # look mostly at nearby prefix where reduction phrasing appears
+    prefix = flat[max(0, start - 45):start].lower()
+    if FLOW_REJECT_RE.search(prefix):
+        return False
+    # reject phrasing like "um 0,12 l/s"
+    short_prefix = flat[max(0, start - 6):start].lower()
+    if short_prefix.endswith(" um ") or short_prefix.endswith("um "):
+        return False
+    # reject leading minus sign right before number (e.g. "-0,09 l/s")
+    lead = flat[max(0, start - 3):start]
+    if "-" in lead:
+        return False
+    return True
+
+
 def extract_parameters(product_url: str) -> Dict[str, Any]:
     res: Dict[str, Any] = {
         "flow_rate_lps": None,
@@ -228,8 +264,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
     if st != 200 or not html:
         return res
 
-    soup = BeautifulSoup(html, "lxml")
-    flat = _clean_text(soup.get_text(" ", strip=True) or "")
+    flat = _main_flat_text_from_html(html)
 
     # height (prefer Oberkante Estrich phrase)
     hm = HEIGHT_OE_RE.search(flat) or HEIGHT_RE.search(flat)
@@ -243,7 +278,13 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
             res["evidence"].append(("Einbauhöhe (mm)", _snippet(flat, hm.start(), hm.end()), final))
 
     # DN
-    dns = sorted({f"DN{int(m.group(1))}" for m in DN_RE.finditer(flat) if m.group(1) in {"40", "50", "70"}})
+    dns = sorted(
+        {
+            f"DN{int(m.group(1))}"
+            for m in DN_RE.finditer(flat)
+            if m.group(1) in {"40", "50", "70"} and _has_dn_context(flat, m.start(), m.end())
+        }
+    )
     if dns:
         res["outlet_dn"] = "/".join(dns)
         res["outlet_dn_default"] = "DN50" if "DN50" in dns else dns[0]
@@ -255,11 +296,13 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
     # flow rate options
     lps_values: List[float] = []
     for m in FLOW_LPS_RE.finditer(flat):
+        if not _is_valid_flow_context(flat, m.start(), m.end()):
+            continue
         try:
             v = float(m.group(1).replace(",", "."))
         except Exception:
             continue
-        if 0.05 <= v <= 5.0:
+        if 0.05 <= v <= 3.0:
             lps_values.append(v)
             res["evidence"].append(("Flow rate option (l/s)", _snippet(flat, m.start(), m.end()), final))
 
