@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 import json
 import re
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -19,9 +19,13 @@ HEADERS = {
     "Connection": "keep-alive",
 }
 
+DETAIL_SCOPE = "/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/"
 SEED_URLS = [
     "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Cleviva-Duschrinnen/Einbauhoehe-ab-70-mm/Advantix-Cleviva-Duschrinne-4981-11.html",
     "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Vario-Duschrinnen/Einbauhoehe-ab-70-mm/Advantix-Vario-Duschrinnen-4966-10.html",
+    "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen.html",
+    "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Cleviva-Duschrinnen.html",
+    "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Vario-Duschrinnen.html",
 ]
 
 LENGTH_RE_LIST = [
@@ -30,7 +34,8 @@ LENGTH_RE_LIST = [
     re.compile(r"\bl(?:ä|ae)nge\s*(\d{3,4})\b", re.IGNORECASE),
     re.compile(r"\b(\d{3,4})mm\b", re.IGNORECASE),
 ]
-ARTICLE_FROM_URL_RE = re.compile(r"-(\d{3,5}-\d{2})\.html$", re.IGNORECASE)
+DETAIL_URL_RE = re.compile(r"-\d{3,5}-\d{2}\.html(?:$|[?#])", re.IGNORECASE)
+ARTICLE_FROM_URL_RE = re.compile(r"-(\d{3,5}-\d{2})\.html(?:$|[?#])", re.IGNORECASE)
 DN_RE = re.compile(r"(?:nennweite\s*)?dn\s*(40|50|70)\b", re.IGNORECASE)
 FLOW_LPS_RE = re.compile(r"(?P<val>\d+(?:[.,]\d+)?)\s*l\s*/\s*s\b", re.IGNORECASE)
 FLOW_REJECT_RE = re.compile(r"reduziert\s+um|reduziert|reduzieren|reduzierung", re.IGNORECASE)
@@ -43,6 +48,7 @@ HEIGHT_SINGLE_RE = re.compile(
     re.IGNORECASE,
 )
 TRAP_SEAL_RE = re.compile(r"sperrwasserh(?:ö|oe)he|geruchsverschluss|water\s+seal", re.IGNORECASE)
+VARIABLE_LEN_RE = re.compile(r"\b(vario|variabel|stufenlos|kuerzbar|kürzbar)\b", re.IGNORECASE)
 
 
 def _safe_get_text(url: str, timeout: int = 35) -> Tuple[Optional[int], str, str, str]:
@@ -127,6 +133,29 @@ def _abs(href: str, base: str) -> str:
     return urljoin(base, href or "")
 
 
+def _in_scope(url: str) -> bool:
+    try:
+        p = urlparse(url)
+        return p.netloc.endswith("viega.de") and DETAIL_SCOPE in (p.path or "")
+    except Exception:
+        return False
+
+
+def _is_detail_url(url: str) -> bool:
+    return _in_scope(url) and bool(DETAIL_URL_RE.search(url or ""))
+
+
+def _extract_detail_links_from_catalog(html: str, base_url: str) -> Set[str]:
+    soup = BeautifulSoup(html or "", "lxml")
+    out: Set[str] = set()
+    for a in soup.select("a[href]"):
+        href = a.get("href") or ""
+        u = _abs(href, base_url)
+        if _is_detail_url(u):
+            out.add(u)
+    return out
+
+
 def _extract_pdf_candidates(html: str, base_url: str) -> List[Tuple[str, int]]:
     soup = BeautifulSoup(html or "", "lxml")
     out: List[Tuple[str, int]] = []
@@ -150,6 +179,22 @@ def _extract_pdf_candidates(html: str, base_url: str) -> List[Tuple[str, int]]:
 
     out.sort(key=lambda x: x[1], reverse=True)
     return out
+
+
+def _resolve_length_from_text(flat: str) -> Tuple[Optional[int], Optional[str], Optional[Tuple[int, int]]]:
+    if VARIABLE_LEN_RE.search(flat or ""):
+        m = VARIABLE_LEN_RE.search(flat or "")
+        if m:
+            return None, _snippet(flat, m.start(), m.end()), (m.start(), m.end())
+        return None, "variable length", None
+    opts = _extract_length_options(flat)
+    if not opts:
+        return None, None, None
+    chosen = max(opts)
+    m = re.search(rf"\b{chosen}\s*mm\b|\b{chosen}mm\b|\b{str(chosen)[:1]}\.{str(chosen)[1:]}\s*mm\b", flat, re.IGNORECASE)
+    if m:
+        return chosen, _snippet(flat, m.start(), m.end()), (m.start(), m.end())
+    return chosen, f"{chosen} mm", None
 
 
 def _apply_text_extraction(res: Dict[str, Any], flat: str, src: str) -> None:
@@ -223,17 +268,49 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     out: List[Dict[str, Any]] = []
     debug: List[Dict[str, Any]] = []
 
+    discovered: Set[str] = set(u for u in SEED_URLS if _is_detail_url(u))
+
+    # catalog crawl: collect detail URLs in-scope
     for seed in SEED_URLS:
+        if _is_detail_url(seed):
+            continue
         st, final, html, err = _safe_get_text(seed, timeout=35)
         if st != 200 or not html:
-            title = seed.rstrip("/").split("/")[-1].replace("-", " ")
+            debug.append({
+                "site": "viega",
+                "seed_url": seed,
+                "status_code": st,
+                "final_url": final,
+                "error": err,
+                "candidates_found": 0,
+                "method": "catalog",
+                "is_index": None,
+            })
+            continue
+        links = _extract_detail_links_from_catalog(html, final)
+        discovered.update(links)
+        debug.append({
+            "site": "viega",
+            "seed_url": seed,
+            "status_code": st,
+            "final_url": final,
+            "error": err,
+            "candidates_found": len(links),
+            "method": "catalog",
+            "is_index": None,
+        })
+
+    for url in sorted(discovered):
+        st, final, html, err = _safe_get_text(url, timeout=35)
+        if st != 200 or not html:
+            title = url.rstrip("/").split("/")[-1].replace("-", " ")
             out.append({
                 "manufacturer": "viega",
-                "product_id": _product_id_from_url(seed),
+                "product_id": _product_id_from_url(url),
                 "product_family": "Advantix",
                 "product_name": title,
-                "product_url": seed,
-                "sources": seed,
+                "product_url": url,
+                "sources": url,
                 "candidate_type": "drain",
                 "complete_system": "yes",
                 "selected_length_mm": want,
@@ -242,71 +319,63 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             })
             debug.append({
                 "site": "viega",
-                "seed_url": seed,
+                "seed_url": url,
                 "status_code": st,
                 "final_url": final,
                 "error": err,
                 "candidates_found": 1,
-                "method": "seed_unknown",
+                "method": "detail_unknown",
                 "is_index": None,
             })
             continue
 
         title = _extract_title(html, final)
         flat = _main_flat_text(html)
-        lengths = _extract_length_options(f"{title} {flat}")
+        length, len_snip, _ = _resolve_length_from_text(f"{title} {flat}")
 
-        kept = 0
-        if lengths:
-            for length in lengths:
-                if not (min_len <= length <= max_len):
-                    continue
-                kept += 1
-                out.append({
-                    "manufacturer": "viega",
-                    "product_id": _product_id_from_url(seed),
-                    "product_family": "Advantix",
-                    "product_name": f"{title} ({length} mm)",
-                    "product_url": seed,
-                    "sources": seed,
-                    "candidate_type": "drain",
-                    "complete_system": "yes",
-                    "selected_length_mm": want,
-                    "length_mode": "html",
-                    "length_delta_mm": length - want,
-                })
-        else:
-            kept += 1
-            out.append({
-                "manufacturer": "viega",
-                "product_id": _product_id_from_url(seed),
-                "product_family": "Advantix",
-                "product_name": title,
-                "product_url": seed,
-                "sources": seed,
-                "candidate_type": "drain",
-                "complete_system": "yes",
-                "selected_length_mm": want,
-                "length_mode": "unknown",
-                "length_delta_mm": None,
+        # always include discovered URL; filter only if concrete fixed length known
+        if length is not None and not (min_len <= length <= max_len):
+            debug.append({
+                "site": "viega",
+                "seed_url": url,
+                "status_code": st,
+                "final_url": final,
+                "error": "filtered_by_length",
+                "candidates_found": 0,
+                "method": "detail",
+                "is_index": None,
             })
+            continue
+
+        row = {
+            "manufacturer": "viega",
+            "product_id": _product_id_from_url(url),
+            "product_family": "Advantix",
+            "product_name": title if length is None else f"{title} ({length} mm)",
+            "product_url": url,
+            "sources": url,
+            "candidate_type": "drain",
+            "complete_system": "yes",
+            "selected_length_mm": want,
+            "length_mode": "unknown" if length is None else "html",
+            "length_delta_mm": None if length is None else length - want,
+        }
+        out.append(row)
 
         debug.append({
             "site": "viega",
-            "seed_url": seed,
+            "seed_url": url,
             "status_code": st,
             "final_url": final,
-            "error": err,
-            "candidates_found": kept,
-            "method": "seed",
+            "error": "" if length is not None else "length_unknown",
+            "candidates_found": 1,
+            "method": "detail",
             "is_index": None,
         })
 
-    # de-dup by product_id + url + name
     dedup = {}
     for r in out:
         dedup[(r["product_id"], r["product_url"], r["product_name"])] = r
-
     return list(dedup.values()), debug
 
 
@@ -328,6 +397,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
         "outlet_dn_options_json": None,
         "sealing_fleece_preassembled": None,
         "colours_count": None,
+        "resolved_length_mm": None,
         "evidence": [],
     }
 
@@ -340,23 +410,42 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
     flat = _main_flat_text(html)
     _apply_text_extraction(res, flat, final)
 
+    length, len_snip, _ = _resolve_length_from_text(flat)
+    if length is not None:
+        res["resolved_length_mm"] = length
+        res["evidence"].append(("Resolved length (mm)", len_snip or f"{length} mm", final))
+    elif VARIABLE_LEN_RE.search(flat):
+        mvar = VARIABLE_LEN_RE.search(flat)
+        if mvar:
+            res["evidence"].append(("Resolved length", "variable length", final))
+
     m_en = re.search(r"\b(?:DIN\s*)?EN\s*1253(?:-1)?\b", flat, re.IGNORECASE)
     if m_en:
         res["din_en_1253_cert"] = "yes"
         res["evidence"].append(("DIN EN 1253", _snippet(flat, m_en.start(), m_en.end()), final))
 
-    need_pdf = any(res.get(k) is None for k in ["outlet_dn", "flow_rate_lps", "height_adj_min_mm", "height_adj_max_mm"])
+    need_pdf = any(res.get(k) is None for k in ["outlet_dn", "flow_rate_lps", "height_adj_min_mm", "height_adj_max_mm", "resolved_length_mm"])
     if need_pdf:
         for pdf_url, _score in _extract_pdf_candidates(html, final)[:4]:
             pdf_text, pdf_status = extract_pdf_text_from_url(pdf_url, headers=HEADERS)
             res["evidence"].append(("PDF status", pdf_status, pdf_url))
             if not pdf_text:
                 continue
-            _apply_text_extraction(res, _clean_text(pdf_text), pdf_url)
-            if res.get("din_en_1253_cert") is None and re.search(r"\b(?:DIN\s*)?EN\s*1253(?:-1)?\b", pdf_text, re.IGNORECASE):
+            flat_pdf = _clean_text(pdf_text)
+            _apply_text_extraction(res, flat_pdf, pdf_url)
+
+            if res.get("resolved_length_mm") is None:
+                plen, psnip, _ = _resolve_length_from_text(flat_pdf)
+                if plen is not None:
+                    res["resolved_length_mm"] = plen
+                    res["evidence"].append(("Resolved length (mm)", psnip or f"{plen} mm", pdf_url))
+                elif VARIABLE_LEN_RE.search(flat_pdf):
+                    res["evidence"].append(("Resolved length", "variable length", pdf_url))
+
+            if res.get("din_en_1253_cert") is None and re.search(r"\b(?:DIN\s*)?EN\s*1253(?:-1)?\b", flat_pdf, re.IGNORECASE):
                 res["din_en_1253_cert"] = "yes"
 
-            done = all(res.get(k) is not None for k in ["outlet_dn", "flow_rate_lps", "height_adj_min_mm", "height_adj_max_mm"])
+            done = all(res.get(k) is not None for k in ["outlet_dn", "flow_rate_lps", "height_adj_min_mm", "height_adj_max_mm", "resolved_length_mm"])
             if done:
                 break
 
