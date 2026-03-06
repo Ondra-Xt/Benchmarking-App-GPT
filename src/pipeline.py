@@ -35,6 +35,10 @@ def _make_product_id(manufacturer: str, url: str) -> str:
     m2 = re.search(r"/(\d{6})_", u)
     if m2:
         return f"{m}-{m2.group(1)}"
+    # Viega article no. in URL tail, e.g. ...-4981-11.html -> 498111
+    m3 = re.search(r"-(\d{3,5})-(\d{2})\.html(?:$|[?#])", u, re.IGNORECASE)
+    if m3:
+        return f"{m}-{m3.group(1)}{m3.group(2)}"
     return f"{m}-{abs(hash(u))}"
 
 

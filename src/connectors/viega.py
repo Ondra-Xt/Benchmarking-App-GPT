@@ -196,7 +196,7 @@ def _apply_text_extraction(res: Dict[str, Any], flat: str, src: str) -> None:
 
     # heights excluding trap seal contexts
     h = HEIGHT_RE.search(flat)
-    if h and not TRAP_SEAL_RE.search(_snippet(flat, h.start(), h.end(), pad=30)):
+    if h and not TRAP_SEAL_RE.search(flat[h.start():h.end()]):
         a = int(h.group(1))
         b = int(h.group(2))
         lo, hi = (a, b) if a <= b else (b, a)
@@ -206,7 +206,7 @@ def _apply_text_extraction(res: Dict[str, Any], flat: str, src: str) -> None:
             res["evidence"].append(("Installation height (mm)", _snippet(flat, h.start(), h.end()), src))
     elif res.get("height_adj_min_mm") is None:
         hs = HEIGHT_SINGLE_RE.search(flat)
-        if hs and not TRAP_SEAL_RE.search(_snippet(flat, hs.start(), hs.end(), pad=30)):
+        if hs and not TRAP_SEAL_RE.search(flat[hs.start():hs.end()]):
             v = int(hs.group(1))
             if 20 <= v <= 300:
                 res["height_adj_min_mm"] = v
@@ -226,14 +226,28 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     for seed in SEED_URLS:
         st, final, html, err = _safe_get_text(seed, timeout=35)
         if st != 200 or not html:
+            title = seed.rstrip("/").split("/")[-1].replace("-", " ")
+            out.append({
+                "manufacturer": "viega",
+                "product_id": _product_id_from_url(seed),
+                "product_family": "Advantix",
+                "product_name": title,
+                "product_url": seed,
+                "sources": seed,
+                "candidate_type": "drain",
+                "complete_system": "yes",
+                "selected_length_mm": want,
+                "length_mode": "unknown",
+                "length_delta_mm": None,
+            })
             debug.append({
                 "site": "viega",
                 "seed_url": seed,
                 "status_code": st,
                 "final_url": final,
                 "error": err,
-                "candidates_found": 0,
-                "method": "seed",
+                "candidates_found": 1,
+                "method": "seed_unknown",
                 "is_index": None,
             })
             continue
