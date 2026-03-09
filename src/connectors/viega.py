@@ -135,8 +135,9 @@ def _is_detail_url(url: str) -> bool:
         return False
 
 
-def _is_accessory_component_url(url: str) -> bool:
-    return "advantix-duschrinnen-zubehoer" in (url or "").lower() or "rost" in (url or "").lower()
+def _is_rost_component(url: str, title: str = "") -> bool:
+    txt = f"{url} {title}".lower()
+    return "rost" in txt
 
 
 def _extract_category_links_from_sortiment(html: str, base_url: str) -> Set[str]:
@@ -410,6 +411,10 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     debug: List[Dict[str, Any]] = []
 
     discovered: Set[str] = set(DETAIL_SEEDS)
+    accepted_urls: List[str] = []
+    component_urls: List[str] = []
+    min_len = max(0, want - int(tolerance_mm))
+    max_len = want + int(tolerance_mm)
 
     # Step 1: seed -> Sortiment category links
     st, final, html, err = _safe_get_text(CATALOG_SEED, timeout=35)
@@ -437,9 +442,19 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             flat = _main_flat_text(html)
             length, length_snip, length_kind = _resolve_length_from_text(f"{title} {flat}")
 
-        cand_type = "component" if _is_accessory_component_url(url) else "drain"
+        cand_type = "component" if _is_rost_component(url, title) else "drain"
 
-        # For components (rost/accessories), optionally append length range info to name
+        # Ignore non-rost accessories to keep noise low
+        if "zubehoer" in url.lower() and cand_type != "component":
+            debug.append({"site": "viega", "seed_url": url, "status_code": st, "final_url": final, "error": "ignored_non_rost_accessory", "candidates_found": 0, "method": "detail", "is_index": None})
+            continue
+
+        # Apply length filter only for concrete fixed lengths (not unknown/variable)
+        if length is not None and length_kind != "variable" and not (min_len <= length <= max_len):
+            debug.append({"site": "viega", "seed_url": url, "status_code": st, "final_url": final, "error": "filtered_by_target_length", "candidates_found": 0, "method": "detail", "is_index": None})
+            continue
+
+        # For components (rost), append length range if present
         if cand_type == "component" and st == 200 and html:
             mrg = LENGTH_RANGE_RE.search(_main_flat_text(html))
             if mrg:
@@ -470,12 +485,30 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             "is_index": None,
         })
 
+        accepted_urls.append(url)
+        if cand_type == "component":
+            component_urls.append(url)
+
     # keep unique product_id to avoid duplicate IDs in exported Products/Components
     dedup: Dict[str, Dict[str, Any]] = {}
     for r in out:
         pid = str(r.get("product_id") or "")
         if pid and pid not in dedup:
             dedup[pid] = r
+
+    debug.append({
+        "site": "viega",
+        "seed_url": CATALOG_SEED,
+        "status_code": 200 if dedup else None,
+        "final_url": CATALOG_SEED,
+        "error": "" if dedup else "No accepted candidates.",
+        "candidates_found": len(dedup),
+        "method": "summary",
+        "is_index": None,
+        "final_count": len(dedup),
+        "sample_accepted_urls": json.dumps(accepted_urls[:10], ensure_ascii=False),
+        "sample_components_urls": json.dumps(component_urls[:10], ensure_ascii=False),
+    })
     return list(dedup.values()), debug
 
 
@@ -518,7 +551,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
         res["evidence"].append(("Resolved length", "variable length", final))
 
     # accessory rost range evidence
-    if _is_accessory_component_url(src):
+    if _is_rost_component(src):
         mrg = LENGTH_RANGE_RE.search(flat)
         if mrg:
             res["evidence"].append(("Accessory length range (mm)", _snippet(flat, mrg.start(), mrg.end()), final))
