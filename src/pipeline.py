@@ -10,6 +10,7 @@ from .connectors import CONNECTORS
 from .scoring import (
     compute_parameter_score,
     compute_equivalence_score,
+    compute_system_score,
     compute_final_score,
 )
 
@@ -34,6 +35,10 @@ def _make_product_id(manufacturer: str, url: str) -> str:
     m2 = re.search(r"/(\d{6})_", u)
     if m2:
         return f"{m}-{m2.group(1)}"
+    # Viega article no. in URL tail, e.g. ...-4981-11.html -> 498111
+    m3 = re.search(r"-(\d{3,5})-(\d{2})\.html(?:$|[?#])", u, re.IGNORECASE)
+    if m3:
+        return f"{m}-{m3.group(1)}{m3.group(2)}"
     return f"{m}-{abs(hash(u))}"
 
 
@@ -158,6 +163,7 @@ def run_update(
 
         params = connector.extract_parameters(url) or {}
         # get_bom_options je volitelné
+        options = []
         if hasattr(connector, "get_bom_options"):
             try:
                 options = connector.get_bom_options(url, params=params) or []
@@ -187,7 +193,8 @@ def run_update(
         # scoring
         param_score, param_detail = compute_parameter_score(params, cfg)
         equiv_score = compute_equivalence_score({"candidate_type": candidate_type, **params}, cfg)
-        final_score = compute_final_score(param_score, equiv_score, cfg)
+        system_score = compute_system_score(candidate_type, has_bom_options=bool(options))
+        final_score = compute_final_score(param_score, system_score, equiv_score, cfg)
 
         prod_row = {
             "manufacturer": manufacturer,
@@ -202,6 +209,7 @@ def run_update(
             # skóre:
             "param_score": param_score,
             "equiv_score": equiv_score,
+            "system_score": system_score,
             "final_score": final_score,
         }
         products_rows.append(prod_row)
@@ -214,6 +222,7 @@ def run_update(
             "final_score": final_score,
             "param_score": param_score,
             "equiv_score": equiv_score,
+            "system_score": system_score,
         })
 
         # detail pro debug (volitelné)
