@@ -37,10 +37,15 @@ LENGTH_RE_LIST = [
 ]
 LENGTH_RANGE_RE = re.compile(r"\b(\d{3,4})\s*[-–]\s*(\d{3,4})\s*mm\b", re.IGNORECASE)
 VARIABLE_LEN_RE = re.compile(r"\b(vario|variabel|stufenlos|kuerzbar|kürzbar|l\s*\d{3,4}\s*[-–]\s*\d{3,4})\b", re.IGNORECASE)
+COMPONENT_KEYWORDS = (
+    "zubehoer", "zubehör", "rost", "abdeckung", "einleger", "profil", "rahmen",
+    "geruchverschluss", "geruchsverschluss", "ablaufbogen", "ablauf", "siphon",
+    "montage", "werkzeug", "schallschutz", "dicht", "fliesen", "adapter",
+)
 
 # strict DN parsing; only literal DN and allowed outlet sizes
-DN_PAIR_RE = re.compile(r"\bDN\s*(40|50)\s*/\s*(40|50)\b", re.IGNORECASE)
-DN_SINGLE_RE = re.compile(r"\b(?:Nennweite\s*)?DN\s*(40|50)\b", re.IGNORECASE)
+DN_PAIR_RE = re.compile(r"\bDN\s*(\d{2,3})\s*/\s*(\d{2,3})\b", re.IGNORECASE)
+DN_SINGLE_RE = re.compile(r"\b(?:Nennweite\s*)?DN\s*(\d{2,3})\b", re.IGNORECASE)
 
 FLOW_LPS_RE = re.compile(r"(?<!\d)(\d{1,2}(?:[\.,]\d{1,2})?)\s*l/s\b", re.IGNORECASE)
 FLOW_REJECT_RE = re.compile(r"reduziert\s+um|reduziert|reduzieren|reduzierung", re.IGNORECASE)
@@ -138,6 +143,25 @@ def _is_detail_url(url: str) -> bool:
 def _is_rost_component(url: str, title: str = "") -> bool:
     txt = f"{url} {title}".lower()
     return "rost" in txt
+
+
+def _has_component_keyword(text: str) -> bool:
+    t = (text or "").lower()
+    return any(k in t for k in COMPONENT_KEYWORDS)
+
+
+def _classify_candidate(url: str, title: str) -> str:
+    u = (url or "").lower()
+    t = (title or "").lower()
+    if "/zubehoer/" in u or "/zubehör/" in u or _has_component_keyword(f"{u} {t}"):
+        return "component"
+    if ("duschrinne" in t or "duschrinnen" in t) and not _has_component_keyword(t):
+        return "drain"
+    if "grundkörper" in t or "grundkoerper" in t:
+        if "duschrinne" in t or "duschrinnen" in t:
+            return "drain"
+        return "component"
+    return "component"
 
 
 def _extract_category_links_from_sortiment(html: str, base_url: str) -> Set[str]:
@@ -292,51 +316,59 @@ def _extract_dns_from_text(flat: str) -> Tuple[List[str], Optional[Tuple[int, in
     return sorted(dns), first_span
 
 
+def _valid_flow_match(part: str, m: re.Match[str]) -> Optional[float]:
+    pl = part.lower()
+    if "l/s" not in pl:
+        return None
+    if "ablaufleistung" not in pl and "abflussleistung" not in pl:
+        return None
+    # reject reduction/negative contexts near match
+    lo = max(0, m.start() - 25)
+    hi = min(len(part), m.end() + 25)
+    ctx = part[lo:hi].lower()
+    if "reduziert" in ctx or " um " in ctx or "-" in ctx:
+        return None
+    try:
+        v = float(m.group(1).replace(",", "."))
+    except Exception:
+        return None
+    if v < 0.10 or v > 3.0:
+        return None
+    return v
+
+
 def _extract_flow_vals(flat: str) -> Tuple[List[float], Optional[Tuple[int, int]]]:
-    # primary: only Ablaufleistung/Abflussleistung lines
     vals: List[float] = []
     first_span: Optional[Tuple[int, int]] = None
 
-    parts = re.split(r"[\n\r]+|(?<=\.)\s+", flat)
+    # primary: snippets/lines with Ablaufleistung + l/s
+    parts = re.split(r"[\n\r]+", flat)
     for part in parts:
-        pl = part.lower()
-        if not FLOW_PREF_RE.search(pl):
-            continue
-        if FLOW_REJECT_RE.search(pl):
-            continue
         for m in FLOW_LPS_RE.finditer(part):
-            try:
-                v = float(m.group(1).replace(",", "."))
-            except Exception:
-                continue
-            if v < 0.10 or v > 3.0:
+            v = _valid_flow_match(part, m)
+            if v is None:
                 continue
             vals.append(v)
             if first_span is None:
-                # approximate in full text
                 idx = flat.lower().find(part.lower())
                 if idx >= 0:
                     first_span = (idx + m.start(), idx + m.end())
 
-    # fallback: contextual proximity to Ablaufleistung keyword (within 70 chars)
+    # fallback: broader snippets but still require Ablaufleistung proximity
     if not vals:
         for m in FLOW_LPS_RE.finditer(flat):
             ctx = _snippet(flat, m.start(), m.end(), pad=70)
-            cl = ctx.lower()
-            if not FLOW_PREF_RE.search(cl):
+            if not FLOW_PREF_RE.search(ctx):
                 continue
-            if FLOW_REJECT_RE.search(cl):
+            v = _valid_flow_match(ctx, re.search(FLOW_LPS_RE, ctx) or m)
+            if v is None:
                 continue
-            try:
-                v = float(m.group(1).replace(",", "."))
-            except Exception:
-                continue
-            if 0.10 <= v <= 3.0:
-                vals.append(v)
-                if first_span is None:
-                    first_span = (m.start(), m.end())
+            vals.append(v)
+            if first_span is None:
+                first_span = (m.start(), m.end())
 
     return sorted(set(vals)), first_span
+
 
 
 def _apply_text_extraction(res: Dict[str, Any], flat: str, src: str, html: str = "") -> None:
@@ -413,6 +445,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     discovered: Set[str] = set(DETAIL_SEEDS)
     accepted_urls: List[str] = []
     component_urls: List[str] = []
+    product_urls: List[str] = []
+    unknown_length_count = 0
     min_len = max(0, want - int(tolerance_mm))
     max_len = want + int(tolerance_mm)
 
@@ -442,11 +476,15 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             flat = _main_flat_text(html)
             length, length_snip, length_kind = _resolve_length_from_text(f"{title} {flat}")
 
-        cand_type = "component" if _is_rost_component(url, title) else "drain"
+        cand_type = _classify_candidate(url, title)
 
-        # Ignore non-rost accessories to keep noise low
-        if "zubehoer" in url.lower() and cand_type != "component":
-            debug.append({"site": "viega", "seed_url": url, "status_code": st, "final_url": final, "error": "ignored_non_rost_accessory", "candidates_found": 0, "method": "detail", "is_index": None})
+        # safeguard: /Zubehoer/ should never become products
+        if ("/zubehoer/" in url.lower() or "/zubehör/" in url.lower()) and cand_type == "drain":
+            cand_type = "component"
+
+        # Ignore non-Rost Zubehör pages to keep discovery noise low
+        if ("zubehoer" in url.lower() or "zubehör" in url.lower()) and not _is_rost_component(url, title):
+            debug.append({"site": "viega", "seed_url": url, "status_code": st, "final_url": final, "error": "ignored_non_rost_zubehoer", "candidates_found": 0, "method": "detail", "is_index": None})
             continue
 
         # Apply length filter only for concrete fixed lengths (not unknown/variable)
@@ -473,21 +511,24 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             "length_mode": "unknown" if length is None else ("variable" if length_kind == "variable" else "html"),
             "length_delta_mm": None if length is None else (length - want),
         })
+        accepted_urls.append(url)
+        if cand_type == "component":
+            component_urls.append(url)
+        else:
+            product_urls.append(url)
+        if length is None:
+            unknown_length_count += 1
 
         debug.append({
             "site": "viega",
             "seed_url": url,
             "status_code": st,
             "final_url": final,
-            "error": err if st != 200 else ("length_unknown" if length is None else ""),
+            "error": err if st != 200 else ("length_variable" if length_kind == "variable" else ("length_unknown" if length is None else "")),
             "candidates_found": 1,
             "method": "detail",
             "is_index": None,
         })
-
-        accepted_urls.append(url)
-        if cand_type == "component":
-            component_urls.append(url)
 
     # keep unique product_id to avoid duplicate IDs in exported Products/Components
     dedup: Dict[str, Dict[str, Any]] = {}
@@ -506,7 +547,12 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "method": "summary",
         "is_index": None,
         "final_count": len(dedup),
+        "total_details": len(discovered),
+        "products_count": sum(1 for r in dedup.values() if str(r.get("candidate_type",""))=="drain"),
+        "components_count": sum(1 for r in dedup.values() if str(r.get("candidate_type",""))=="component"),
+        "unknown_length_count": sum(1 for r in dedup.values() if str(r.get("length_mode",""))=="unknown"),
         "sample_accepted_urls": json.dumps(accepted_urls[:10], ensure_ascii=False),
+        "sample_products_urls": json.dumps(product_urls[:10], ensure_ascii=False),
         "sample_components_urls": json.dumps(component_urls[:10], ensure_ascii=False),
     })
     return list(dedup.values()), debug
