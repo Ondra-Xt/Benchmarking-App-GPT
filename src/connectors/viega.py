@@ -48,7 +48,7 @@ DN_PAIR_RE = re.compile(r"\bDN\s*(\d{2,3})\s*/\s*(\d{2,3})\b", re.IGNORECASE)
 DN_SINGLE_RE = re.compile(r"\b(?:Nennweite\s*)?DN\s*(\d{2,3})\b", re.IGNORECASE)
 
 FLOW_LPS_RE = re.compile(r"(?<!\d)(\d{1,2}(?:[\.,]\d{1,2})?)\s*l/s\b", re.IGNORECASE)
-FLOW_REJECT_RE = re.compile(r"reduziert\s+um|reduziert|reduzieren|reduzierung", re.IGNORECASE)
+FLOW_REJECT_RE = re.compile(r"reduziert\s+um|reduziert|reduzieren|reduzierung|\bum\b", re.IGNORECASE)
 FLOW_PREF_RE = re.compile(r"ablaufleistung|abflussleistung", re.IGNORECASE)
 
 HEIGHT_RE = re.compile(
@@ -316,57 +316,52 @@ def _extract_dns_from_text(flat: str) -> Tuple[List[str], Optional[Tuple[int, in
     return sorted(dns), first_span
 
 
-def _valid_flow_match(part: str, m: re.Match[str]) -> Optional[float]:
-    pl = part.lower()
-    if "l/s" not in pl:
-        return None
-    if "ablaufleistung" not in pl and "abflussleistung" not in pl:
-        return None
-    # reject reduction/negative contexts near match
-    lo = max(0, m.start() - 25)
-    hi = min(len(part), m.end() + 25)
-    ctx = part[lo:hi].lower()
-    if "reduziert" in ctx or " um " in ctx or "-" in ctx:
-        return None
+def _flow_value_if_valid(text: str, m: re.Match[str]) -> Optional[float]:
     try:
         v = float(m.group(1).replace(",", "."))
     except Exception:
         return None
     if v < 0.10 or v > 3.0:
         return None
+    ctx = text[max(0, m.start() - 25):min(len(text), m.end() + 25)]
+    if FLOW_REJECT_RE.search(ctx):
+        return None
+    # ignore leading negative values like "-0,8 l/s"
+    lead = text[max(0, m.start() - 2):m.start()]
+    if "-" in lead:
+        return None
     return v
 
 
-def _extract_flow_vals(flat: str) -> Tuple[List[float], Optional[Tuple[int, int]]]:
+def _extract_flow_from_ablaufleistung(flat: str) -> Tuple[List[float], Optional[Tuple[int, int]]]:
     vals: List[float] = []
     first_span: Optional[Tuple[int, int]] = None
 
-    # primary: snippets/lines with Ablaufleistung + l/s
-    parts = re.split(r"[\n\r]+", flat)
-    for part in parts:
+    for seg in re.finditer(r"[^\n\r.;:|]{0,160}(?:ablaufleistung|abflussleistung)[^\n\r.;:|]{0,160}", flat, re.IGNORECASE):
+        part = seg.group(0)
+        if "l/s" not in part.lower():
+            continue
         for m in FLOW_LPS_RE.finditer(part):
-            v = _valid_flow_match(part, m)
+            v = _flow_value_if_valid(part, m)
             if v is None:
                 continue
             vals.append(v)
             if first_span is None:
-                idx = flat.lower().find(part.lower())
-                if idx >= 0:
-                    first_span = (idx + m.start(), idx + m.end())
+                first_span = (seg.start() + m.start(), seg.start() + m.end())
 
-    # fallback: broader snippets but still require Ablaufleistung proximity
-    if not vals:
-        for m in FLOW_LPS_RE.finditer(flat):
-            ctx = _snippet(flat, m.start(), m.end(), pad=70)
-            if not FLOW_PREF_RE.search(ctx):
-                continue
-            v = _valid_flow_match(ctx, re.search(FLOW_LPS_RE, ctx) or m)
-            if v is None:
-                continue
-            vals.append(v)
-            if first_span is None:
-                first_span = (m.start(), m.end())
+    return sorted(set(vals)), first_span
 
+
+def _extract_flow_general(flat: str) -> Tuple[List[float], Optional[Tuple[int, int]]]:
+    vals: List[float] = []
+    first_span: Optional[Tuple[int, int]] = None
+    for m in FLOW_LPS_RE.finditer(flat):
+        v = _flow_value_if_valid(flat, m)
+        if v is None:
+            continue
+        vals.append(v)
+        if first_span is None:
+            first_span = (m.start(), m.end())
     return sorted(set(vals)), first_span
 
 
@@ -399,14 +394,19 @@ def _apply_text_extraction(res: Dict[str, Any], flat: str, src: str, html: str =
             res["evidence"].append(("Outlet DN", _snippet(flat, dn_span[0], dn_span[1]), src))
 
     # flow
-    flow_opts, flow_span = _extract_flow_vals(flat)
+    flow_opts_abl, flow_span_abl = _extract_flow_from_ablaufleistung(flat)
+    flow_opts_gen, flow_span_gen = _extract_flow_general(flat)
+    use_abl = len(flow_opts_abl) >= 1
+    flow_opts = flow_opts_abl if use_abl else flow_opts_gen
+    flow_span = flow_span_abl if use_abl else flow_span_gen
     if flow_opts:
         res["flow_rate_lps_options"] = json.dumps(flow_opts, ensure_ascii=False)
         res["flow_rate_lps"] = max(flow_opts)
         res["flow_rate_unit"] = "l/s"
         res["flow_rate_status"] = "ok"
         if flow_span:
-            res["evidence"].append(("Flow rate option (Ablaufleistung l/s)", _snippet(flat, flow_span[0], flow_span[1]), src))
+            label = "Flow rate (Ablaufleistung)" if use_abl else "Flow rate (fallback)"
+            res["evidence"].append((label, _snippet(flat, flow_span[0], flow_span[1]), src))
     elif res.get("flow_rate_lps") is None:
         lps, raw, unit, status = select_flow_rate(flat)
         if lps is not None and lps >= 0.10:
