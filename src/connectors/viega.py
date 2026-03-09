@@ -43,7 +43,7 @@ COMPONENT_KEYWORDS = (
 )
 
 # strict DN parsing; only literal DN and allowed outlet sizes
-DN_PAIR_RE = re.compile(r"\bDN\s*(\d{2,3})\s*/\s*(\d{2,3})\b", re.IGNORECASE)
+DN_PAIR_RE = re.compile(r"\bDN\s*(\d{2,3})\s*/\s*(?:DN\s*)?(\d{2,3})\b", re.IGNORECASE)
 DN_SINGLE_RE = re.compile(r"\b(?:Nennweite\s*)?DN\s*(\d{2,3})\b", re.IGNORECASE)
 
 FLOW_LPS_RE = re.compile(r"(?<!\d)(\d{1,2}(?:[\.,]\d{1,2})?)\s*l/s\b", re.IGNORECASE)
@@ -277,16 +277,13 @@ def _extract_dns_from_table(html: str) -> Tuple[List[str], Optional[str]]:
     soup = BeautifulSoup(html or "", "lxml")
     for table in soup.select("table"):
         headers = [_clean_text(th.get_text(" ", strip=True)).lower() for th in table.select("thead th, tr th")]
-        if not any("dn" in h for h in headers):
+        if not any("dn" in h or "nennweite" in h for h in headers):
             continue
         for tr in table.select("tr"):
             txt = _clean_text(tr.get_text(" ", strip=True))
-            m_pair = re.search(r"\b40\s*/\s*50\b", txt)
-            if m_pair:
-                return ["DN40", "DN50"], txt
-            m_single = re.search(r"\b(?:dn\s*)?(40|50)\b", txt, re.IGNORECASE)
-            if m_single:
-                return [f"DN{m_single.group(1)}"], txt
+            dns_row, _ = _extract_dns_from_text(txt)
+            if dns_row:
+                return dns_row, txt
     return [], None
 
 
@@ -372,7 +369,7 @@ def _extract_flow_general(flat: str) -> Tuple[List[float], Optional[Tuple[int, i
 
 
 
-def _apply_text_extraction(res: Dict[str, Any], flat: str, src: str, html: str = "", flow_evidence_pdf: bool = False) -> None:
+def _apply_text_extraction(res: Dict[str, Any], flat: str, src: str, html: str = "", flow_evidence_pdf: bool = False, dn_evidence_pdf: bool = False) -> None:
     if not flat:
         return
 
@@ -397,7 +394,8 @@ def _apply_text_extraction(res: Dict[str, Any], flat: str, src: str, html: str =
         res["outlet_dn_default"] = "DN50" if "DN50" in dns else dns[0]
         res["outlet_dn_options_json"] = json.dumps(dns, ensure_ascii=False)
         if dn_span:
-            res["evidence"].append(("Outlet DN", _snippet(flat, dn_span[0], dn_span[1]), src))
+            dn_label = "Outlet DN (from PDF)" if dn_evidence_pdf else "Outlet DN"
+            res["evidence"].append((dn_label, _snippet(flat, dn_span[0], dn_span[1]), src))
 
     # flow
     flow_opts_abl, flow_span_abl = _extract_flow_from_ablaufleistung(flat)
@@ -617,7 +615,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
             if not pdf_text:
                 continue
             flat_pdf = _clean_text(pdf_text)
-            _apply_text_extraction(res, flat_pdf, pdf_url, flow_evidence_pdf=True)
+            _apply_text_extraction(res, flat_pdf, pdf_url, flow_evidence_pdf=True, dn_evidence_pdf=True)
 
             if res.get("resolved_length_mm") is None:
                 plen, psnip, pkind = _resolve_length_from_text(flat_pdf)
