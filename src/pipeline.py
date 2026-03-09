@@ -59,6 +59,10 @@ def _pick_connector(manufacturer: str, url: str):
     return None
 
 
+def _is_accessory_like(text: str) -> bool:
+    t = (text or "").lower()
+    return any(k in t for k in ("zubehoer", "zubehör", "rost", "abdeckung", "einleger", "profil", "rahmen", "siphon", "geruch"))
+
 # --- API pro app.py ------------------------------------------------------
 
 def run_discovery(target_length_mm: int = 1200, tolerance_mm: int = 100) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -162,6 +166,19 @@ def run_update(
             continue
 
         params = connector.extract_parameters(url) or {}
+
+        # Viega cleanup: drains without flow must not stay in Products
+        if manufacturer == "viega" and candidate_type == "drain" and params.get("flow_rate_lps") in (None, ""):
+            if _is_accessory_like(f"{url} {r.get('product_name', '')}"):
+                candidate_type = "component"
+            else:
+                excluded_rows.append({
+                    "manufacturer": manufacturer,
+                    "product_id": product_id,
+                    "product_url": url,
+                    "reason": "missing_flow_after_html_pdf",
+                })
+                continue
         # get_bom_options je volitelné
         options = []
         if hasattr(connector, "get_bom_options"):

@@ -8,7 +8,6 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
-from ..flowrate import select_flow_rate
 from ..pdf_text import extract_pdf_text_from_url
 
 HEADERS = {
@@ -48,8 +47,7 @@ DN_PAIR_RE = re.compile(r"\bDN\s*(\d{2,3})\s*/\s*(\d{2,3})\b", re.IGNORECASE)
 DN_SINGLE_RE = re.compile(r"\b(?:Nennweite\s*)?DN\s*(\d{2,3})\b", re.IGNORECASE)
 
 FLOW_LPS_RE = re.compile(r"(?<!\d)(\d{1,2}(?:[\.,]\d{1,2})?)\s*l/s\b", re.IGNORECASE)
-FLOW_REJECT_RE = re.compile(r"reduziert\s+um|reduziert|reduzieren|reduzierung|\bum\b", re.IGNORECASE)
-FLOW_PREF_RE = re.compile(r"ablaufleistung|abflussleistung", re.IGNORECASE)
+FLOW_REJECT_RE = re.compile(r"reduziert\s+um|reduziert|reduzieren|reduzierung", re.IGNORECASE)
 
 HEIGHT_RE = re.compile(
     r"(?:einbauh(?:ö|oe)he|bauh(?:ö|oe)he|installationsh(?:ö|oe)he)[^\d]{0,30}(\d{2,3})\s*[-–]\s*(\d{2,3})\s*mm",
@@ -323,8 +321,10 @@ def _flow_value_if_valid(text: str, m: re.Match[str]) -> Optional[float]:
         return None
     if v < 0.10 or v > 3.0:
         return None
-    ctx = text[max(0, m.start() - 25):min(len(text), m.end() + 25)]
-    if FLOW_REJECT_RE.search(ctx):
+    before = text[max(0, m.start() - 24):m.start()].lower()
+    if FLOW_REJECT_RE.search(before):
+        return None
+    if re.search(r"\bum\s*$", before):
         return None
     # ignore leading negative values like "-0,8 l/s"
     lead = text[max(0, m.start() - 2):m.start()]
@@ -337,17 +337,23 @@ def _extract_flow_from_ablaufleistung(flat: str) -> Tuple[List[float], Optional[
     vals: List[float] = []
     first_span: Optional[Tuple[int, int]] = None
 
-    for seg in re.finditer(r"[^\n\r.;:|]{0,160}(?:ablaufleistung|abflussleistung)[^\n\r.;:|]{0,160}", flat, re.IGNORECASE):
-        part = seg.group(0)
+    # snippets that contain BOTH "Ablaufleistung" and "l/s"
+    for km in re.finditer(r"ablaufleistung", flat, re.IGNORECASE):
+        lo = max(0, km.start() - 40)
+        hi = min(len(flat), km.end() + 100)
+        part = flat[lo:hi]
         if "l/s" not in part.lower():
             continue
         for m in FLOW_LPS_RE.finditer(part):
+            prev_kw = part.lower().rfind("ablaufleistung", 0, m.start() + 1)
+            if prev_kw < 0 or (m.start() - prev_kw) > 40:
+                continue
             v = _flow_value_if_valid(part, m)
             if v is None:
                 continue
             vals.append(v)
             if first_span is None:
-                first_span = (seg.start() + m.start(), seg.start() + m.end())
+                first_span = (lo + m.start(), lo + m.end())
 
     return sorted(set(vals)), first_span
 
@@ -366,7 +372,7 @@ def _extract_flow_general(flat: str) -> Tuple[List[float], Optional[Tuple[int, i
 
 
 
-def _apply_text_extraction(res: Dict[str, Any], flat: str, src: str, html: str = "") -> None:
+def _apply_text_extraction(res: Dict[str, Any], flat: str, src: str, html: str = "", flow_evidence_pdf: bool = False) -> None:
     if not flat:
         return
 
@@ -405,15 +411,11 @@ def _apply_text_extraction(res: Dict[str, Any], flat: str, src: str, html: str =
         res["flow_rate_unit"] = "l/s"
         res["flow_rate_status"] = "ok"
         if flow_span:
-            label = "Flow rate (Ablaufleistung)" if use_abl else "Flow rate (fallback)"
+            if use_abl and flow_evidence_pdf:
+                label = "Flow rate (Ablaufleistung from PDF)"
+            else:
+                label = "Flow rate (Ablaufleistung)" if use_abl else "Flow rate (fallback)"
             res["evidence"].append((label, _snippet(flat, flow_span[0], flow_span[1]), src))
-    elif res.get("flow_rate_lps") is None:
-        lps, raw, unit, status = select_flow_rate(flat)
-        if lps is not None and lps >= 0.10:
-            res["flow_rate_lps"] = lps
-            res["flow_rate_raw_text"] = raw
-            res["flow_rate_unit"] = unit
-            res["flow_rate_status"] = status
 
     # heights (never trap seal)
     h = HEIGHT_RE.search(flat)
@@ -615,7 +617,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
             if not pdf_text:
                 continue
             flat_pdf = _clean_text(pdf_text)
-            _apply_text_extraction(res, flat_pdf, pdf_url)
+            _apply_text_extraction(res, flat_pdf, pdf_url, flow_evidence_pdf=True)
 
             if res.get("resolved_length_mm") is None:
                 plen, psnip, pkind = _resolve_length_from_text(flat_pdf)
