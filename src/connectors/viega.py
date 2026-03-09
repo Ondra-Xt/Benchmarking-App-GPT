@@ -11,7 +11,6 @@ from bs4 import BeautifulSoup
 from ..flowrate import select_flow_rate
 from ..pdf_text import extract_pdf_text_from_url
 
-
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -19,27 +18,34 @@ HEADERS = {
     "Connection": "keep-alive",
 }
 
+BASE = "https://www.viega.de"
 DETAIL_SCOPE = "/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/"
-CATALOG_SEED = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen.html"
+CATALOG_SEED = f"{BASE}{DETAIL_SCOPE.rstrip('/')}.html"
 DETAIL_SEEDS = [
-    "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Cleviva-Duschrinnen/Einbauhoehe-ab-70-mm/Advantix-Cleviva-Duschrinne-4981-11.html",
-    "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Vario-Duschrinnen/Einbauhoehe-ab-70-mm/Advantix-Vario-Duschrinnen-4966-10.html",
+    f"{BASE}{DETAIL_SCOPE}Advantix-Cleviva-Duschrinnen/Einbauhoehe-ab-70-mm/Advantix-Cleviva-Duschrinne-4981-11.html",
+    f"{BASE}{DETAIL_SCOPE}Advantix-Vario-Duschrinnen/Einbauhoehe-ab-70-mm/Advantix-Vario-Duschrinnen-4966-10.html",
 ]
 
-LENGTH_RE_LIST = [
-    re.compile(r"\b(\d{3,4})\s*mm\b", re.IGNORECASE),
-    re.compile(r"\b(\d)\.(\d{3})\s*mm\b", re.IGNORECASE),
-    re.compile(r"\bl(?:ä|ae)nge\s*(\d{3,4})\b", re.IGNORECASE),
-    re.compile(r"\b(\d{3,4})mm\b", re.IGNORECASE),
-]
 DETAIL_URL_RE = re.compile(r"-\d{4,5}-\d{2}\.html$", re.IGNORECASE)
 ARTICLE_FROM_URL_RE = re.compile(r"-(\d{4,5}-\d{2})\.html(?:$|[?#])", re.IGNORECASE)
-# strict DN parsing requires literal DN (prevents 70mm -> DN70 artifacts)
+LENGTH_RE_LIST = [
+    re.compile(r"\bl(?:ä|ae)nge\s*(\d{3,4})\s*mm\b", re.IGNORECASE),
+    re.compile(r"\bl(?:ä|ae)nge\s*(\d{3,4})\b", re.IGNORECASE),
+    re.compile(r"\b(\d)\.(\d{3})\s*mm\b", re.IGNORECASE),
+    re.compile(r"\b(\d{3,4})\s*mm\b", re.IGNORECASE),
+    re.compile(r"\b(\d{3,4})mm\b", re.IGNORECASE),
+]
+LENGTH_RANGE_RE = re.compile(r"\b(\d{3,4})\s*[-–]\s*(\d{3,4})\s*mm\b", re.IGNORECASE)
+VARIABLE_LEN_RE = re.compile(r"\b(vario|variabel|stufenlos|kuerzbar|kürzbar|l\s*\d{3,4}\s*[-–]\s*\d{3,4})\b", re.IGNORECASE)
+
+# strict DN parsing; only literal DN and allowed outlet sizes
 DN_PAIR_RE = re.compile(r"\bDN\s*(40|50)\s*/\s*(40|50)\b", re.IGNORECASE)
 DN_SINGLE_RE = re.compile(r"\b(?:Nennweite\s*)?DN\s*(40|50)\b", re.IGNORECASE)
-# prefer Ablaufleistung contexts; parse decimal comma/dot only
+
 FLOW_LPS_RE = re.compile(r"(?<!\d)(\d{1,2}(?:[\.,]\d{1,2})?)\s*l/s\b", re.IGNORECASE)
 FLOW_REJECT_RE = re.compile(r"reduziert\s+um|reduziert|reduzieren|reduzierung", re.IGNORECASE)
+FLOW_PREF_RE = re.compile(r"ablaufleistung|abflussleistung", re.IGNORECASE)
+
 HEIGHT_RE = re.compile(
     r"(?:einbauh(?:ö|oe)he|bauh(?:ö|oe)he|installationsh(?:ö|oe)he)[^\d]{0,30}(\d{2,3})\s*[-–]\s*(\d{2,3})\s*mm",
     re.IGNORECASE,
@@ -49,7 +55,6 @@ HEIGHT_SINGLE_RE = re.compile(
     re.IGNORECASE,
 )
 TRAP_SEAL_RE = re.compile(r"sperrwasserh(?:ö|oe)he|geruchsverschluss|water\s+seal", re.IGNORECASE)
-VARIABLE_LEN_RE = re.compile(r"\b(vario|variabel|stufenlos|kuerzbar|kürzbar)\b", re.IGNORECASE)
 
 
 def _safe_get_text(url: str, timeout: int = 35) -> Tuple[Optional[int], str, str, str]:
@@ -79,15 +84,116 @@ def _extract_title(html: str, fallback_url: str) -> str:
     soup = BeautifulSoup(html or "", "lxml")
     h1 = soup.select_one("h1")
     if h1:
-        txt = _clean_text(h1.get_text(" ", strip=True))
-        if txt:
-            return txt
+        t = _clean_text(h1.get_text(" ", strip=True))
+        if t:
+            return t
     t = soup.select_one("title")
     if t:
-        txt = _clean_text(t.get_text(" ", strip=True))
-        if txt:
-            return txt
+        x = _clean_text(t.get_text(" ", strip=True))
+        if x:
+            return x
     return fallback_url.rstrip("/").split("/")[-1].replace("-", " ")
+
+
+def _snippet(flat: str, start: int, end: int, pad: int = 80) -> str:
+    lo = max(0, start - pad)
+    hi = min(len(flat), end + pad)
+    return flat[lo:hi]
+
+
+def _digits_only(s: str) -> str:
+    return re.sub(r"\D", "", s or "")
+
+
+def _product_id_from_url(url: str) -> str:
+    m = ARTICLE_FROM_URL_RE.search(url or "")
+    if m:
+        return f"viega-{_digits_only(m.group(1))}"
+    d = _digits_only((url or "").split("/")[-1])
+    if len(d) >= 6:
+        return f"viega-{d}"
+    return f"viega-{abs(hash(url or ''))}"
+
+
+def _abs(href: str, base: str) -> str:
+    return urljoin(base, href or "")
+
+
+def _in_scope(url: str) -> bool:
+    try:
+        p = urlparse(url)
+        return p.netloc.endswith("viega.de") and (p.path or "").startswith(DETAIL_SCOPE)
+    except Exception:
+        return False
+
+
+def _is_detail_url(url: str) -> bool:
+    try:
+        p = urlparse(url)
+        return _in_scope(url) and bool(DETAIL_URL_RE.search(p.path or ""))
+    except Exception:
+        return False
+
+
+def _is_accessory_component_url(url: str) -> bool:
+    return "advantix-duschrinnen-zubehoer" in (url or "").lower() or "rost" in (url or "").lower()
+
+
+def _extract_category_links_from_sortiment(html: str, base_url: str) -> Set[str]:
+    soup = BeautifulSoup(html or "", "lxml")
+    out: Set[str] = set()
+
+    # try explicit Sortiment section first
+    sort_headers = soup.find_all(string=re.compile(r"sortiment", re.IGNORECASE))
+    for sh in sort_headers:
+        node = sh.parent
+        container = node
+        for _ in range(4):
+            if container is None:
+                break
+            for a in container.select("a[href]"):
+                u = _abs(a.get("href") or "", base_url)
+                if _in_scope(u) and not _is_detail_url(u):
+                    out.add(u)
+            container = container.parent
+
+    # fallback: all in-scope non-detail links from seed
+    if not out:
+        for a in soup.select("a[href]"):
+            u = _abs(a.get("href") or "", base_url)
+            if _in_scope(u) and not _is_detail_url(u):
+                out.add(u)
+
+    return out
+
+
+def _crawl_category_pages(start_pages: Set[str], max_pages: int = 2000) -> Set[str]:
+    queue = list(start_pages)
+    seen: Set[str] = set()
+    details: Set[str] = set()
+
+    while queue and len(seen) < max_pages:
+        u = queue.pop(0)
+        if u in seen:
+            continue
+        seen.add(u)
+
+        st, final, html, _ = _safe_get_text(u, timeout=30)
+        if st != 200 or not html:
+            continue
+
+        soup = BeautifulSoup(html, "lxml")
+        for a in soup.select("a[href]"):
+            cand = _abs(a.get("href") or "", final)
+            if not _in_scope(cand):
+                continue
+            if _is_detail_url(cand):
+                details.add(cand)
+            else:
+                if cand not in seen and cand not in queue:
+                    queue.append(cand)
+
+    return details
 
 
 def _extract_length_options(text: str) -> List[int]:
@@ -109,63 +215,22 @@ def _extract_length_options(text: str) -> List[int]:
     return sorted(out)
 
 
-def _digits_only(s: str) -> str:
-    return re.sub(r"\D", "", s or "")
-
-
-def _product_id_from_url(url: str) -> str:
-    m = ARTICLE_FROM_URL_RE.search(url or "")
-    if m:
-        return f"viega-{_digits_only(m.group(1))}"
-    tail = (url or "").rstrip("/").split("/")[-1]
-    d = _digits_only(tail)
-    if len(d) >= 6:
-        return f"viega-{d}"
-    return f"viega-{abs(hash(url or ''))}"
-
-
-def _snippet(flat: str, start: int, end: int, pad: int = 80) -> str:
-    lo = max(0, start - pad)
-    hi = min(len(flat), end + pad)
-    return flat[lo:hi]
-
-
-def _abs(href: str, base: str) -> str:
-    return urljoin(base, href or "")
-
-
-def _in_scope(url: str) -> bool:
-    try:
-        p = urlparse(url)
-        return p.netloc.endswith("viega.de") and DETAIL_SCOPE in (p.path or "")
-    except Exception:
-        return False
-
-
-def _is_detail_url(url: str) -> bool:
-    try:
-        p = urlparse(url)
-        return _in_scope(url) and bool(DETAIL_URL_RE.search(p.path or ""))
-    except Exception:
-        return False
-
-
-def _extract_detail_links_from_catalog(html: str, base_url: str) -> Set[str]:
-    soup = BeautifulSoup(html or "", "lxml")
-    out: Set[str] = set()
-    for a in soup.select("a[href]"):
-        href = a.get("href") or ""
-        u = _abs(href, base_url)
-        if _is_detail_url(u):
-            out.add(u)
-    return out
+def _resolve_length_from_text(flat: str) -> Tuple[Optional[int], Optional[str], Optional[str]]:
+    if VARIABLE_LEN_RE.search(flat or ""):
+        m = VARIABLE_LEN_RE.search(flat or "")
+        return None, (_snippet(flat, m.start(), m.end()) if m else "variable length"), "variable"
+    opts = _extract_length_options(flat)
+    if not opts:
+        return None, None, None
+    chosen = max(opts)
+    m = re.search(rf"\b{chosen}\s*mm\b|\b{chosen}mm\b|\b{str(chosen)[:1]}\.{str(chosen)[1:]}\s*mm\b", flat, re.IGNORECASE)
+    return chosen, (_snippet(flat, m.start(), m.end()) if m else f"{chosen} mm"), "fixed"
 
 
 def _extract_pdf_candidates(html: str, base_url: str) -> List[Tuple[str, int]]:
     soup = BeautifulSoup(html or "", "lxml")
     out: List[Tuple[str, int]] = []
     seen = set()
-
     for a in soup.select("a[href*='.pdf']"):
         href = a.get("href") or ""
         if ".pdf" not in href.lower():
@@ -181,26 +246,30 @@ def _extract_pdf_candidates(html: str, base_url: str) -> List[Tuple[str, int]]:
         if "montage" in txt or "anleitung" in txt:
             score += 1
         out.append((u, score))
-
     out.sort(key=lambda x: x[1], reverse=True)
     return out
 
 
-def _resolve_length_from_text(flat: str) -> Tuple[Optional[int], Optional[str]]:
-    if VARIABLE_LEN_RE.search(flat or ""):
-        m = VARIABLE_LEN_RE.search(flat or "")
-        return None, _snippet(flat, m.start(), m.end()) if m else "variable length"
-    opts = _extract_length_options(flat)
-    if not opts:
-        return None, None
-    chosen = max(opts)
-    m = re.search(rf"\b{chosen}\s*mm\b|\b{chosen}mm\b|\b{str(chosen)[:1]}\.{str(chosen)[1:]}\s*mm\b", flat, re.IGNORECASE)
-    return chosen, (_snippet(flat, m.start(), m.end()) if m else f"{chosen} mm")
+def _extract_dns_from_table(html: str) -> Tuple[List[str], Optional[str]]:
+    soup = BeautifulSoup(html or "", "lxml")
+    for table in soup.select("table"):
+        headers = [_clean_text(th.get_text(" ", strip=True)).lower() for th in table.select("thead th, tr th")]
+        if not any("dn" in h for h in headers):
+            continue
+        for tr in table.select("tr"):
+            txt = _clean_text(tr.get_text(" ", strip=True))
+            m_pair = re.search(r"\b40\s*/\s*50\b", txt)
+            if m_pair:
+                return ["DN40", "DN50"], txt
+            m_single = re.search(r"\b(?:dn\s*)?(40|50)\b", txt, re.IGNORECASE)
+            if m_single:
+                return [f"DN{m_single.group(1)}"], txt
+    return [], None
 
 
-def _extract_dns(flat: str) -> Tuple[List[str], Optional[Tuple[int, int]]]:
+def _extract_dns_from_text(flat: str) -> Tuple[List[str], Optional[Tuple[int, int]]]:
     dns: List[str] = []
-    spans: List[Tuple[int, int]] = []
+    first_span: Optional[Tuple[int, int]] = None
 
     for m in DN_PAIR_RE.finditer(flat):
         a = f"DN{m.group(1)}"
@@ -209,45 +278,86 @@ def _extract_dns(flat: str) -> Tuple[List[str], Optional[Tuple[int, int]]]:
             dns.append(a)
         if b not in dns:
             dns.append(b)
-        spans.append((m.start(), m.end()))
+        if first_span is None:
+            first_span = (m.start(), m.end())
 
     for m in DN_SINGLE_RE.finditer(flat):
         dn = f"DN{m.group(1)}"
         if dn not in dns:
             dns.append(dn)
-            spans.append((m.start(), m.end()))
+            if first_span is None:
+                first_span = (m.start(), m.end())
 
-    dns_sorted = sorted(dns)
-    return dns_sorted, (spans[0] if spans else None)
+    return sorted(dns), first_span
 
 
 def _extract_flow_vals(flat: str) -> Tuple[List[float], Optional[Tuple[int, int]]]:
+    # primary: only Ablaufleistung/Abflussleistung lines
     vals: List[float] = []
     first_span: Optional[Tuple[int, int]] = None
-    for m in FLOW_LPS_RE.finditer(flat):
-        ctx = _snippet(flat, m.start(), m.end(), pad=50)
-        if "ablaufleistung" not in ctx.lower() and "abflussleistung" not in ctx.lower():
+
+    parts = re.split(r"[\n\r]+|(?<=\.)\s+", flat)
+    for part in parts:
+        pl = part.lower()
+        if not FLOW_PREF_RE.search(pl):
             continue
-        if FLOW_REJECT_RE.search(ctx.lower()):
+        if FLOW_REJECT_RE.search(pl):
             continue
-        try:
-            v = float(m.group(1).replace(",", "."))
-        except Exception:
-            continue
-        if v < 0.10:
-            continue
-        if v <= 3.0:
+        for m in FLOW_LPS_RE.finditer(part):
+            try:
+                v = float(m.group(1).replace(",", "."))
+            except Exception:
+                continue
+            if v < 0.10 or v > 3.0:
+                continue
             vals.append(v)
             if first_span is None:
-                first_span = (m.start(), m.end())
+                # approximate in full text
+                idx = flat.lower().find(part.lower())
+                if idx >= 0:
+                    first_span = (idx + m.start(), idx + m.end())
+
+    # fallback: contextual proximity to Ablaufleistung keyword (within 70 chars)
+    if not vals:
+        for m in FLOW_LPS_RE.finditer(flat):
+            ctx = _snippet(flat, m.start(), m.end(), pad=70)
+            cl = ctx.lower()
+            if not FLOW_PREF_RE.search(cl):
+                continue
+            if FLOW_REJECT_RE.search(cl):
+                continue
+            try:
+                v = float(m.group(1).replace(",", "."))
+            except Exception:
+                continue
+            if 0.10 <= v <= 3.0:
+                vals.append(v)
+                if first_span is None:
+                    first_span = (m.start(), m.end())
+
     return sorted(set(vals)), first_span
 
 
-def _apply_text_extraction(res: Dict[str, Any], flat: str, src: str) -> None:
+def _apply_text_extraction(res: Dict[str, Any], flat: str, src: str, html: str = "") -> None:
     if not flat:
         return
 
-    dns, dn_span = _extract_dns(flat)
+    # DN: table first
+    dns: List[str] = []
+    dn_span: Optional[Tuple[int, int]] = None
+    if html:
+        dns_tab, tab_txt = _extract_dns_from_table(html)
+        if dns_tab:
+            dns = dns_tab
+            # find table snippet occurrence in flat for evidence
+            if tab_txt:
+                idx = flat.lower().find(tab_txt.lower())
+                if idx >= 0:
+                    dn_span = (idx, min(len(flat), idx + len(tab_txt)))
+
+    if not dns:
+        dns, dn_span = _extract_dns_from_text(flat)
+
     if dns and res.get("outlet_dn") is None:
         res["outlet_dn"] = "/".join(dns)
         res["outlet_dn_default"] = "DN50" if "DN50" in dns else dns[0]
@@ -255,6 +365,7 @@ def _apply_text_extraction(res: Dict[str, Any], flat: str, src: str) -> None:
         if dn_span:
             res["evidence"].append(("Outlet DN", _snippet(flat, dn_span[0], dn_span[1]), src))
 
+    # flow
     flow_opts, flow_span = _extract_flow_vals(flat)
     if flow_opts:
         res["flow_rate_lps_options"] = json.dumps(flow_opts, ensure_ascii=False)
@@ -271,6 +382,7 @@ def _apply_text_extraction(res: Dict[str, Any], flat: str, src: str) -> None:
             res["flow_rate_unit"] = unit
             res["flow_rate_status"] = status
 
+    # heights (never trap seal)
     h = HEIGHT_RE.search(flat)
     if h and not TRAP_SEAL_RE.search(flat[h.start():h.end()]):
         a = int(h.group(1))
@@ -292,44 +404,60 @@ def _apply_text_extraction(res: Dict[str, Any], flat: str, src: str) -> None:
 
 def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     want = int(target_length_mm)
-    _ = int(tolerance_mm)  # discovery no longer filters by length
+    _ = int(tolerance_mm)
 
     out: List[Dict[str, Any]] = []
     debug: List[Dict[str, Any]] = []
 
     discovered: Set[str] = set(DETAIL_SEEDS)
 
+    # Step 1: seed -> Sortiment category links
     st, final, html, err = _safe_get_text(CATALOG_SEED, timeout=35)
+    category_links: Set[str] = set()
     if st == 200 and html:
-        links = _extract_detail_links_from_catalog(html, final)
-        discovered.update(links)
-        debug.append({"site": "viega", "seed_url": CATALOG_SEED, "status_code": st, "final_url": final, "error": err, "candidates_found": len(links), "method": "catalog", "is_index": None})
+        category_links = _extract_category_links_from_sortiment(html, final)
+        debug.append({"site": "viega", "seed_url": CATALOG_SEED, "status_code": st, "final_url": final, "error": err, "candidates_found": len(category_links), "method": "sortiment", "is_index": None})
     else:
-        debug.append({"site": "viega", "seed_url": CATALOG_SEED, "status_code": st, "final_url": final, "error": err, "candidates_found": 0, "method": "catalog", "is_index": None})
+        debug.append({"site": "viega", "seed_url": CATALOG_SEED, "status_code": st, "final_url": final, "error": err, "candidates_found": 0, "method": "sortiment", "is_index": None})
+
+    # Step 2: category crawl -> detail links
+    detail_links = _crawl_category_pages(category_links, max_pages=2000)
+    discovered.update(detail_links)
+    debug.append({"site": "viega", "seed_url": CATALOG_SEED, "status_code": 200 if detail_links else None, "final_url": CATALOG_SEED, "error": "" if detail_links else "No detail links from categories", "candidates_found": len(detail_links), "method": "category_crawl", "is_index": None})
 
     for url in sorted(discovered):
         st, final, html, err = _safe_get_text(url, timeout=35)
         title = url.rstrip("/").split("/")[-1].replace("-", " ")
         length = None
+        length_kind = None
+        length_snip = None
+
         if st == 200 and html:
             title = _extract_title(html, final)
             flat = _main_flat_text(html)
-            length, _ = _resolve_length_from_text(f"{title} {flat}")
+            length, length_snip, length_kind = _resolve_length_from_text(f"{title} {flat}")
 
-        row = {
+        cand_type = "component" if _is_accessory_component_url(url) else "drain"
+
+        # For components (rost/accessories), optionally append length range info to name
+        if cand_type == "component" and st == 200 and html:
+            mrg = LENGTH_RANGE_RE.search(_main_flat_text(html))
+            if mrg:
+                title = f"{title} ({mrg.group(1)}–{mrg.group(2)} mm)"
+
+        out.append({
             "manufacturer": "viega",
             "product_id": _product_id_from_url(url),
             "product_family": "Advantix",
             "product_name": title if length is None else f"{title} ({length} mm)",
             "product_url": url,
             "sources": url,
-            "candidate_type": "drain",
-            "complete_system": "yes",
+            "candidate_type": cand_type,
+            "complete_system": "component" if cand_type == "component" else "yes",
             "selected_length_mm": want,
-            "length_mode": "unknown" if length is None else "html",
+            "length_mode": "unknown" if length is None else ("variable" if length_kind == "variable" else "html"),
             "length_delta_mm": None if length is None else (length - want),
-        }
-        out.append(row)
+        })
 
         debug.append({
             "site": "viega",
@@ -342,9 +470,12 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             "is_index": None,
         })
 
-    dedup = {}
+    # keep unique product_id to avoid duplicate IDs in exported Products/Components
+    dedup: Dict[str, Dict[str, Any]] = {}
     for r in out:
-        dedup[(r["product_id"], r["product_url"], r["product_name"])] = r
+        pid = str(r.get("product_id") or "")
+        if pid and pid not in dedup:
+            dedup[pid] = r
     return list(dedup.values()), debug
 
 
@@ -377,14 +508,20 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
         return res
 
     flat = _main_flat_text(html)
-    _apply_text_extraction(res, flat, final)
+    _apply_text_extraction(res, flat, final, html=html)
 
-    length, len_snip = _resolve_length_from_text(flat)
+    length, len_snip, kind = _resolve_length_from_text(flat)
     if length is not None:
         res["resolved_length_mm"] = length
         res["evidence"].append(("Resolved length (mm)", len_snip or f"{length} mm", final))
-    elif VARIABLE_LEN_RE.search(flat):
+    elif kind == "variable":
         res["evidence"].append(("Resolved length", "variable length", final))
+
+    # accessory rost range evidence
+    if _is_accessory_component_url(src):
+        mrg = LENGTH_RANGE_RE.search(flat)
+        if mrg:
+            res["evidence"].append(("Accessory length range (mm)", _snippet(flat, mrg.start(), mrg.end()), final))
 
     m_en = re.search(r"\b(?:DIN\s*)?EN\s*1253(?:-1)?\b", flat, re.IGNORECASE)
     if m_en:
@@ -402,11 +539,11 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
             _apply_text_extraction(res, flat_pdf, pdf_url)
 
             if res.get("resolved_length_mm") is None:
-                plen, psnip = _resolve_length_from_text(flat_pdf)
+                plen, psnip, pkind = _resolve_length_from_text(flat_pdf)
                 if plen is not None:
                     res["resolved_length_mm"] = plen
                     res["evidence"].append(("Resolved length (mm)", psnip or f"{plen} mm", pdf_url))
-                elif VARIABLE_LEN_RE.search(flat_pdf):
+                elif pkind == "variable":
                     res["evidence"].append(("Resolved length", "variable length", pdf_url))
 
             if res.get("din_en_1253_cert") is None and re.search(r"\b(?:DIN\s*)?EN\s*1253(?:-1)?\b", flat_pdf, re.IGNORECASE):
