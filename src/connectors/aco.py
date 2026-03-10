@@ -3,11 +3,11 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 import json
 import re
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
 
-from ..flowrate import select_flow_rate
 
 
 HEADERS = {
@@ -17,9 +17,15 @@ HEADERS = {
     "Connection": "keep-alive",
 }
 
+BASE = "https://www.aco-haustechnik.de"
+DUSCHRINNEN_SCOPE = "/produkte/badentwaesserung/duschrinnen/"
 SEED_PAGES = [
-    "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm-200-mm/",
-    "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-eplus/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm/",
+    f"{BASE}{DUSCHRINNEN_SCOPE}",
+    f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-c/",
+    f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-eplus/",
+    f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-mplus/",
+    f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-c/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm-200-mm/",
+    f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-eplus/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm/",
 ]
 
 ARTICLE_RE = re.compile(r"\b(?:\d{4}\.?\d{2}\.?\d{2}|\d{8})\b")
@@ -34,6 +40,7 @@ DN_RE = re.compile(r"\bDN\s*(\d{2})\b", re.IGNORECASE)
 EN1253_RE = re.compile(r"\b(?:DIN\s*)?EN\s*1253(?:-1)?\b", re.IGNORECASE)
 DN_CONTEXT_RE = re.compile(r"ablaufstutzen|ablauf|anschluss|stutzen|\bdn\b", re.IGNORECASE)
 FLOW_REJECT_RE = re.compile(r"reduziert|reduzieren|reduziert\s+die\s+abflussleistung", re.IGNORECASE)
+ABFLUSS_PREF_RE = re.compile(r"abflusswert|ablaufleistung", re.IGNORECASE)
 
 
 def _safe_get_text(url: str, timeout: int = 35) -> Tuple[Optional[int], str, str, str]:
@@ -142,6 +149,29 @@ def _extract_pairs_from_flat_text(flat: str) -> List[Tuple[int, str, str]]:
     return out
 
 
+def _abs(href: str, base: str) -> str:
+    return urljoin(base, href or "")
+
+
+def _in_scope(url: str) -> bool:
+    try:
+        p = urlparse(url)
+        return p.netloc.endswith("aco-haustechnik.de") and (p.path or "").startswith(DUSCHRINNEN_SCOPE)
+    except Exception:
+        return False
+
+
+def _is_accessory_page(url: str, title: str = "") -> bool:
+    txt = f"{url} {title}".lower()
+    return any(k in txt for k in ("zubehoer", "zubehör", "rost", "abdeckung", "rahmen", "designrost", "rahmenprofil"))
+
+
+def _is_channel_body_page(url: str, title: str = "") -> bool:
+    txt = f"{url} {title}".lower()
+    return any(k in txt for k in ("rinnenkoerper", "rinnenkörper", "duschrinne", "showerdrain", "einbauhoehe", "einbauhöhe"))
+
+
+
 def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     want = int(target_length_mm)
     tol = int(tolerance_mm)
@@ -151,60 +181,141 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     out: List[Dict[str, Any]] = []
     debug: List[Dict[str, Any]] = []
 
-    for seed in SEED_PAGES:
-        st, final, html, err = _safe_get_text(seed, timeout=35)
+    queue: List[str] = list(SEED_PAGES)
+    seen_pages = set()
+    detail_pages = set()
+
+    # Crawl category/list pages in scope to discover more ranges and detail pages
+    while queue and len(seen_pages) < 250:
+        page = queue.pop(0)
+        if page in seen_pages:
+            continue
+        seen_pages.add(page)
+
+        st, final, html, err = _safe_get_text(page, timeout=35)
         if st != 200 or not html:
-            debug.append({
-                "site": "aco",
-                "seed_url": seed,
-                "status_code": st,
-                "final_url": final,
-                "error": err,
-                "candidates_found": 0,
-                "method": "seed",
-                "is_index": None,
-            })
+            debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final, "error": err, "candidates_found": 0, "method": "crawl", "is_index": None})
+            continue
+
+        detail_pages.add(final)
+        soup = BeautifulSoup(html, "lxml")
+        for a in soup.select("a[href]"):
+            cand = _abs(a.get("href") or "", final)
+            if not _in_scope(cand):
+                continue
+            if cand not in seen_pages and cand not in queue:
+                queue.append(cand)
+            if "/produkte/badentwaesserung/duschrinnen/" in cand:
+                detail_pages.add(cand)
+
+    kept_total = 0
+    seen_ids = set()
+    product_urls: List[str] = []
+    component_urls: List[str] = []
+
+    for page in sorted(detail_pages):
+        st, final, html, err = _safe_get_text(page, timeout=35)
+        if st != 200 or not html:
+            debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final, "error": err, "candidates_found": 0, "method": "detail", "is_index": None})
             continue
 
         title_base = _extract_title(html, final)
+        cand_type = "component" if _is_accessory_page(final, title_base) else ("drain" if _is_channel_body_page(final, title_base) else "component")
+
         pairs = _extract_pairs_from_table(html)
         method = "table"
         if not pairs:
-            soup = BeautifulSoup(html, "lxml")
-            flat = _clean_text(soup.get_text(" ", strip=True) or "")
+            flat = _main_flat_text_from_html(html)
             pairs = _extract_pairs_from_flat_text(flat)
             method = "text"
 
         kept = 0
-        for l1_mm, article_no, article_digits in pairs:
-            nominal_length_mm = _nominal_length_from_l1(l1_mm)
-            if not (min_len <= nominal_length_mm <= max_len):
-                continue
-            kept += 1
-            out.append({
-                "manufacturer": "aco",
-                "product_id": f"aco-{article_digits}",
-                "product_family": "ShowerDrain",
-                "product_name": f"{title_base} {nominal_length_mm} mm (Artikel-Nr. {article_no})",
-                "product_url": seed,
-                "sources": seed,
-                "candidate_type": "drain",
-                "complete_system": "yes",
-                "selected_length_mm": want,
-                "length_mode": "L1_nominal_heuristic",
-                "length_delta_mm": nominal_length_mm - want,
-            })
+        if cand_type == "drain" and pairs:
+            for l1_mm, article_no, article_digits in pairs:
+                nominal_length_mm = _nominal_length_from_l1(l1_mm)
+                if not (min_len <= nominal_length_mm <= max_len):
+                    continue
+                pid = f"aco-{article_digits}"
+                if pid in seen_ids:
+                    continue
+                seen_ids.add(pid)
+                kept += 1
+                kept_total += 1
+                out.append({
+                    "manufacturer": "aco",
+                    "product_id": pid,
+                    "product_family": "ShowerDrain",
+                    "product_name": f"{title_base} {nominal_length_mm} mm (Artikel-Nr. {article_no})",
+                    "product_url": final,
+                    "sources": final,
+                    "candidate_type": "drain",
+                    "complete_system": "yes",
+                    "selected_length_mm": want,
+                    "length_mode": "L1_nominal_heuristic",
+                    "length_delta_mm": nominal_length_mm - want,
+                })
+                product_urls.append(final)
+        elif cand_type == "drain" and _is_channel_body_page(final, title_base):
+            # unknown length: keep only clearly channel-body pages
+            pid = f"aco-{abs(hash(final))}"
+            if pid not in seen_ids:
+                seen_ids.add(pid)
+                kept += 1
+                kept_total += 1
+                out.append({
+                    "manufacturer": "aco",
+                    "product_id": pid,
+                    "product_family": "ShowerDrain",
+                    "product_name": title_base,
+                    "product_url": final,
+                    "sources": final,
+                    "candidate_type": "drain",
+                    "complete_system": "yes",
+                    "selected_length_mm": want,
+                    "length_mode": "unknown",
+                    "length_delta_mm": None,
+                })
+                product_urls.append(final)
+        elif _is_accessory_page(final, title_base):
+            # accessories/grates/frames are components
+            pid = f"aco-comp-{abs(hash(final))}"
+            if pid not in seen_ids:
+                seen_ids.add(pid)
+                kept += 1
+                kept_total += 1
+                out.append({
+                    "manufacturer": "aco",
+                    "product_id": pid,
+                    "product_family": "ShowerDrain",
+                    "product_name": title_base,
+                    "product_url": final,
+                    "sources": final,
+                    "candidate_type": "component",
+                    "complete_system": "component",
+                    "selected_length_mm": want,
+                    "length_mode": "unknown",
+                    "length_delta_mm": None,
+                })
+                component_urls.append(final)
 
-        debug.append({
-            "site": "aco",
-            "seed_url": seed,
-            "status_code": st,
-            "final_url": final,
-            "error": err,
-            "candidates_found": kept,
-            "method": method,
-            "is_index": None,
-        })
+        debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final, "error": err, "candidates_found": kept, "method": method, "is_index": None})
+
+    debug.append({
+        "site": "aco",
+        "seed_url": f"{BASE}{DUSCHRINNEN_SCOPE}",
+        "status_code": 200 if out else None,
+        "final_url": f"{BASE}{DUSCHRINNEN_SCOPE}",
+        "error": "" if out else "No accepted candidates.",
+        "candidates_found": len(out),
+        "method": "summary",
+        "is_index": None,
+        "products_count": sum(1 for r in out if str(r.get("candidate_type")) == "drain"),
+        "components_count": sum(1 for r in out if str(r.get("candidate_type")) == "component"),
+        "sample_products_urls": json.dumps(product_urls[:10], ensure_ascii=False),
+        "sample_components_urls": json.dumps(component_urls[:10], ensure_ascii=False),
+        "total_pages_crawled": len(seen_pages),
+        "kept_total": kept_total,
+    })
 
     return out, debug
 
@@ -293,18 +404,21 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
         if first:
             res["evidence"].append(("Outlet DN", _snippet(flat, first.start(), first.end()), final))
 
-    # flow rate options
+    # flow rate options from Abflusswert/Ablaufleistung snippets only
     lps_values: List[float] = []
     for m in FLOW_LPS_RE.finditer(flat):
         if not _is_valid_flow_context(flat, m.start(), m.end()):
+            continue
+        ctx = _snippet(flat, m.start(), m.end(), pad=70)
+        if not ABFLUSS_PREF_RE.search(ctx):
             continue
         try:
             v = float(m.group(1).replace(",", "."))
         except Exception:
             continue
-        if 0.05 <= v <= 3.0:
+        if 0.10 <= v <= 3.0:
             lps_values.append(v)
-            res["evidence"].append(("Flow rate option (l/s)", _snippet(flat, m.start(), m.end()), final))
+            res["evidence"].append(("Flow rate option (Abflusswert l/s)", _snippet(flat, m.start(), m.end()), final))
 
     if lps_values:
         opts = sorted(set(lps_values))
@@ -312,12 +426,6 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
         res["flow_rate_lps"] = max(opts)
         res["flow_rate_unit"] = "l/s"
         res["flow_rate_status"] = "ok"
-    else:
-        lps, raw_text, unit, status = select_flow_rate(flat)
-        res["flow_rate_lps"] = lps
-        res["flow_rate_raw_text"] = raw_text
-        res["flow_rate_unit"] = unit
-        res["flow_rate_status"] = status
 
     enm = EN1253_RE.search(flat)
     if enm:
