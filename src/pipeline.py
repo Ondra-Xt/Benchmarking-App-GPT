@@ -106,7 +106,12 @@ def run_discovery(target_length_mm: int = 1200, tolerance_mm: int = 100) -> Tupl
     if "product_id" in registry_df.columns:
         pids = []
         for m, u, pid in zip(registry_df["manufacturer"], registry_df["product_url"], registry_df["product_id"]):
-            pid_s = str(pid).strip() if pid is not None else ""
+            if pd.isna(pid):
+                pid_s = ""
+            else:
+                pid_s = str(pid).strip()
+            if pid_s.lower() == "nan":
+                pid_s = ""
             pids.append(pid_s if pid_s else _make_product_id(m, u))
         registry_df["product_id"] = pids
     else:

@@ -343,6 +343,10 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     sample_rejected_lengths: List[Dict[str, Any]] = []
     sample_missing_length_rows: List[Dict[str, Any]] = []
 
+    emitted_rows = 0
+    dropped_missing_product_id = 0
+    dropped_missing_url = 0
+
     for page in sorted(detail_pages):
         # reject category/landing pages from candidates
         if _is_category_page(page):
@@ -456,6 +460,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                     "row_length_nominal_mm": nominal_length_mm,
                 })
                 product_urls.append(final_c)
+                emitted_rows += 1
         elif cand_type == "component":
             pid = f"aco-comp-{abs(hash(final_c))}"
             if pid not in seen_ids:
@@ -476,8 +481,33 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                     "length_delta_mm": None,
                 })
                 component_urls.append(final_c)
+                emitted_rows += 1
 
         debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": err, "candidates_found": kept, "method": method, "is_index": None})
+
+    # final safety guard: never emit invalid product rows
+    safe_out: List[Dict[str, Any]] = []
+    for r in out:
+        pid = str(r.get("product_id") or "").strip()
+        url = str(r.get("product_url") or "").strip()
+        if not pid:
+            dropped_missing_product_id += 1
+            continue
+        if pid.lower() == "nan":
+            dropped_missing_product_id += 1
+            continue
+        if not url:
+            dropped_missing_url += 1
+            continue
+        safe_out.append(r)
+
+    # dedupe by stable product_id (not page URL)
+    dedup: Dict[str, Dict[str, Any]] = {}
+    for r in safe_out:
+        pid = str(r.get("product_id") or "").strip()
+        if pid and pid not in dedup:
+            dedup[pid] = r
+    out = list(dedup.values())
 
     debug.append({
         "site": "aco",
@@ -499,6 +529,9 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "dropped_category_pages": dropped_category_pages,
         "accepted_products": sum(1 for r in out if str(r.get("candidate_type")) == "drain"),
         "accepted_components": sum(1 for r in out if str(r.get("candidate_type")) == "component"),
+        "emitted_rows": emitted_rows,
+        "dropped_missing_product_id": dropped_missing_product_id,
+        "dropped_missing_url": dropped_missing_url,
         "unknown_length_count": sum(1 for r in out if str(r.get("candidate_type")) == "drain" and str(r.get("length_mode")) == "unknown"),
         "accepted_product_pages": accepted_product_pages,
         "article_rows_found": article_rows_found,
