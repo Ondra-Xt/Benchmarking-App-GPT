@@ -10,6 +10,7 @@ from .connectors import CONNECTORS
 from .scoring import (
     compute_parameter_score,
     compute_equivalence_score,
+    compute_system_score,
     compute_final_score,
 )
 
@@ -34,6 +35,10 @@ def _make_product_id(manufacturer: str, url: str) -> str:
     m2 = re.search(r"/(\d{6})_", u)
     if m2:
         return f"{m}-{m2.group(1)}"
+    # Viega article no. in URL tail, e.g. ...-4981-11.html -> 498111
+    m3 = re.search(r"-(\d{3,5})-(\d{2})\.html(?:$|[?#])", u, re.IGNORECASE)
+    if m3:
+        return f"{m}-{m3.group(1)}{m3.group(2)}"
     return f"{m}-{abs(hash(u))}"
 
 
@@ -53,6 +58,10 @@ def _pick_connector(manufacturer: str, url: str):
 
     return None
 
+
+def _is_accessory_like(text: str) -> bool:
+    t = (text or "").lower()
+    return any(k in t for k in ("zubehoer", "zubehör", "rost", "abdeckung", "einleger", "profil", "rahmen", "siphon", "geruch"))
 
 # --- API pro app.py ------------------------------------------------------
 
@@ -93,10 +102,17 @@ def run_discovery(target_length_mm: int = 1200, tolerance_mm: int = 100) -> Tupl
     if registry_df.empty:
         return registry_df, pd.DataFrame(debug_rows)
 
-    # product_id vždy scalar:
-    registry_df["product_id"] = [
-        _make_product_id(m, u) for m, u in zip(registry_df["manufacturer"], registry_df["product_url"])
-    ]
+    # product_id vždy scalar: preserve connector-provided IDs when present
+    if "product_id" in registry_df.columns:
+        pids = []
+        for m, u, pid in zip(registry_df["manufacturer"], registry_df["product_url"], registry_df["product_id"]):
+            pid_s = str(pid).strip() if pid is not None else ""
+            pids.append(pid_s if pid_s else _make_product_id(m, u))
+        registry_df["product_id"] = pids
+    else:
+        registry_df["product_id"] = [
+            _make_product_id(m, u) for m, u in zip(registry_df["manufacturer"], registry_df["product_url"])
+        ]
 
     # pár jistých sloupců:
     for col, default_val in [
@@ -113,7 +129,7 @@ def run_discovery(target_length_mm: int = 1200, tolerance_mm: int = 100) -> Tupl
             if default_val is not None:
                 registry_df[col] = registry_df[col].fillna(default_val)
 
-    registry_df = registry_df.drop_duplicates(subset=["manufacturer", "product_url"]).reset_index(drop=True)
+    registry_df = registry_df.drop_duplicates(subset=["manufacturer", "product_id"]).reset_index(drop=True)
 
     return registry_df, pd.DataFrame(debug_rows)
 
@@ -157,7 +173,39 @@ def run_update(
             continue
 
         params = connector.extract_parameters(url) or {}
+
+        # Viega cleanup: drains without mandatory parameters must not stay in Products
+        if manufacturer == "viega" and candidate_type == "drain":
+            if _is_accessory_like(f"{url} {r.get('product_name', '')}"):
+                candidate_type = "component"
+            elif params.get("flow_rate_lps") in (None, ""):
+                excluded_rows.append({
+                    "manufacturer": manufacturer,
+                    "product_id": product_id,
+                    "product_url": url,
+                    "reason": "missing_flow_after_html_pdf",
+                })
+                continue
+            elif params.get("outlet_dn") in (None, ""):
+                excluded_rows.append({
+                    "manufacturer": manufacturer,
+                    "product_id": product_id,
+                    "product_url": url,
+                    "reason": "missing_outlet_dn_after_html_pdf",
+                })
+                continue
+
+        # ACO cleanup: drains without flow should be excluded
+        if manufacturer == "aco" and candidate_type == "drain" and params.get("flow_rate_lps") in (None, ""):
+            excluded_rows.append({
+                "manufacturer": manufacturer,
+                "product_id": product_id,
+                "product_url": url,
+                "reason": "missing_flow_after_html",
+            })
+            continue
         # get_bom_options je volitelné
+        options = []
         if hasattr(connector, "get_bom_options"):
             try:
                 options = connector.get_bom_options(url, params=params) or []
@@ -187,7 +235,8 @@ def run_update(
         # scoring
         param_score, param_detail = compute_parameter_score(params, cfg)
         equiv_score = compute_equivalence_score({"candidate_type": candidate_type, **params}, cfg)
-        final_score = compute_final_score(param_score, equiv_score, cfg)
+        system_score = compute_system_score(candidate_type, has_bom_options=bool(options))
+        final_score = compute_final_score(param_score, system_score, equiv_score, cfg)
 
         prod_row = {
             "manufacturer": manufacturer,
@@ -202,6 +251,7 @@ def run_update(
             # skóre:
             "param_score": param_score,
             "equiv_score": equiv_score,
+            "system_score": system_score,
             "final_score": final_score,
         }
         products_rows.append(prod_row)
@@ -214,6 +264,7 @@ def run_update(
             "final_score": final_score,
             "param_score": param_score,
             "equiv_score": equiv_score,
+            "system_score": system_score,
         })
 
         # detail pro debug (volitelné)
