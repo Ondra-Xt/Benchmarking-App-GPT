@@ -102,10 +102,17 @@ def run_discovery(target_length_mm: int = 1200, tolerance_mm: int = 100) -> Tupl
     if registry_df.empty:
         return registry_df, pd.DataFrame(debug_rows)
 
-    # product_id vždy scalar:
-    registry_df["product_id"] = [
-        _make_product_id(m, u) for m, u in zip(registry_df["manufacturer"], registry_df["product_url"])
-    ]
+    # product_id vždy scalar: preserve connector-provided IDs when present
+    if "product_id" in registry_df.columns:
+        pids = []
+        for m, u, pid in zip(registry_df["manufacturer"], registry_df["product_url"], registry_df["product_id"]):
+            pid_s = str(pid).strip() if pid is not None else ""
+            pids.append(pid_s if pid_s else _make_product_id(m, u))
+        registry_df["product_id"] = pids
+    else:
+        registry_df["product_id"] = [
+            _make_product_id(m, u) for m, u in zip(registry_df["manufacturer"], registry_df["product_url"])
+        ]
 
     # pár jistých sloupců:
     for col, default_val in [
@@ -122,7 +129,7 @@ def run_discovery(target_length_mm: int = 1200, tolerance_mm: int = 100) -> Tupl
             if default_val is not None:
                 registry_df[col] = registry_df[col].fillna(default_val)
 
-    registry_df = registry_df.drop_duplicates(subset=["manufacturer", "product_url"]).reset_index(drop=True)
+    registry_df = registry_df.drop_duplicates(subset=["manufacturer", "product_id"]).reset_index(drop=True)
 
     return registry_df, pd.DataFrame(debug_rows)
 

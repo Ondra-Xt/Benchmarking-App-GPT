@@ -451,6 +451,9 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                     "selected_length_mm": want,
                     "length_mode": "L1_nominal_heuristic",
                     "length_delta_mm": nominal_length_mm - want,
+                    "article_no": article_no,
+                    "row_length_raw_mm": l1_mm,
+                    "row_length_nominal_mm": nominal_length_mm,
                 })
                 product_urls.append(final_c)
         elif cand_type == "component":
