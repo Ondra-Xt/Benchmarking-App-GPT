@@ -41,6 +41,14 @@ EN1253_RE = re.compile(r"\b(?:DIN\s*)?EN\s*1253(?:-1)?\b", re.IGNORECASE)
 DN_CONTEXT_RE = re.compile(r"ablaufstutzen|ablauf|anschluss|stutzen|\bdn\b", re.IGNORECASE)
 FLOW_REJECT_RE = re.compile(r"reduziert|reduzieren|reduziert\s+die\s+abflussleistung", re.IGNORECASE)
 ABFLUSS_PREF_RE = re.compile(r"abflusswert|ablaufleistung", re.IGNORECASE)
+CATEGORY_PATHS_EXACT = {
+    DUSCHRINNEN_SCOPE.rstrip("/"),
+    f"{DUSCHRINNEN_SCOPE}aco-showerdrain-b".rstrip("/"),
+    f"{DUSCHRINNEN_SCOPE}aco-showerdrain-c".rstrip("/"),
+    f"{DUSCHRINNEN_SCOPE}aco-showerdrain-eplus".rstrip("/"),
+    f"{DUSCHRINNEN_SCOPE}aco-showerdrain-mplus".rstrip("/"),
+    f"{DUSCHRINNEN_SCOPE}aco-showerdrain-splus".rstrip("/"),
+}
 
 
 def _safe_get_text(url: str, timeout: int = 35) -> Tuple[Optional[int], str, str, str]:
@@ -172,6 +180,39 @@ def _is_channel_body_page(url: str, title: str = "") -> bool:
 
 
 
+
+
+def _canonicalize_url(url: str) -> str:
+    try:
+        p = urlparse((url or "").strip())
+        path = (p.path or "/").replace("//", "/")
+        if path != "/":
+            path = path.rstrip("/") + "/"
+        return f"{p.scheme}://{p.netloc}{path}"
+    except Exception:
+        return (url or "").split("#", 1)[0].split("?", 1)[0].rstrip("/") + "/"
+
+
+def _is_category_page(url: str) -> bool:
+    try:
+        path = (urlparse(url).path or "").rstrip("/")
+        return path in CATEGORY_PATHS_EXACT
+    except Exception:
+        return False
+
+
+def _looks_like_detail_drain_page(url: str, html: str) -> bool:
+    if "rinnenkoerper" in (url or "").lower():
+        return True
+    pairs = _extract_pairs_from_table(html)
+    if pairs:
+        return True
+    flat = _main_flat_text_from_html(html)
+    has_h = bool(HEIGHT_OE_RE.search(flat) or HEIGHT_RE.search(flat))
+    has_dn = any(m.group(1) in {"40", "50", "70"} and _has_dn_context(flat, m.start(), m.end()) for m in DN_RE.finditer(flat))
+    has_flow = any(ABFLUSS_PREF_RE.search(_snippet(flat, m.start(), m.end(), pad=70)) for m in FLOW_LPS_RE.finditer(flat))
+    return has_h and has_dn and has_flow
+
 def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     want = int(target_length_mm)
     tol = int(tolerance_mm)
@@ -184,6 +225,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     queue: List[str] = list(SEED_PAGES)
     seen_pages = set()
     detail_pages = set()
+    canonical_seen = set()
+    dropped_fragments = 0
 
     # Crawl category/list pages in scope to discover more ranges and detail pages
     while queue and len(seen_pages) < 250:
@@ -197,37 +240,57 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final, "error": err, "candidates_found": 0, "method": "crawl", "is_index": None})
             continue
 
-        detail_pages.add(final)
+        final_c = _canonicalize_url(final)
+        if final_c != final:
+            dropped_fragments += 1
+        if final_c not in canonical_seen:
+            canonical_seen.add(final_c)
+            detail_pages.add(final_c)
+
         soup = BeautifulSoup(html, "lxml")
         for a in soup.select("a[href]"):
             cand = _abs(a.get("href") or "", final)
             if not _in_scope(cand):
                 continue
-            if cand not in seen_pages and cand not in queue:
-                queue.append(cand)
-            if "/produkte/badentwaesserung/duschrinnen/" in cand:
-                detail_pages.add(cand)
+            cand_c = _canonicalize_url(cand)
+            if cand_c != cand:
+                dropped_fragments += 1
+            if cand_c not in seen_pages and cand_c not in queue:
+                queue.append(cand_c)
+            detail_pages.add(cand_c)
 
     kept_total = 0
     seen_ids = set()
     product_urls: List[str] = []
     component_urls: List[str] = []
+    dropped_category_pages = 0
 
     for page in sorted(detail_pages):
+        # reject category/landing pages from candidates
+        if _is_category_page(page):
+            dropped_category_pages += 1
+            debug.append({"site": "aco", "seed_url": page, "status_code": 200, "final_url": page, "error": "dropped_category_page", "candidates_found": 0, "method": "detail", "is_index": None})
+            continue
+
         st, final, html, err = _safe_get_text(page, timeout=35)
         if st != 200 or not html:
             debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final, "error": err, "candidates_found": 0, "method": "detail", "is_index": None})
             continue
 
-        title_base = _extract_title(html, final)
-        cand_type = "component" if _is_accessory_page(final, title_base) else ("drain" if _is_channel_body_page(final, title_base) else "component")
+        final_c = _canonicalize_url(final)
+        title_base = _extract_title(html, final_c)
+
+        # route candidate type
+        if _is_accessory_page(final_c, title_base):
+            cand_type = "component"
+        elif _looks_like_detail_drain_page(final_c, html):
+            cand_type = "drain"
+        else:
+            debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": "dropped_overview_page", "candidates_found": 0, "method": "detail", "is_index": None})
+            continue
 
         pairs = _extract_pairs_from_table(html)
-        method = "table"
-        if not pairs:
-            flat = _main_flat_text_from_html(html)
-            pairs = _extract_pairs_from_flat_text(flat)
-            method = "text"
+        method = "table" if pairs else "detail_only"
 
         kept = 0
         if cand_type == "drain" and pairs:
@@ -246,18 +309,17 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                     "product_id": pid,
                     "product_family": "ShowerDrain",
                     "product_name": f"{title_base} {nominal_length_mm} mm (Artikel-Nr. {article_no})",
-                    "product_url": final,
-                    "sources": final,
+                    "product_url": final_c,
+                    "sources": final_c,
                     "candidate_type": "drain",
                     "complete_system": "yes",
                     "selected_length_mm": want,
                     "length_mode": "L1_nominal_heuristic",
                     "length_delta_mm": nominal_length_mm - want,
                 })
-                product_urls.append(final)
-        elif cand_type == "drain" and _is_channel_body_page(final, title_base):
-            # unknown length: keep only clearly channel-body pages
-            pid = f"aco-{abs(hash(final))}"
+                product_urls.append(final_c)
+        elif cand_type == "drain" and _is_channel_body_page(final_c, title_base):
+            pid = f"aco-{abs(hash(final_c))}"
             if pid not in seen_ids:
                 seen_ids.add(pid)
                 kept += 1
@@ -267,18 +329,17 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                     "product_id": pid,
                     "product_family": "ShowerDrain",
                     "product_name": title_base,
-                    "product_url": final,
-                    "sources": final,
+                    "product_url": final_c,
+                    "sources": final_c,
                     "candidate_type": "drain",
                     "complete_system": "yes",
                     "selected_length_mm": want,
                     "length_mode": "unknown",
                     "length_delta_mm": None,
                 })
-                product_urls.append(final)
-        elif _is_accessory_page(final, title_base):
-            # accessories/grates/frames are components
-            pid = f"aco-comp-{abs(hash(final))}"
+                product_urls.append(final_c)
+        elif cand_type == "component":
+            pid = f"aco-comp-{abs(hash(final_c))}"
             if pid not in seen_ids:
                 seen_ids.add(pid)
                 kept += 1
@@ -288,17 +349,17 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                     "product_id": pid,
                     "product_family": "ShowerDrain",
                     "product_name": title_base,
-                    "product_url": final,
-                    "sources": final,
+                    "product_url": final_c,
+                    "sources": final_c,
                     "candidate_type": "component",
                     "complete_system": "component",
                     "selected_length_mm": want,
                     "length_mode": "unknown",
                     "length_delta_mm": None,
                 })
-                component_urls.append(final)
+                component_urls.append(final_c)
 
-        debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final, "error": err, "candidates_found": kept, "method": method, "is_index": None})
+        debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": err, "candidates_found": kept, "method": method, "is_index": None})
 
     debug.append({
         "site": "aco",
@@ -313,8 +374,12 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "components_count": sum(1 for r in out if str(r.get("candidate_type")) == "component"),
         "sample_products_urls": json.dumps(product_urls[:10], ensure_ascii=False),
         "sample_components_urls": json.dumps(component_urls[:10], ensure_ascii=False),
-        "total_pages_crawled": len(seen_pages),
-        "kept_total": kept_total,
+        "total_urls": len(detail_pages),
+        "after_canonicalize": len(canonical_seen),
+        "dropped_fragments": dropped_fragments,
+        "dropped_category_pages": dropped_category_pages,
+        "accepted_products": sum(1 for r in out if str(r.get("candidate_type")) == "drain"),
+        "accepted_components": sum(1 for r in out if str(r.get("candidate_type")) == "component"),
     })
 
     return out, debug

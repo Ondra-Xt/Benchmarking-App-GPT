@@ -187,6 +187,16 @@ def run_update(
                     "reason": "missing_outlet_dn_after_html_pdf",
                 })
                 continue
+
+        # ACO cleanup: drains without flow should be excluded
+        if manufacturer == "aco" and candidate_type == "drain" and params.get("flow_rate_lps") in (None, ""):
+            excluded_rows.append({
+                "manufacturer": manufacturer,
+                "product_id": product_id,
+                "product_url": url,
+                "reason": "missing_flow_after_html",
+            })
+            continue
         # get_bom_options je volitelné
         options = []
         if hasattr(connector, "get_bom_options"):
