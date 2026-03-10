@@ -292,6 +292,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     product_urls: List[str] = []
     component_urls: List[str] = []
     dropped_category_pages = 0
+    accepted_product_pages = 0
+    article_rows_found = 0
 
     for page in sorted(detail_pages):
         # reject category/landing pages from candidates
@@ -318,17 +320,25 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             continue
 
         pairs = _extract_pairs_from_table(html)
-        if not pairs:
-            pairs = _extract_pairs_from_flat_text(_main_flat_text_from_html(html))
         method = "table" if pairs else "detail_only"
 
         kept = 0
-        if cand_type == "drain" and pairs:
+        if cand_type == "drain":
+            # row-based product variants only; no page-level drain fallback rows
+            if not pairs:
+                debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": "no_article_rows", "candidates_found": 0, "method": method, "is_index": None})
+                continue
+
+            accepted_product_pages += 1
+            article_rows_found += len(pairs)
             for l1_mm, article_no, article_digits in pairs:
                 nominal_length_mm = _nominal_length_from_l1(l1_mm)
+                # row must have concrete length
+                if nominal_length_mm is None:
+                    continue
                 if not (min_len <= nominal_length_mm <= max_len):
                     continue
-                pid = f"aco-{article_digits}"
+                pid = f"aco-{article_digits}" if article_digits else f"aco-{abs(hash(final_c + article_no))}"
                 if pid in seen_ids:
                     continue
                 seen_ids.add(pid)
@@ -346,32 +356,6 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                     "selected_length_mm": want,
                     "length_mode": "L1_nominal_heuristic",
                     "length_delta_mm": nominal_length_mm - want,
-                })
-                product_urls.append(final_c)
-        elif cand_type == "drain" and _is_channel_body_page(final_c, title_base):
-            flat = _main_flat_text_from_html(html)
-            article_digits, length_mm = _extract_primary_article_and_length(flat)
-            pid = f"aco-{article_digits}" if article_digits else f"aco-{abs(hash(final_c))}"
-            if pid not in seen_ids:
-                if length_mm is not None and not (min_len <= length_mm <= max_len):
-                    debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": "filtered_by_target_length", "candidates_found": 0, "method": "detail_only", "is_index": None})
-                    continue
-                seen_ids.add(pid)
-                kept += 1
-                kept_total += 1
-                pname = title_base if length_mm is None else f"{title_base} {length_mm} mm"
-                out.append({
-                    "manufacturer": "aco",
-                    "product_id": pid,
-                    "product_family": "ShowerDrain",
-                    "product_name": pname,
-                    "product_url": final_c,
-                    "sources": final_c,
-                    "candidate_type": "drain",
-                    "complete_system": "yes",
-                    "selected_length_mm": want,
-                    "length_mode": "unknown" if length_mm is None else "text_nominal",
-                    "length_delta_mm": None if length_mm is None else (length_mm - want),
                 })
                 product_urls.append(final_c)
         elif cand_type == "component":
@@ -418,6 +402,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "accepted_products": sum(1 for r in out if str(r.get("candidate_type")) == "drain"),
         "accepted_components": sum(1 for r in out if str(r.get("candidate_type")) == "component"),
         "unknown_length_count": sum(1 for r in out if str(r.get("candidate_type")) == "drain" and str(r.get("length_mode")) == "unknown"),
+        "accepted_product_pages": accepted_product_pages,
+        "article_rows_found": article_rows_found,
     })
 
     return out, debug
