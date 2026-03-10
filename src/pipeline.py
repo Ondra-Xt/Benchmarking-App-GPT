@@ -167,16 +167,24 @@ def run_update(
 
         params = connector.extract_parameters(url) or {}
 
-        # Viega cleanup: drains without flow must not stay in Products
-        if manufacturer == "viega" and candidate_type == "drain" and params.get("flow_rate_lps") in (None, ""):
+        # Viega cleanup: drains without mandatory parameters must not stay in Products
+        if manufacturer == "viega" and candidate_type == "drain":
             if _is_accessory_like(f"{url} {r.get('product_name', '')}"):
                 candidate_type = "component"
-            else:
+            elif params.get("flow_rate_lps") in (None, ""):
                 excluded_rows.append({
                     "manufacturer": manufacturer,
                     "product_id": product_id,
                     "product_url": url,
                     "reason": "missing_flow_after_html_pdf",
+                })
+                continue
+            elif params.get("outlet_dn") in (None, ""):
+                excluded_rows.append({
+                    "manufacturer": manufacturer,
+                    "product_id": product_id,
+                    "product_url": url,
+                    "reason": "missing_outlet_dn_after_html_pdf",
                 })
                 continue
         # get_bom_options je volitelné

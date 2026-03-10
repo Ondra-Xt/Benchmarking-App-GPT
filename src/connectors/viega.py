@@ -330,9 +330,10 @@ def _flow_value_if_valid(text: str, m: re.Match[str]) -> Optional[float]:
     return v
 
 
-def _extract_flow_from_ablaufleistung(flat: str) -> Tuple[List[float], Optional[Tuple[int, int]]]:
+def _extract_flow_from_ablaufleistung(flat: str) -> Tuple[List[float], Optional[Tuple[int, int]], bool]:
     vals: List[float] = []
     first_span: Optional[Tuple[int, int]] = None
+    has_abl_snippet = False
 
     # snippets that contain BOTH "Ablaufleistung" and "l/s"
     for km in re.finditer(r"ablaufleistung", flat, re.IGNORECASE):
@@ -341,6 +342,7 @@ def _extract_flow_from_ablaufleistung(flat: str) -> Tuple[List[float], Optional[
         part = flat[lo:hi]
         if "l/s" not in part.lower():
             continue
+        has_abl_snippet = True
         for m in FLOW_LPS_RE.finditer(part):
             prev_kw = part.lower().rfind("ablaufleistung", 0, m.start() + 1)
             if prev_kw < 0 or (m.start() - prev_kw) > 40:
@@ -352,7 +354,7 @@ def _extract_flow_from_ablaufleistung(flat: str) -> Tuple[List[float], Optional[
             if first_span is None:
                 first_span = (lo + m.start(), lo + m.end())
 
-    return sorted(set(vals)), first_span
+    return sorted(set(vals)), first_span, has_abl_snippet
 
 
 def _extract_flow_general(flat: str) -> Tuple[List[float], Optional[Tuple[int, int]]]:
@@ -398,9 +400,9 @@ def _apply_text_extraction(res: Dict[str, Any], flat: str, src: str, html: str =
             res["evidence"].append((dn_label, _snippet(flat, dn_span[0], dn_span[1]), src))
 
     # flow
-    flow_opts_abl, flow_span_abl = _extract_flow_from_ablaufleistung(flat)
+    flow_opts_abl, flow_span_abl, has_abl_snippet = _extract_flow_from_ablaufleistung(flat)
     flow_opts_gen, flow_span_gen = _extract_flow_general(flat)
-    use_abl = len(flow_opts_abl) >= 1
+    use_abl = has_abl_snippet
     flow_opts = flow_opts_abl if use_abl else flow_opts_gen
     flow_span = flow_span_abl if use_abl else flow_span_gen
     if flow_opts:
