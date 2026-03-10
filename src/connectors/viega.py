@@ -24,6 +24,13 @@ DETAIL_SEEDS = [
     f"{BASE}{DETAIL_SCOPE}Advantix-Cleviva-Duschrinnen/Einbauhoehe-ab-70-mm/Advantix-Cleviva-Duschrinne-4981-11.html",
     f"{BASE}{DETAIL_SCOPE}Advantix-Vario-Duschrinnen/Einbauhoehe-ab-70-mm/Advantix-Vario-Duschrinnen-4966-10.html",
 ]
+CATEGORY_SEEDS = [
+    f"{BASE}{DETAIL_SCOPE}Advantix-Duschrinnen.html",
+    f"{BASE}{DETAIL_SCOPE}Advantix-Cleviva-Duschrinnen.html",
+    f"{BASE}{DETAIL_SCOPE}Advantix-Vario-Duschrinnen.html",
+    f"{BASE}{DETAIL_SCOPE}Advantix-Vario-Duschrinnen-Wand.html",
+    f"{BASE}{DETAIL_SCOPE}Advantix-Eckablaeufe.html",
+]
 
 DETAIL_URL_RE = re.compile(r"-\d{4,5}-\d{2}\.html$", re.IGNORECASE)
 ARTICLE_FROM_URL_RE = re.compile(r"-(\d{4,5}-\d{2})\.html(?:$|[?#])", re.IGNORECASE)
@@ -432,11 +439,11 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     min_len = max(0, want - int(tolerance_mm))
     max_len = want + int(tolerance_mm)
 
-    # Step 1: seed -> Sortiment category links
+    # Step 1: seed -> Sortiment category links (+ explicit range seeds)
     st, final, html, err = _safe_get_text(CATALOG_SEED, timeout=35)
-    category_links: Set[str] = set()
+    category_links: Set[str] = set(CATEGORY_SEEDS)
     if st == 200 and html:
-        category_links = _extract_category_links_from_sortiment(html, final)
+        category_links.update(_extract_category_links_from_sortiment(html, final))
         debug.append({"site": "viega", "seed_url": CATALOG_SEED, "status_code": st, "final_url": final, "error": err, "candidates_found": len(category_links), "method": "sortiment", "is_index": None})
     else:
         debug.append({"site": "viega", "seed_url": CATALOG_SEED, "status_code": st, "final_url": final, "error": err, "candidates_found": 0, "method": "sortiment", "is_index": None})
@@ -492,6 +499,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             "selected_length_mm": want,
             "length_mode": "unknown" if length is None else ("variable" if length_kind == "variable" else "html"),
             "length_delta_mm": None if length is None else (length - want),
+            "discovery_evidence": "Length (variable range)" if length_kind == "variable" else None,
         })
         accepted_urls.append(url)
         if cand_type == "component":
