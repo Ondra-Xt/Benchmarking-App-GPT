@@ -357,21 +357,7 @@ def _extract_flow_from_ablaufleistung(flat: str) -> Tuple[List[float], Optional[
     return sorted(set(vals)), first_span, has_abl_snippet
 
 
-def _extract_flow_general(flat: str) -> Tuple[List[float], Optional[Tuple[int, int]]]:
-    vals: List[float] = []
-    first_span: Optional[Tuple[int, int]] = None
-    for m in FLOW_LPS_RE.finditer(flat):
-        v = _flow_value_if_valid(flat, m)
-        if v is None:
-            continue
-        vals.append(v)
-        if first_span is None:
-            first_span = (m.start(), m.end())
-    return sorted(set(vals)), first_span
-
-
-
-def _apply_text_extraction(res: Dict[str, Any], flat: str, src: str, html: str = "", flow_evidence_pdf: bool = False, dn_evidence_pdf: bool = False) -> None:
+def _apply_text_extraction(res: Dict[str, Any], flat: str, src: str, html: str = "", flow_evidence_pdf: bool = False, dn_evidence_pdf: bool = False, parse_flow: bool = True) -> None:
     if not flat:
         return
 
@@ -399,23 +385,17 @@ def _apply_text_extraction(res: Dict[str, Any], flat: str, src: str, html: str =
             dn_label = "Outlet DN (from PDF)" if dn_evidence_pdf else "Outlet DN"
             res["evidence"].append((dn_label, _snippet(flat, dn_span[0], dn_span[1]), src))
 
-    # flow
-    flow_opts_abl, flow_span_abl, has_abl_snippet = _extract_flow_from_ablaufleistung(flat)
-    flow_opts_gen, flow_span_gen = _extract_flow_general(flat)
-    use_abl = has_abl_snippet
-    flow_opts = flow_opts_abl if use_abl else flow_opts_gen
-    flow_span = flow_span_abl if use_abl else flow_span_gen
-    if flow_opts:
-        res["flow_rate_lps_options"] = json.dumps(flow_opts, ensure_ascii=False)
-        res["flow_rate_lps"] = max(flow_opts)
-        res["flow_rate_unit"] = "l/s"
-        res["flow_rate_status"] = "ok"
-        if flow_span:
-            if use_abl and flow_evidence_pdf:
-                label = "Flow rate (Ablaufleistung from PDF)"
-            else:
-                label = "Flow rate (Ablaufleistung)" if use_abl else "Flow rate (fallback)"
-            res["evidence"].append((label, _snippet(flat, flow_span[0], flow_span[1]), src))
+    # flow: strict Ablaufleistung-only parsing
+    if parse_flow:
+        flow_opts_abl, flow_span_abl, has_abl_snippet = _extract_flow_from_ablaufleistung(flat)
+        if has_abl_snippet and flow_opts_abl:
+            res["flow_rate_lps_options"] = json.dumps(flow_opts_abl, ensure_ascii=False)
+            res["flow_rate_lps"] = max(flow_opts_abl)
+            res["flow_rate_unit"] = "l/s"
+            res["flow_rate_status"] = "ok"
+            if flow_span_abl:
+                label = "Flow rate (Ablaufleistung from PDF)" if flow_evidence_pdf else "Flow rate (Ablaufleistung)"
+                res["evidence"].append((label, _snippet(flat, flow_span_abl[0], flow_span_abl[1]), src))
 
     # heights (never trap seal)
     h = HEIGHT_RE.search(flat)
@@ -589,7 +569,8 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
         return res
 
     flat = _main_flat_text(html)
-    _apply_text_extraction(res, flat, final, html=html)
+    _flow_opts_html, _flow_span_html, has_abl_html = _extract_flow_from_ablaufleistung(flat)
+    _apply_text_extraction(res, flat, final, html=html, parse_flow=True)
 
     length, len_snip, kind = _resolve_length_from_text(flat)
     if length is not None:
@@ -617,7 +598,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
             if not pdf_text:
                 continue
             flat_pdf = _clean_text(pdf_text)
-            _apply_text_extraction(res, flat_pdf, pdf_url, flow_evidence_pdf=True, dn_evidence_pdf=True)
+            _apply_text_extraction(res, flat_pdf, pdf_url, flow_evidence_pdf=True, dn_evidence_pdf=True, parse_flow=(not has_abl_html))
 
             if res.get("resolved_length_mm") is None:
                 plen, psnip, pkind = _resolve_length_from_text(flat_pdf)

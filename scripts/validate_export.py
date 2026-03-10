@@ -8,6 +8,14 @@ import pandas as pd
 
 
 REQUIRED_SHEETS = ["Products", "Components", "Comparison", "Evidence", "BOM_Options"]
+
+
+def _is_viega_accessory_row(row: pd.Series) -> bool:
+    manufacturer = str(row.get("manufacturer", "")).lower()
+    if manufacturer != "viega":
+        return False
+    txt = f"{row.get('product_url', '')} {row.get('product_name', '')} {row.get('candidate_type', '')}".lower()
+    return any(k in txt for k in ("zubehoer", "zubehör", "rost", "abdeckung", "einleger", "profil", "rahmen", "siphon", "geruch"))
 DEFAULT_RUNS_DIR = Path("data/runs")
 
 
@@ -193,6 +201,9 @@ def validate_export(xlsx_path: Path) -> None:
             )
 
         missing_height = df[df["height_adj_min_mm"].isna() | df["height_adj_max_mm"].isna()]
+        if sheet_name == "Components" and not missing_height.empty:
+            keep_mask = ~missing_height.apply(_is_viega_accessory_row, axis=1)
+            missing_height = missing_height[keep_mask]
         if not missing_height.empty:
             warn(
                 f"{sheet_name} rows with missing height_adj_min_mm/height_adj_max_mm: "
