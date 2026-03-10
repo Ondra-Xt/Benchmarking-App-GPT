@@ -21,6 +21,7 @@ BASE = "https://www.aco-haustechnik.de"
 DUSCHRINNEN_SCOPE = "/produkte/badentwaesserung/duschrinnen/"
 SEED_PAGES = [
     f"{BASE}{DUSCHRINNEN_SCOPE}",
+    f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-b/",
     f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-c/",
     f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-eplus/",
     f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-mplus/",
@@ -223,17 +224,22 @@ def _is_category_page(url: str) -> bool:
         return False
 
 
-def _looks_like_detail_drain_page(url: str, html: str) -> bool:
-    if "rinnenkoerper" in (url or "").lower():
-        return True
+def _looks_like_detail_drain_page(url: str, title: str, html: str) -> bool:
+    txt = f"{url} {title}".lower()
+    indicates_channel_body = ("rinnenkoerper" in txt) or ("rinnenkörper" in txt)
+    if not indicates_channel_body:
+        return False
+
     pairs = _extract_pairs_from_table(html)
     if pairs:
         return True
+
     flat = _main_flat_text_from_html(html)
     has_h = bool(HEIGHT_OE_RE.search(flat) or HEIGHT_RE.search(flat))
     has_dn = any(m.group(1) in {"40", "50", "70"} and _has_dn_context(flat, m.start(), m.end()) for m in DN_RE.finditer(flat))
     has_flow = any(ABFLUSS_PREF_RE.search(_snippet(flat, m.start(), m.end(), pad=70)) for m in FLOW_LPS_RE.finditer(flat))
-    return has_h and has_dn and has_flow
+    # technical data gate: DN + flow, optionally height
+    return has_dn and has_flow and (has_h or has_dn)
 
 def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     want = int(target_length_mm)
@@ -305,7 +311,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         # route candidate type
         if _is_accessory_page(final_c, title_base):
             cand_type = "component"
-        elif _looks_like_detail_drain_page(final_c, html):
+        elif _looks_like_detail_drain_page(final_c, title_base, html):
             cand_type = "drain"
         else:
             debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": "dropped_overview_page", "candidates_found": 0, "method": "detail", "is_index": None})
@@ -403,6 +409,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "products_count": sum(1 for r in out if str(r.get("candidate_type")) == "drain"),
         "components_count": sum(1 for r in out if str(r.get("candidate_type")) == "component"),
         "sample_products_urls": json.dumps(product_urls[:10], ensure_ascii=False),
+        "sample_product_urls": json.dumps(product_urls[:10], ensure_ascii=False),
         "sample_components_urls": json.dumps(component_urls[:10], ensure_ascii=False),
         "total_urls": len(detail_pages),
         "after_canonicalize": len(canonical_seen),
@@ -410,6 +417,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "dropped_category_pages": dropped_category_pages,
         "accepted_products": sum(1 for r in out if str(r.get("candidate_type")) == "drain"),
         "accepted_components": sum(1 for r in out if str(r.get("candidate_type")) == "component"),
+        "unknown_length_count": sum(1 for r in out if str(r.get("candidate_type")) == "drain" and str(r.get("length_mode")) == "unknown"),
     })
 
     return out, debug
