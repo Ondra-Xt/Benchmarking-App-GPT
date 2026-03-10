@@ -24,6 +24,7 @@ SEED_PAGES = [
     f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-c/",
     f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-eplus/",
     f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-mplus/",
+    f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-splus/",
     f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-c/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm-200-mm/",
     f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-eplus/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm/",
 ]
@@ -156,6 +157,27 @@ def _extract_pairs_from_flat_text(flat: str) -> List[Tuple[int, str, str]]:
         out.append((l1_mm, article_no, article_digits))
     return out
 
+
+
+
+def _extract_primary_article_and_length(flat: str) -> Tuple[Optional[str], Optional[int]]:
+    article_digits: Optional[str] = None
+    am = ARTICLE_RE.search(flat or "")
+    if am:
+        d = _digits_only(am.group(0))
+        if len(d) >= 6:
+            article_digits = d
+
+    length_mm: Optional[int] = None
+    lm = L1_RE.search(flat or "")
+    if lm:
+        try:
+            raw = int(lm.group(1))
+            length_mm = _nominal_length_from_l1(raw)
+        except Exception:
+            length_mm = None
+
+    return article_digits, length_mm
 
 def _abs(href: str, base: str) -> str:
     return urljoin(base, href or "")
@@ -290,6 +312,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             continue
 
         pairs = _extract_pairs_from_table(html)
+        if not pairs:
+            pairs = _extract_pairs_from_flat_text(_main_flat_text_from_html(html))
         method = "table" if pairs else "detail_only"
 
         kept = 0
@@ -319,23 +343,29 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                 })
                 product_urls.append(final_c)
         elif cand_type == "drain" and _is_channel_body_page(final_c, title_base):
-            pid = f"aco-{abs(hash(final_c))}"
+            flat = _main_flat_text_from_html(html)
+            article_digits, length_mm = _extract_primary_article_and_length(flat)
+            pid = f"aco-{article_digits}" if article_digits else f"aco-{abs(hash(final_c))}"
             if pid not in seen_ids:
+                if length_mm is not None and not (min_len <= length_mm <= max_len):
+                    debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": "filtered_by_target_length", "candidates_found": 0, "method": "detail_only", "is_index": None})
+                    continue
                 seen_ids.add(pid)
                 kept += 1
                 kept_total += 1
+                pname = title_base if length_mm is None else f"{title_base} {length_mm} mm"
                 out.append({
                     "manufacturer": "aco",
                     "product_id": pid,
                     "product_family": "ShowerDrain",
-                    "product_name": title_base,
+                    "product_name": pname,
                     "product_url": final_c,
                     "sources": final_c,
                     "candidate_type": "drain",
                     "complete_system": "yes",
                     "selected_length_mm": want,
-                    "length_mode": "unknown",
-                    "length_delta_mm": None,
+                    "length_mode": "unknown" if length_mm is None else "text_nominal",
+                    "length_delta_mm": None if length_mm is None else (length_mm - want),
                 })
                 product_urls.append(final_c)
         elif cand_type == "component":
