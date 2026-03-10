@@ -138,6 +138,45 @@ def _extract_pairs_from_table(html: str) -> List[Tuple[int, str, str]]:
     return out
 
 
+
+
+def _extract_article_row_diagnostics_from_table(html: str) -> List[Dict[str, Any]]:
+    soup = BeautifulSoup(html or "", "lxml")
+    out: List[Dict[str, Any]] = []
+
+    for table in soup.select("table"):
+        headers = [_clean_text(th.get_text(" ", strip=True)).lower() for th in table.select("thead th, tr th")]
+        header_text = " | ".join(headers)
+        if not any(k in header_text for k in ["artikel", "artikel-nr", "artikel nr"]):
+            continue
+
+        for tr in table.select("tr"):
+            row_text = _clean_text(tr.get_text(" ", strip=True))
+            am = ARTICLE_RE.search(row_text)
+            if not am:
+                continue
+            article_no = am.group(0)
+            article_digits = _digits_only(article_no)
+            lm = L1_RE.search(row_text)
+            raw_length_mm: Optional[int] = None
+            nominal_length_mm: Optional[int] = None
+            if lm:
+                try:
+                    raw_length_mm = int(lm.group(1))
+                    nominal_length_mm = _nominal_length_from_l1(raw_length_mm)
+                except Exception:
+                    raw_length_mm = None
+                    nominal_length_mm = None
+
+            out.append({
+                "article_no": article_no,
+                "article_digits": article_digits,
+                "raw_length_mm": raw_length_mm,
+                "nominal_length_mm": nominal_length_mm,
+            })
+
+    return out
+
 def _extract_pairs_from_flat_text(flat: str) -> List[Tuple[int, str, str]]:
     # fallback parser from flattened text (still real HTML-based; no local fabricated data)
     out: List[Tuple[int, str, str]] = []
@@ -295,6 +334,15 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     accepted_product_pages = 0
     article_rows_found = 0
 
+    article_rows_found_total = 0
+    article_rows_with_resolved_length = 0
+    article_rows_matching_target = 0
+    article_rows_rejected_by_length = 0
+    article_rows_missing_length = 0
+    sample_matching_rows: List[Dict[str, Any]] = []
+    sample_rejected_lengths: List[Dict[str, Any]] = []
+    sample_missing_length_rows: List[Dict[str, Any]] = []
+
     for page in sorted(detail_pages):
         # reject category/landing pages from candidates
         if _is_category_page(page):
@@ -331,6 +379,53 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
             accepted_product_pages += 1
             article_rows_found += len(pairs)
+
+            diag_rows = _extract_article_row_diagnostics_from_table(html)
+            if not diag_rows:
+                diag_rows = [
+                    {"article_no": a, "article_digits": d, "raw_length_mm": l1, "nominal_length_mm": _nominal_length_from_l1(l1)}
+                    for l1, a, d in pairs
+                ]
+
+            for row in diag_rows:
+                article_rows_found_total += 1
+                raw_len = row.get("raw_length_mm")
+                nom_len = row.get("nominal_length_mm")
+                if nom_len is None:
+                    article_rows_missing_length += 1
+                    if len(sample_missing_length_rows) < 10:
+                        sample_missing_length_rows.append({
+                            "page": final_c,
+                            "article_no": row.get("article_no"),
+                            "raw_length_mm": raw_len,
+                            "nominal_length_mm": nom_len,
+                            "matched_target": False,
+                        })
+                    continue
+
+                article_rows_with_resolved_length += 1
+                in_target = (min_len <= int(nom_len) <= max_len)
+                if in_target:
+                    article_rows_matching_target += 1
+                    if len(sample_matching_rows) < 10:
+                        sample_matching_rows.append({
+                            "page": final_c,
+                            "article_no": row.get("article_no"),
+                            "raw_length_mm": raw_len,
+                            "nominal_length_mm": nom_len,
+                            "matched_target": True,
+                        })
+                else:
+                    article_rows_rejected_by_length += 1
+                    if len(sample_rejected_lengths) < 10:
+                        sample_rejected_lengths.append({
+                            "page": final_c,
+                            "article_no": row.get("article_no"),
+                            "raw_length_mm": raw_len,
+                            "nominal_length_mm": nom_len,
+                            "matched_target": False,
+                        })
+
             for l1_mm, article_no, article_digits in pairs:
                 nominal_length_mm = _nominal_length_from_l1(l1_mm)
                 # row must have concrete length
@@ -404,6 +499,14 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "unknown_length_count": sum(1 for r in out if str(r.get("candidate_type")) == "drain" and str(r.get("length_mode")) == "unknown"),
         "accepted_product_pages": accepted_product_pages,
         "article_rows_found": article_rows_found,
+        "article_rows_found_total": article_rows_found_total,
+        "article_rows_with_resolved_length": article_rows_with_resolved_length,
+        "article_rows_matching_target": article_rows_matching_target,
+        "article_rows_rejected_by_length": article_rows_rejected_by_length,
+        "article_rows_missing_length": article_rows_missing_length,
+        "sample_matching_rows": json.dumps(sample_matching_rows, ensure_ascii=False),
+        "sample_rejected_lengths": json.dumps(sample_rejected_lengths, ensure_ascii=False),
+        "sample_missing_length_rows": json.dumps(sample_missing_length_rows, ensure_ascii=False),
     })
 
     return out, debug
