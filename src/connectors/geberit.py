@@ -18,25 +18,19 @@ HEADERS = {
 
 BASE = "https://catalog.geberit.de"
 SCOPE = "/de-DE"
-SEEDS = [
-    f"{BASE}{SCOPE}/search?text=CleanLine",
-    f"{BASE}{SCOPE}/produkte?text=CleanLine20",
-    f"{BASE}{SCOPE}/produkte?text=CleanLine50",
-    f"{BASE}{SCOPE}/produkte?text=CleanLine60",
-    f"{BASE}{SCOPE}/produkte?text=CleanLine80",
-]
+PRIMARY_SEED = f"{BASE}{SCOPE}/product/PRO_3932352"
+MARKETING_SEED = "https://www.geberit.de/badezimmerprodukte/duschen-badewannenablaeufe/duschen/duschrinnen-geberit-cleanline/"
 
 ACCESSORY_RE = re.compile(
-    r"verbindungsst[üu]ck|reinigungszubeh[öo]r|ablaufkette|verl[äa]ngerung|zubeh[öo]r|allgemeines\s+zubeh[öo]r|rost|rahmen",
+    r"verbindungsst[üu]ck|verl[äa]ngerung|reinigungszubeh[öo]r|allgemeines\s+zubeh[öo]r|\bzubeh[öo]r\b|ablaufkette",
     re.IGNORECASE,
 )
 CLEANLINE_RE = re.compile(r"cleanline\s*(20|50|60|80)?", re.IGNORECASE)
-DRAIN_RE = re.compile(r"duschrinne|duschablauf|duschprofil", re.IGNORECASE)
+DRAIN_RE = re.compile(r"duschrinne|duschprofil|duschablauf", re.IGNORECASE)
 ROHBAU_RE = re.compile(r"rohbauset|rohbau\s*set|rohbau", re.IGNORECASE)
 
 ARTICLE_RE = re.compile(r"\b(\d{3}\.\d{3}[A-Z0-9\.]*|\d{6,}[A-Z0-9\.]*)\b", re.IGNORECASE)
 FLOW_LPS_RE = re.compile(r"(\d+(?:[\.,]\d+)?)\s*l\s*/\s*s\b", re.IGNORECASE)
-FLOW_PREF_RE = re.compile(r"ablaufleistung|abflussleistung", re.IGNORECASE)
 DN_PAIR_RE = re.compile(r"\bDN\s*(\d{2,3})\s*/\s*(?:DN\s*)?(\d{2,3})\b", re.IGNORECASE)
 DN_SINGLE_RE = re.compile(r"\b(?:nennweite\s*)?DN\s*(\d{2,3})\b", re.IGNORECASE)
 HEIGHT_RANGE_RE = re.compile(r"(?:einbauh(?:ö|oe)he|estrichh(?:ö|oe)he|installationsh(?:ö|oe)he)[^\d]{0,30}(\d{2,3})\s*[-–]\s*(\d{2,3})\s*mm", re.IGNORECASE)
@@ -115,36 +109,28 @@ def _article_from_text(text: str) -> Optional[str]:
     return m.group(1) if m else None
 
 
-def _normalize_article_for_id(article: str) -> Optional[str]:
+def _normalize_article(article: str) -> Optional[str]:
     a = re.sub(r"[^0-9A-Za-z]", "", (article or "")).upper()
     return a or None
 
 
 def _product_id(url: str, text: str) -> str:
-    article = _article_from_text(text)
-    norm = _normalize_article_for_id(article or "")
-    if norm:
-        return f"geberit-{norm}"
+    article = _normalize_article(_article_from_text(text) or "")
+    if article:
+        return f"geberit-{article}"
     return f"geberit-{abs(hash(url))}"
 
 
 def _length_info(text: str, target_mm: int) -> Tuple[Optional[int], str, Optional[str], bool]:
     for m in LEN_RANGE_CM_RE.finditer(text or ""):
-        a = int(m.group(1)) * 10
-        b = int(m.group(2)) * 10
+        a, b = int(m.group(1)) * 10, int(m.group(2)) * 10
         lo, hi = (a, b) if a <= b else (b, a)
         return None, "variable", f"{lo}-{hi} mm", lo <= target_mm <= hi
     for m in LEN_RANGE_MM_RE.finditer(text or ""):
-        a = int(m.group(1))
-        b = int(m.group(2))
+        a, b = int(m.group(1)), int(m.group(2))
         lo, hi = (a, b) if a <= b else (b, a)
         return None, "variable", f"{lo}-{hi} mm", lo <= target_mm <= hi
-
-    vals = []
-    for m in LEN_MM_RE.finditer(text or ""):
-        v = int(m.group(1))
-        if 300 <= v <= 2500:
-            vals.append(v)
+    vals = [int(m.group(1)) for m in LEN_MM_RE.finditer(text or "") if 300 <= int(m.group(1)) <= 2500]
     if vals:
         return max(vals), "fixed", None, False
     return None, "unknown", None, False
@@ -154,16 +140,15 @@ def _extract_flow(flat: str) -> Tuple[List[float], Optional[Tuple[int, int]]]:
     vals: List[float] = []
     first: Optional[Tuple[int, int]] = None
     src = flat or ""
-
     for km in re.finditer(r"ablaufleistung|abflussleistung", src, re.IGNORECASE):
         lo = max(0, km.start() - 20)
-        hi = min(len(src), km.end() + 80)
+        hi = min(len(src), km.end() + 85)
         part = src[lo:hi]
         for m in FLOW_LPS_RE.finditer(part):
-            prev_kw = part.lower().rfind("ablaufleistung", 0, m.start() + 1)
-            prev_kw2 = part.lower().rfind("abflussleistung", 0, m.start() + 1)
-            prev = max(prev_kw, prev_kw2)
-            if prev < 0 or (m.start() - prev) > 35:
+            prev1 = part.lower().rfind("ablaufleistung", 0, m.start() + 1)
+            prev2 = part.lower().rfind("abflussleistung", 0, m.start() + 1)
+            prev = max(prev1, prev2)
+            if prev < 0 or (m.start() - prev) > 36:
                 continue
             if "l/s" in part[prev:m.start()].lower():
                 continue
@@ -171,11 +156,10 @@ def _extract_flow(flat: str) -> Tuple[List[float], Optional[Tuple[int, int]]]:
                 v = float(m.group(1).replace(",", "."))
             except Exception:
                 continue
-            if v < 0.10 or v > 3.0:
-                continue
-            vals.append(v)
-            if first is None:
-                first = (lo + m.start(), lo + m.end())
+            if 0.10 <= v <= 3.0:
+                vals.append(v)
+                if first is None:
+                    first = (lo + m.start(), lo + m.end())
     return sorted(set(vals)), first
 
 
@@ -183,9 +167,7 @@ def _extract_dn(flat: str) -> Tuple[List[str], Optional[Tuple[int, int]]]:
     dns: List[str] = []
     first: Optional[Tuple[int, int]] = None
     for m in DN_PAIR_RE.finditer(flat or ""):
-        a = f"DN{m.group(1)}"
-        b = f"DN{m.group(2)}"
-        for dn in (a, b):
+        for dn in (f"DN{m.group(1)}", f"DN{m.group(2)}"):
             if dn not in dns:
                 dns.append(dn)
         if first is None:
@@ -214,15 +196,45 @@ def _extract_height(flat: str) -> Tuple[Optional[int], Optional[int], Optional[T
     return None, None, None
 
 
-def _is_landing(url: str, title: str, flat: str) -> bool:
-    txt = f"{url} {title}".lower()
-    if "/search" in txt or txt.rstrip("/").endswith("/de-de"):
-        return True
-    if "cleanline" in txt and not DRAIN_RE.search(txt):
-        # keep if technical content exists
-        if not (_extract_pairs := ARTICLE_RE.search(flat or "")) and "technische daten" not in (flat or "").lower():
-            return True
-    return False
+def _extract_catalog_links(html: str, base_url: str) -> Set[str]:
+    soup = BeautifulSoup(html or "", "lxml")
+    out: Set[str] = set()
+    for a in soup.select("a[href]"):
+        href = a.get("href") or ""
+        txt = _clean_text(a.get_text(" ", strip=True)).lower()
+        u = _canonicalize_url(urljoin(base_url, href))
+        if _in_scope(u) and ("/product/" in u or "cleanline" in txt or "weitere produkte" in txt):
+            out.add(u)
+    return out
+
+
+def _is_cleanline_product_page(url: str, title: str, flat: str) -> bool:
+    txt = f"{url} {title} {flat}".lower()
+    if not CLEANLINE_RE.search(txt):
+        return False
+    if ACCESSORY_RE.search(txt):
+        return False
+    if "/product/" not in (url or ""):
+        return False
+    if not DRAIN_RE.search(txt):
+        return False
+    return True
+
+
+def _extract_rohbau_links(html: str, base_url: str) -> List[str]:
+    soup = BeautifulSoup(html or "", "lxml")
+    out: List[str] = []
+    seen = set()
+    for a in soup.select("a[href]"):
+        href = a.get("href") or ""
+        txt = _clean_text(a.get_text(" ", strip=True))
+        u = _canonicalize_url(urljoin(base_url, href))
+        if not _in_scope(u):
+            continue
+        if ROHBAU_RE.search(f"{txt} {u}") and u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
 
 
 def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
@@ -233,13 +245,18 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     out: List[Dict[str, Any]] = []
     debug: List[Dict[str, Any]] = []
 
-    queue = list(SEEDS)
+    queue = [_canonicalize_url(PRIMARY_SEED)]
     seen: Set[str] = set()
     pages: Set[str] = set()
 
-    while queue and len(seen) < 300:
-        u = queue.pop(0)
-        u = _canonicalize_url(u)
+    # optional helper seed: only use to find additional catalog links
+    st_m, final_m, html_m, err_m = _safe_get_text(MARKETING_SEED)
+    debug.append({"site": "geberit", "seed_url": MARKETING_SEED, "status_code": st_m, "final_url": final_m, "error": err_m, "candidates_found": 0, "method": "marketing_seed", "is_index": None})
+    if st_m == 200 and html_m:
+        queue.extend(sorted(_extract_catalog_links(html_m, final_m)))
+
+    while queue and len(seen) < 120:
+        u = _canonicalize_url(queue.pop(0))
         if u in seen:
             continue
         seen.add(u)
@@ -250,15 +267,15 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             continue
 
         final_c = _canonicalize_url(final)
-        pages.add(final_c)
-        soup = BeautifulSoup(html, "lxml")
-        for a in soup.select("a[href]"):
-            cand = _canonicalize_url(urljoin(final, a.get("href") or ""))
-            if _in_scope(cand) and cand not in seen and cand not in queue:
+        if _in_scope(final_c):
+            pages.add(final_c)
+
+        for cand in _extract_catalog_links(html, final_c):
+            if cand not in seen and cand not in queue:
                 queue.append(cand)
 
     product_urls: List[str] = []
-    bom_options_count = 0
+    bom_urls: List[str] = []
     unknown_length_count = 0
 
     for u in sorted(pages):
@@ -268,36 +285,19 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
         title = _extract_title(html, final)
         flat = _main_flat_text(html)
-        txt = f"{title} {flat} {u}".lower()
-
-        if not CLEANLINE_RE.search(txt):
-            continue
-        if _is_landing(u, title, flat):
+        if not _is_cleanline_product_page(u, title, flat):
             continue
 
-        if ACCESSORY_RE.search(txt):
-            out.append({
-                "manufacturer": "geberit",
-                "product_id": _product_id(u, f"{title} {flat}"),
-                "product_family": "CleanLine",
-                "product_name": title,
-                "product_url": u,
-                "sources": u,
-                "candidate_type": "component",
-                "complete_system": "component",
-                "selected_length_mm": want,
-                "length_mode": "unknown",
-                "length_delta_mm": None,
-            })
-            continue
-
-        if not DRAIN_RE.search(txt):
-            continue
-
-        length_mm, length_mode, range_text, range_match = _length_info(f"{title} {flat} {u}", want)
+        length_mm, length_mode, range_txt, range_match = _length_info(f"{title} {flat}", want)
         if length_mode == "fixed" and length_mm is not None and not (min_len <= length_mm <= max_len):
             continue
         if length_mode == "variable" and not range_match:
+            continue
+
+        # keep product set clean for validator: require explicit flow + DN on product page
+        flow_opts, _ = _extract_flow(flat)
+        dns, _ = _extract_dn(flat)
+        if not flow_opts or not dns:
             continue
 
         pid = _product_id(u, f"{title} {flat}")
@@ -305,7 +305,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             "manufacturer": "geberit",
             "product_id": pid,
             "product_family": "CleanLine",
-            "product_name": title if length_mm is None else f"{title} ({length_mm} mm)",
+            "product_name": f"{title} ({length_mm} mm)" if length_mm is not None else title,
             "product_url": u,
             "sources": u,
             "candidate_type": "drain",
@@ -313,53 +313,34 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             "selected_length_mm": want,
             "length_mode": length_mode,
             "length_delta_mm": None if length_mm is None else (length_mm - want),
-            "discovery_evidence": "Length (range)" if length_mode == "variable" and range_text else None,
+            "discovery_evidence": "Length (range)" if length_mode == "variable" else None,
         })
+        product_urls.append(u)
         if length_mode == "unknown":
             unknown_length_count += 1
-        product_urls.append(u)
-
-        # cheap count for summary
-        bom_options_count += sum(1 for m in re.finditer(ROHBAU_RE, flat or "", re.IGNORECASE))
+        bom_urls.extend(_extract_rohbau_links(html, u))
 
     dedup: Dict[str, Dict[str, Any]] = {}
-    component_urls: List[str] = []
     for r in out:
         pid = str(r.get("product_id") or "").strip()
-        if not pid:
-            continue
-        if pid not in dedup:
+        if pid and pid not in dedup:
             dedup[pid] = r
-            if str(r.get("candidate_type")) == "component":
-                component_urls.append(str(r.get("product_url") or ""))
 
     debug.append({
         "site": "geberit",
-        "seed_url": f"{BASE}{SCOPE}",
+        "seed_url": PRIMARY_SEED,
         "status_code": 200 if dedup else None,
-        "final_url": f"{BASE}{SCOPE}",
+        "final_url": PRIMARY_SEED,
         "error": "" if dedup else "No accepted candidates.",
         "candidates_found": len(dedup),
         "method": "summary",
         "is_index": None,
         "products_count": sum(1 for r in dedup.values() if str(r.get("candidate_type")) == "drain"),
-        "bom_options_count": bom_options_count,
+        "bom_options_count": len(set(bom_urls)),
         "unknown_length_count": unknown_length_count,
         "sample_products_urls": json.dumps(product_urls[:10], ensure_ascii=False),
+        "sample_bom_urls": json.dumps(list(dict.fromkeys(bom_urls))[:10], ensure_ascii=False),
     })
-
-    if component_urls:
-        debug.append({
-            "site": "geberit",
-            "seed_url": f"{BASE}{SCOPE}",
-            "status_code": 200,
-            "final_url": f"{BASE}{SCOPE}",
-            "error": "",
-            "candidates_found": len(component_urls),
-            "method": "components",
-            "is_index": None,
-            "sample_components_urls": json.dumps(component_urls[:10], ensure_ascii=False),
-        })
 
     return list(dedup.values()), debug
 
@@ -441,7 +422,7 @@ def _parse_rohbauset_page(url: str) -> Optional[Dict[str, Any]]:
     title = _extract_title(html, final)
     flat = _main_flat_text(html)
     article = _article_from_text(f"{title} {flat}")
-    aid = _normalize_article_for_id(article or "")
+    aid = _normalize_article(article or "")
     dns, dn_span = _extract_dn(flat)
     hmin, hmax, hspan = _extract_height(flat)
 
@@ -471,17 +452,7 @@ def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -
     if st != 200 or not html:
         return []
 
-    soup = BeautifulSoup(html, "lxml")
-    rohbau_links: List[str] = []
-    for a in soup.select("a[href]"):
-        href = a.get("href") or ""
-        txt = _clean_text(a.get_text(" ", strip=True))
-        target = _canonicalize_url(urljoin(final, href))
-        if not _in_scope(target):
-            continue
-        if ROHBAU_RE.search(f"{txt} {target}"):
-            rohbau_links.append(target)
-
+    rohbau_links = _extract_rohbau_links(html, final)
     out: List[Dict[str, Any]] = []
     seen = set()
     for u in rohbau_links[:10]:
