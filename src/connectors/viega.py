@@ -471,11 +471,6 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         if ("/zubehoer/" in url.lower() or "/zubehör/" in url.lower()) and cand_type == "drain":
             cand_type = "component"
 
-        # Ignore non-Rost Zubehör pages to keep discovery noise low
-        if ("zubehoer" in url.lower() or "zubehör" in url.lower()) and not _is_rost_component(url, title):
-            debug.append({"site": "viega", "seed_url": url, "status_code": st, "final_url": final, "error": "ignored_non_rost_zubehoer", "candidates_found": 0, "method": "detail", "is_index": None})
-            continue
-
         # Apply length filter only for concrete fixed lengths (not unknown/variable)
         if length is not None and length_kind != "variable" and not (min_len <= length <= max_len):
             debug.append({"site": "viega", "seed_url": url, "status_code": st, "final_url": final, "error": "filtered_by_target_length", "candidates_found": 0, "method": "detail", "is_index": None})
@@ -541,6 +536,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "products_count": sum(1 for r in dedup.values() if str(r.get("candidate_type",""))=="drain"),
         "components_count": sum(1 for r in dedup.values() if str(r.get("candidate_type",""))=="component"),
         "unknown_length_count": sum(1 for r in dedup.values() if str(r.get("length_mode",""))=="unknown"),
+        "variable_length_count": sum(1 for r in dedup.values() if str(r.get("length_mode",""))=="variable"),
         "sample_accepted_urls": json.dumps(accepted_urls[:10], ensure_ascii=False),
         "sample_products_urls": json.dumps(product_urls[:10], ensure_ascii=False),
         "sample_components_urls": json.dumps(component_urls[:10], ensure_ascii=False),
