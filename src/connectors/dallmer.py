@@ -778,96 +778,6 @@ def _extract_bauhoehe_from_pdf_text(text: str) -> Tuple[Optional[int], Optional[
 
     return best if best is not None else (None, None, None)
 
-def _extract_bauhoehe_from_pdf_text(text: str) -> Tuple[Optional[int], Optional[int], Optional[str]]:
-    if not text:
-        return None, None, None
-
-    t = " ".join(text.split())
-    pos_keys = ["bauhöhe", "einbauhöhe", "installationshöhe", "aufbauhöhe"]
-    neg_keys = ["water seal", "sperrwasser", "geruchsverschluss"]
-
-    best: Optional[Tuple[int, int, str]] = None
-
-    for key in pos_keys:
-        for m in re.finditer(re.escape(key), t, flags=re.IGNORECASE):
-            start = m.start()
-            window = t[start: min(len(t), m.end() + 160)]
-            win_l = window.lower()
-            if any(nk in win_l for nk in neg_keys):
-                continue
-
-            # range first
-            rm = re.search(r"(\d{1,3})\s*[-–]\s*(\d{1,3})\s*mm", window, re.IGNORECASE)
-            if rm:
-                try:
-                    a, b = int(rm.group(1)), int(rm.group(2))
-                    if 1 <= a <= 300 and 1 <= b <= 300 and b >= a:
-                        sn = window[:220]
-                        best = (a, b, sn)
-                        break
-                except Exception:
-                    pass
-
-            sm = re.search(r"(\d{1,3})\s*mm", window, re.IGNORECASE)
-            if sm:
-                try:
-                    v = int(sm.group(1))
-                    if 1 <= v <= 300:
-                        sn = window[:220]
-                        best = (v, v, sn)
-                        break
-                except Exception:
-                    pass
-        if best is not None:
-            break
-
-    return best if best is not None else (None, None, None)
-
-def _extract_bauhoehe_from_pdf_text(text: str) -> Tuple[Optional[int], Optional[int], Optional[str]]:
-    if not text:
-        return None, None, None
-
-    t = " ".join(text.split())
-    pos_keys = ["bauhöhe", "einbauhöhe", "installationshöhe", "aufbauhöhe"]
-    neg_keys = ["water seal", "sperrwasser", "geruchsverschluss"]
-
-    best: Optional[Tuple[int, int, str]] = None
-
-    for key in pos_keys:
-        for m in re.finditer(re.escape(key), t, flags=re.IGNORECASE):
-            start = m.start()
-            window = t[start: min(len(t), m.end() + 160)]
-            win_l = window.lower()
-            if any(nk in win_l for nk in neg_keys):
-                continue
-
-            # range first
-            rm = re.search(r"(\d{1,3})\s*[-–]\s*(\d{1,3})\s*mm", window, re.IGNORECASE)
-            if rm:
-                try:
-                    a, b = int(rm.group(1)), int(rm.group(2))
-                    if 1 <= a <= 300 and 1 <= b <= 300 and b >= a:
-                        sn = window[:220]
-                        best = (a, b, sn)
-                        break
-                except Exception:
-                    pass
-
-            sm = re.search(r"(\d{1,3})\s*mm", window, re.IGNORECASE)
-            if sm:
-                try:
-                    v = int(sm.group(1))
-                    if 1 <= v <= 300:
-                        sn = window[:220]
-                        best = (v, v, sn)
-                        break
-                except Exception:
-                    pass
-        if best is not None:
-            break
-
-    return best if best is not None else (None, None, None)
-
 def _dns_from_text(text: str) -> List[str]:
     if not text:
         return []
@@ -923,6 +833,7 @@ _MATERIAL_BLOCK_RE = re.compile(
     r"(?:^|\b)(?:material|mat[ée]riau|materiale?)\s*[:\-]?\s*(.{0,240})",
     re.IGNORECASE,
 )
+_MATERIAL_TOKEN_RE = re.compile(r"\b(1\.4404|1\.4571|1\.4301|316L|316|304|V4A|V2A)\b", re.IGNORECASE)
 
 
 def _to_lps(value: float, unit: str) -> Optional[float]:
@@ -1000,19 +911,29 @@ def _extract_material_fields(text: str) -> Tuple[Optional[str], Optional[str], O
     snippet = None
     m = _MATERIAL_BLOCK_RE.search(t)
     if m:
-        snippet = m.group(1).strip(" :-")
-        snippet = snippet[:220]
+        snippet = m.group(1).strip(" :-")[:220]
     elif re.search(r"stainless\s*steel|edelstahl|polypropylen|polypropylene|kunststoff", t, re.IGNORECASE):
         m2 = re.search(r"(.{0,80}(?:stainless\s*steel|edelstahl|polypropylen|polypropylene|kunststoff).{0,140})", t, re.IGNORECASE)
         if m2:
             snippet = m2.group(1).strip()
 
-    detail = snippet
+    detail = None
+    m_token = _MATERIAL_TOKEN_RE.search(t)
+    if m_token:
+        detail = m_token.group(1).upper()
+    elif re.search(r"316\s*stainless", t, re.IGNORECASE):
+        detail = "316"
+    elif re.search(r"304\s*stainless", t, re.IGNORECASE):
+        detail = "304"
+
     v4a = None
-    lower = t.lower()
-    if re.search(r"\bv4a\b|1\.4404|1\.4571|316\s*stainless", lower, re.IGNORECASE):
+    if detail in {"1.4404", "1.4571", "316", "316L", "V4A"}:
         v4a = "yes"
-    elif re.search(r"1\.4301|304\s*stainless|edelstahl|stainless\s*steel", lower, re.IGNORECASE):
+    elif detail in {"1.4301", "304", "V2A"}:
+        v4a = "no"
+    elif re.search(r"\bv4a\b|316\s*stainless", t, re.IGNORECASE):
+        v4a = "yes"
+    elif re.search(r"\bv2a\b|1\.4301|304\s*stainless|edelstahl|stainless\s*steel", t, re.IGNORECASE):
         v4a = "no"
 
     return detail, v4a, snippet
@@ -1032,12 +953,38 @@ def _extract_din_compliance(text: str) -> Tuple[Optional[str], Optional[str], Li
         en1253 = "yes"
         evidence.append(("DIN EN 1253", m1253.group(1).strip()))
 
-    m18534 = re.search(r"(.{0,80}DIN\s*18534.{0,120})", t, re.IGNORECASE)
-    if m18534:
-        din18534 = "yes"
-        evidence.append(("DIN 18534", m18534.group(1).strip()))
+    din_18534_patterns = [
+        r"(.{0,80}DIN\s*18534.{0,140})",
+        r"(.{0,80}(?:composite\s*sealing|composite\s*seal|Verbundabdichtung|waterproofing|Abdichtung).{0,60}DIN\s*18534.{0,120})",
+        r"(.{0,80}DIN\s*18534.{0,120}(?:composite\s*sealing|composite\s*seal|Verbundabdichtung|waterproofing|Abdichtung).{0,60})",
+    ]
+    for pat in din_18534_patterns:
+        m18534 = re.search(pat, t, re.IGNORECASE)
+        if m18534:
+            din18534 = "yes"
+            evidence.append(("DIN 18534", m18534.group(1).strip()))
+            break
 
     return en1253, din18534, evidence
+
+
+
+def _apply_material_and_din_fields(res: Dict[str, Any], text: str, source: str) -> None:
+    material_detail, material_v4a, material_snip = _extract_material_fields(text)
+    if material_detail and res.get("material_detail") is None:
+        res["material_detail"] = material_detail
+    if material_v4a is not None and res.get("material_v4a") is None:
+        res["material_v4a"] = material_v4a
+    if material_snip:
+        res["evidence"].append(("Material", material_snip, source))
+
+    en1253, din18534, din_evidence = _extract_din_compliance(text)
+    if en1253 and res.get("din_en_1253_cert") is None:
+        res["din_en_1253_cert"] = en1253
+    if din18534 and res.get("din_18534_compliance") is None:
+        res["din_18534_compliance"] = din18534
+    for label, snip in din_evidence:
+        res["evidence"].append((label, snip, source))
 
 
 
@@ -1150,21 +1097,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
 
     # HTML parse
     if page_text:
-        material_detail, material_v4a, material_snip = _extract_material_fields(page_text)
-        if material_detail and res["material_detail"] is None:
-            res["material_detail"] = material_detail
-        if material_v4a is not None and res["material_v4a"] is None:
-            res["material_v4a"] = material_v4a
-        if material_snip:
-            res["evidence"].append(("Material", material_snip, final))
-
-        en1253, din18534, din_evidence = _extract_din_compliance(page_text)
-        if en1253 and res["din_en_1253_cert"] is None:
-            res["din_en_1253_cert"] = en1253
-        if din18534 and res["din_18534_compliance"] is None:
-            res["din_18534_compliance"] = din18534
-        for label, snip in din_evidence:
-            res["evidence"].append((label, snip, final))
+        _apply_material_and_din_fields(res, page_text, final)
 
         # flow best, preferring explicit Dallmer/drainage-capacity evidence over generic max-value parsing
         lps, raw_txt, unit, status = _extract_dallmer_flow_rate(page_text)
@@ -1212,21 +1145,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
             if not pdf_text:
                 continue
 
-            material_detail, material_v4a, material_snip = _extract_material_fields(pdf_text)
-            if material_detail and res.get("material_detail") is None:
-                res["material_detail"] = material_detail
-            if material_v4a is not None and res.get("material_v4a") is None:
-                res["material_v4a"] = material_v4a
-            if material_snip:
-                res["evidence"].append(("Material", material_snip, pdf_url))
-
-            en1253, din18534, din_evidence = _extract_din_compliance(pdf_text)
-            if en1253 and res.get("din_en_1253_cert") is None:
-                res["din_en_1253_cert"] = en1253
-            if din18534 and res.get("din_18534_compliance") is None:
-                res["din_18534_compliance"] = din18534
-            for label, snip in din_evidence:
-                res["evidence"].append((label, snip, pdf_url))
+            _apply_material_and_din_fields(res, pdf_text, pdf_url)
 
             if res.get("flow_rate_lps") is None:
                 lps, raw_txt, unit, status = _extract_dallmer_flow_rate(pdf_text)
