@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
-import hashlib
+from typing import Any, Dict, List, Optional, Set, Tuple
 import json
 import re
-from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -17,372 +16,337 @@ HEADERS = {
     "Connection": "keep-alive",
 }
 
-CATALOG_SEEDS = [
-    "https://catalog.geberit.de/de-DE/product/PRO_170946",   # CleanLine20
-    "https://catalog.geberit.de/de-DE/product/PRO_3932352",  # CleanLine30
-    "https://catalog.geberit.de/de-DE/product/PRO_4702328",  # CleanLine50
-    "https://catalog.geberit.de/de-DE/product/154.459.00.1", # CleanLine60
-    "https://catalog.geberit.de/de-DE/product/154.442.39.1", # CleanLine80
-]
-CATALOG_SCOPE = "https://catalog.geberit.de/de-DE/product/"
+BASE = "https://catalog.geberit.de"
+SCOPE = "/de-DE"
+PRIMARY_SEED = f"{BASE}{SCOPE}/product/PRO_3932352"
+MARKETING_SEED = "https://www.geberit.de/badezimmerprodukte/duschen-badewannenablaeufe/duschen/duschrinnen-geberit-cleanline/"
 
-SECTION_STOP_RE = re.compile(r"bestellen|Weitere Produkte", re.IGNORECASE)
-EXCLUDE_RE = re.compile(
-    r"zubehoer|ersatzteile|rohbauset|installationsrahmen|verbindungsst(?:u|ue)ck|verlaengerung|spare|accessor",
+ACCESSORY_RE = re.compile(
+    r"verbindungsst[üu]ck|verl[äa]ngerung|reinigungszubeh[öo]r|allgemeines\s+zubeh[öo]r|\bzubeh[öo]r\b|ablaufkette",
     re.IGNORECASE,
 )
-SERIES_RE = re.compile(r"cleanline\s*(20|30|50|60|80)", re.IGNORECASE)
-DRAIN_RE = re.compile(r"cleanline.*duschrinne|duschrinne.*cleanline", re.IGNORECASE)
-PRODUCT_CODE_RE = re.compile(r"/((?:PRO_)?[0-9A-Za-z][0-9A-Za-z._]+)$")
-ARTICLE_BLOCK_RE = re.compile(
-    r"(?:Ersetzt\s+Art\.-Nr\.\s*[0-9A-Z\.]+\s+)?Art\.-Nr\.\s*(?P<article>[0-9A-Z\.]+)(?P<details>.*?)L\s*:?[ ]*(?P<start>\d{2,3})\D{0,4}(?P<end>\d{2,3})\s*cm",
-    re.IGNORECASE | re.DOTALL,
-)
-FLOW_RE = re.compile(r"Ablaufleistung[^\d]{0,20}(\d+(?:[.,]\d+)?)\s*l\s*/\s*s", re.IGNORECASE)
-DN_RE = re.compile(r"\bDN\s*(\d{2,3})\b", re.IGNORECASE)
-MATERIAL_RE = re.compile(r"(CrNiMo-Stahl\s*1\.4404|Edelstahl|Kunststoff|Stahl)", re.IGNORECASE)
-EN1253_RE = re.compile(r"EN\s*1253", re.IGNORECASE)
-ROHBAU_LINK_RE = re.compile(r"rohbauset", re.IGNORECASE)
+CLEANLINE_RE = re.compile(r"cleanline\s*(20|50|60|80)?", re.IGNORECASE)
+DRAIN_RE = re.compile(r"duschrinne|duschprofil|duschablauf", re.IGNORECASE)
+ROHBAU_RE = re.compile(r"rohbauset|rohbau\s*set|rohbau", re.IGNORECASE)
 
-
-def _build_session() -> requests.Session:
-    session = requests.Session()
-    session.trust_env = False
-    session.headers.update(HEADERS)
-    return session
+ARTICLE_RE = re.compile(r"\b(\d{3}\.\d{3}[A-Z0-9\.]*|\d{6,}[A-Z0-9\.]*)\b", re.IGNORECASE)
+FLOW_LPS_RE = re.compile(r"(\d+(?:[\.,]\d+)?)\s*l\s*/\s*s\b", re.IGNORECASE)
+DN_PAIR_RE = re.compile(r"\bDN\s*(\d{2,3})\s*/\s*(?:DN\s*)?(\d{2,3})\b", re.IGNORECASE)
+DN_SINGLE_RE = re.compile(r"\b(?:nennweite\s*)?DN\s*(\d{2,3})\b", re.IGNORECASE)
+HEIGHT_RANGE_RE = re.compile(r"(?:einbauh(?:ö|oe)he|estrichh(?:ö|oe)he|installationsh(?:ö|oe)he)[^\d]{0,30}(\d{2,3})\s*[-–]\s*(\d{2,3})\s*mm", re.IGNORECASE)
+HEIGHT_SINGLE_RE = re.compile(r"(?:einbauh(?:ö|oe)he|estrichh(?:ö|oe)he|installationsh(?:ö|oe)he)[^\d]{0,30}(\d{2,3})\s*mm", re.IGNORECASE)
+TRAP_SEAL_RE = re.compile(r"sperrwasserh(?:ö|oe)he|geruchsverschluss|verschlussh(?:ö|oe)he", re.IGNORECASE)
+LEN_MM_RE = re.compile(r"\b(\d{3,4})\s*mm\b", re.IGNORECASE)
+LEN_RANGE_CM_RE = re.compile(r"\b(\d{2,3})\s*[-–]\s*(\d{2,3})\s*cm\b", re.IGNORECASE)
+LEN_RANGE_MM_RE = re.compile(r"\b(\d{3,4})\s*[-–]\s*(\d{3,4})\s*mm\b", re.IGNORECASE)
 
 
 def _safe_get_text(url: str, timeout: int = 35) -> Tuple[Optional[int], str, str, str]:
     try:
-        with _build_session() as session:
-            response = session.get(url, timeout=timeout, allow_redirects=True)
-        return response.status_code, str(response.url), response.text or "", ""
-    except Exception as exc:
-        return None, url, "", f"{type(exc).__name__}: {exc}"
+        r = requests.get(url, headers=HEADERS, timeout=timeout, allow_redirects=True)
+        return r.status_code, str(r.url), (r.text or ""), ""
+    except Exception as e:
+        return None, url, "", f"{type(e).__name__}: {e}"
 
 
-def _clean_text(value: str) -> str:
-    return " ".join((value or "").split())
+def _clean_text(s: str) -> str:
+    return " ".join((s or "").split())
 
 
-def _normalize_text(value: str) -> str:
-    return (
-        (value or "")
-        .lower()
-        .replace("\u00e4", "ae")
-        .replace("\u00f6", "oe")
-        .replace("\u00fc", "ue")
-        .replace("\u00df", "ss")
-    )
-
-
-def _canonical_fetch_url(url: str) -> str:
-    parsed = urlparse((url or "").strip())
-    path = (parsed.path or "/").replace("//", "/").rstrip("/")
-    return urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
-
-
-def _build_variant_url(base_url: str, article_no: str) -> str:
-    parsed = urlparse(_canonical_fetch_url(base_url))
-    query = urlencode({"article": article_no})
-    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", query, ""))
-
-
-def _split_variant_url(url: str) -> Tuple[str, Optional[str]]:
-    parsed = urlparse((url or "").strip())
-    article = parse_qs(parsed.query).get("article", [None])[0]
-    return _canonical_fetch_url(url), article
-
-
-def _main_soup(html: str) -> BeautifulSoup:
+def _main_flat_text(html: str) -> str:
     soup = BeautifulSoup(html or "", "lxml")
     main = soup.select_one("main")
-    return main if main is not None else soup
+    if main is not None:
+        return _clean_text(main.get_text(" ", strip=True) or "")
+    for sel in ["header", "nav", "footer", "aside"]:
+        for tag in soup.select(sel):
+            tag.decompose()
+    return _clean_text(soup.get_text(" ", strip=True) or "")
 
 
-def _main_text(html: str) -> str:
-    main = _main_soup(html)
-    for selector in ["header", "nav", "footer", "aside", "script", "style"]:
-        for node in main.select(selector):
-            node.decompose()
-    return _clean_text(main.get_text(" ", strip=True))
+def _snippet(flat: str, start: int, end: int, pad: int = 80) -> str:
+    lo = max(0, start - pad)
+    hi = min(len(flat), end + pad)
+    return flat[lo:hi]
 
 
-def _truncate_for_primary_product(text: str) -> str:
-    source = text or ""
-    match = SECTION_STOP_RE.search(source)
-    if match:
-        return source[:match.start()]
-    return source
+def _canonicalize_url(url: str) -> str:
+    try:
+        p = urlparse((url or "").strip())
+    except Exception:
+        return (url or "").split("#", 1)[0].split("?", 1)[0]
+    path = (p.path or "/").replace("//", "/")
+    if path != "/":
+        path = path.rstrip("/") + "/"
+    return f"{p.scheme}://{p.netloc}{path}"
+
+
+def _in_scope(url: str) -> bool:
+    try:
+        p = urlparse(url)
+        return p.netloc.endswith("catalog.geberit.de") and (p.path or "").startswith(SCOPE)
+    except Exception:
+        return False
 
 
 def _extract_title(html: str, fallback_url: str) -> str:
     soup = BeautifulSoup(html or "", "lxml")
-    for selector in ["main h1", "h1", "title"]:
-        node = soup.select_one(selector)
-        if node:
-            text = _clean_text(node.get_text(" ", strip=True))
-            if text:
-                return text
-    return fallback_url.rstrip("/").split("/")[-1]
+    h1 = soup.select_one("h1")
+    if h1:
+        t = _clean_text(h1.get_text(" ", strip=True))
+        if t:
+            return t
+    t = soup.select_one("title")
+    if t:
+        x = _clean_text(t.get_text(" ", strip=True))
+        if x:
+            return x
+    return fallback_url.rstrip("/").split("/")[-1].replace("-", " ")
 
 
-def _extract_product_code(url: str) -> Optional[str]:
-    normalized = _canonical_fetch_url(url)
-    match = PRODUCT_CODE_RE.search(normalized)
-    if match:
-        return match.group(1)
-    tail = normalized.rstrip("/").split("/")[-1]
-    return tail or None
+def _article_from_text(text: str) -> Optional[str]:
+    m = ARTICLE_RE.search(text or "")
+    return m.group(1) if m else None
 
 
-def _stable_fallback(value: str) -> str:
-    return hashlib.sha1((value or "").encode("utf-8")).hexdigest()[:12]
+def _normalize_article(article: str) -> Optional[str]:
+    a = re.sub(r"[^0-9A-Za-z]", "", (article or "")).upper()
+    return a or None
 
 
-def _series_name(text: str) -> Optional[str]:
-    match = SERIES_RE.search(text or "")
-    if not match:
-        return None
-    return f"CleanLine {match.group(1)}"
+def _product_id(url: str, text: str) -> str:
+    article = _normalize_article(_article_from_text(text) or "")
+    if article:
+        return f"geberit-{article}"
+    return f"geberit-{abs(hash(url))}"
 
 
-def _is_catalog_product_url(url: str) -> bool:
-    return _canonical_fetch_url(url).startswith(CATALOG_SCOPE)
+def _length_info(text: str, target_mm: int) -> Tuple[Optional[int], str, Optional[str], bool]:
+    for m in LEN_RANGE_CM_RE.finditer(text or ""):
+        a, b = int(m.group(1)) * 10, int(m.group(2)) * 10
+        lo, hi = (a, b) if a <= b else (b, a)
+        return None, "variable", f"{lo}-{hi} mm", lo <= target_mm <= hi
+    for m in LEN_RANGE_MM_RE.finditer(text or ""):
+        a, b = int(m.group(1)), int(m.group(2))
+        lo, hi = (a, b) if a <= b else (b, a)
+        return None, "variable", f"{lo}-{hi} mm", lo <= target_mm <= hi
+    vals = [int(m.group(1)) for m in LEN_MM_RE.finditer(text or "") if 300 <= int(m.group(1)) <= 2500]
+    if vals:
+        return max(vals), "fixed", None, False
+    return None, "unknown", None, False
 
 
-def _is_cleanline_product_page(title: str, text: str, url: str) -> bool:
-    primary = _normalize_text(f"{title} {_truncate_for_primary_product(text)} {url}")
-    identity = _normalize_text(f"{title} {url}")
-    return _is_catalog_product_url(url) and bool(DRAIN_RE.search(primary)) and not EXCLUDE_RE.search(identity)
+def _extract_flow(flat: str) -> Tuple[List[float], Optional[Tuple[int, int]]]:
+    vals: List[float] = []
+    first: Optional[Tuple[int, int]] = None
+    src = flat or ""
+    for km in re.finditer(r"ablaufleistung|abflussleistung", src, re.IGNORECASE):
+        lo = max(0, km.start() - 20)
+        hi = min(len(src), km.end() + 85)
+        part = src[lo:hi]
+        for m in FLOW_LPS_RE.finditer(part):
+            prev1 = part.lower().rfind("ablaufleistung", 0, m.start() + 1)
+            prev2 = part.lower().rfind("abflussleistung", 0, m.start() + 1)
+            prev = max(prev1, prev2)
+            if prev < 0 or (m.start() - prev) > 36:
+                continue
+            if "l/s" in part[prev:m.start()].lower():
+                continue
+            try:
+                v = float(m.group(1).replace(",", "."))
+            except Exception:
+                continue
+            if 0.10 <= v <= 3.0:
+                vals.append(v)
+                if first is None:
+                    first = (lo + m.start(), lo + m.end())
+    return sorted(set(vals)), first
 
 
-def _section_links(html: str, base_url: str, wanted_titles: Sequence[str]) -> List[str]:
-    wanted = [_normalize_text(title) for title in wanted_titles]
-    main = _main_soup(html)
-    links: List[str] = []
+def _extract_dn(flat: str) -> Tuple[List[str], Optional[Tuple[int, int]]]:
+    dns: List[str] = []
+    first: Optional[Tuple[int, int]] = None
+    for m in DN_PAIR_RE.finditer(flat or ""):
+        for dn in (f"DN{m.group(1)}", f"DN{m.group(2)}"):
+            if dn not in dns:
+                dns.append(dn)
+        if first is None:
+            first = (m.start(), m.end())
+    for m in DN_SINGLE_RE.finditer(flat or ""):
+        dn = f"DN{m.group(1)}"
+        if dn not in dns:
+            dns.append(dn)
+            if first is None:
+                first = (m.start(), m.end())
+    return sorted(dns), first
 
-    for heading in main.select("h1, h2, h3, h4"):
-        heading_text = _normalize_text(_clean_text(heading.get_text(" ", strip=True)))
-        if not any(title in heading_text for title in wanted):
+
+def _extract_height(flat: str) -> Tuple[Optional[int], Optional[int], Optional[Tuple[int, int]]]:
+    h = HEIGHT_RANGE_RE.search(flat or "")
+    if h and not TRAP_SEAL_RE.search(_snippet(flat, h.start(), h.end(), pad=20)):
+        a, b = int(h.group(1)), int(h.group(2))
+        lo, hi = (a, b) if a <= b else (b, a)
+        if 20 <= lo <= 350 and 20 <= hi <= 350:
+            return lo, hi, (h.start(), h.end())
+    hs = HEIGHT_SINGLE_RE.search(flat or "")
+    if hs and not TRAP_SEAL_RE.search(_snippet(flat, hs.start(), hs.end(), pad=20)):
+        v = int(hs.group(1))
+        if 20 <= v <= 350:
+            return v, v, (hs.start(), hs.end())
+    return None, None, None
+
+
+def _extract_catalog_links(html: str, base_url: str) -> Set[str]:
+    soup = BeautifulSoup(html or "", "lxml")
+    out: Set[str] = set()
+    for a in soup.select("a[href]"):
+        href = a.get("href") or ""
+        txt = _clean_text(a.get_text(" ", strip=True)).lower()
+        u = _canonicalize_url(urljoin(base_url, href))
+        if _in_scope(u) and ("/product/" in u or "cleanline" in txt or "weitere produkte" in txt):
+            out.add(u)
+    return out
+
+
+def _is_cleanline_product_page(url: str, title: str, flat: str) -> bool:
+    txt = f"{url} {title} {flat}".lower()
+    if not CLEANLINE_RE.search(txt):
+        return False
+    if ACCESSORY_RE.search(txt):
+        return False
+    if "/product/" not in (url or ""):
+        return False
+    if not DRAIN_RE.search(txt):
+        return False
+    return True
+
+
+def _extract_rohbau_links(html: str, base_url: str) -> List[str]:
+    soup = BeautifulSoup(html or "", "lxml")
+    out: List[str] = []
+    seen = set()
+    for a in soup.select("a[href]"):
+        href = a.get("href") or ""
+        txt = _clean_text(a.get_text(" ", strip=True))
+        u = _canonicalize_url(urljoin(base_url, href))
+        if not _in_scope(u):
             continue
-        container = heading.parent if getattr(heading, "parent", None) is not None else heading
-        for anchor in container.select("a[href]"):
-            href = _canonical_fetch_url(urljoin(base_url, anchor.get("href") or ""))
-            if _is_catalog_product_url(href) and href not in links:
-                links.append(href)
-
-    return links
-
-
-def _article_variants(product_text: str) -> List[Dict[str, Any]]:
-    variants: List[Dict[str, Any]] = []
-    seen: Set[str] = set()
-    text = _truncate_for_primary_product(product_text)
-
-    for match in ARTICLE_BLOCK_RE.finditer(text):
-        article_no = match.group("article").strip()
-        if article_no in seen:
-            continue
-        seen.add(article_no)
-
-        start_cm = int(match.group("start"))
-        end_cm = int(match.group("end"))
-        start_mm = start_cm * 10
-        end_mm = end_cm * 10
-        detail = _clean_text(match.group("details"))
-        detail = re.sub(r"^Farbe\s*/\s*Oberfl\w+", "", detail, flags=re.IGNORECASE).strip(" ,:-")
-
-        variants.append({
-            "article_no": article_no,
-            "length_min_mm": min(start_mm, end_mm),
-            "length_mm": max(start_mm, end_mm),
-            "detail": detail,
-        })
-
-    return variants
-
-
-def _extract_flow_values(product_text: str) -> Tuple[List[float], Optional[str]]:
-    values: List[float] = []
-    raw_snippet: Optional[str] = None
-    for match in FLOW_RE.finditer(product_text or ""):
-        value = float(match.group(1).replace(",", "."))
-        if 0.1 <= value <= 5.0 and value not in values:
-            values.append(value)
-            if raw_snippet is None:
-                lo = max(0, match.start() - 120)
-                hi = min(len(product_text), match.end() + 120)
-                raw_snippet = product_text[lo:hi]
-    return values, raw_snippet
-
-
-def _rohbau_links(product_html: str, product_url: str) -> List[str]:
-    links = _section_links(product_html, product_url, ["Zusaetzlich zu bestellen"])
-    filtered: List[str] = []
-    for link in links:
-        if ROHBAU_LINK_RE.search(_normalize_text(link)) and link not in filtered:
-            filtered.append(link)
-    return filtered
-
-
-def _extract_dn_from_rohbausets(product_html: str, product_url: str) -> Tuple[List[str], List[Tuple[str, str, str]]]:
-    dn_values: List[str] = []
-    evidence: List[Tuple[str, str, str]] = []
-
-    for rohbau_url in _rohbau_links(product_html, product_url):
-        status, final_url, html, error = _safe_get_text(rohbau_url)
-        if status != 200 or not html:
-            evidence.append(("Outlet DN (linked Rohbauset)", f"status={status} err={error}", final_url))
-            continue
-        text = _main_text(html)
-        for match in DN_RE.finditer(text):
-            dn = f"DN{match.group(1)}"
-            if dn not in dn_values:
-                dn_values.append(dn)
-                lo = max(0, match.start() - 80)
-                hi = min(len(text), match.end() + 80)
-                evidence.append(("Outlet DN (linked Rohbauset)", text[lo:hi], final_url))
-    return dn_values, evidence
+        if ROHBAU_RE.search(f"{txt} {u}") and u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
 
 
 def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
-    target = int(target_length_mm)
-    tolerance = int(tolerance_mm)
+    want = int(target_length_mm)
+    tol = int(tolerance_mm)
+    min_len, max_len = max(0, want - tol), want + tol
 
-    rows: List[Dict[str, Any]] = []
+    out: List[Dict[str, Any]] = []
     debug: List[Dict[str, Any]] = []
-    page_urls: List[str] = []
-    seen_pages: Set[str] = set()
 
-    for seed_url in CATALOG_SEEDS:
-        seed_status, seed_final, seed_html, seed_error = _safe_get_text(seed_url)
-        debug.append({
-            "site": "geberit",
-            "seed_url": seed_url,
-            "status_code": seed_status,
-            "final_url": seed_final,
-            "error": seed_error,
-            "method": "catalog_seed",
-            "candidates_found": 0,
-            "is_index": None,
+    queue = [_canonicalize_url(PRIMARY_SEED)]
+    seen: Set[str] = set()
+    pages: Set[str] = set()
+
+    # optional helper seed: only use to find additional catalog links
+    st_m, final_m, html_m, err_m = _safe_get_text(MARKETING_SEED)
+    debug.append({"site": "geberit", "seed_url": MARKETING_SEED, "status_code": st_m, "final_url": final_m, "error": err_m, "candidates_found": 0, "method": "marketing_seed", "is_index": None})
+    if st_m == 200 and html_m:
+        queue.extend(sorted(_extract_catalog_links(html_m, final_m)))
+
+    while queue and len(seen) < 120:
+        u = _canonicalize_url(queue.pop(0))
+        if u in seen:
+            continue
+        seen.add(u)
+
+        st, final, html, err = _safe_get_text(u)
+        if st != 200 or not html:
+            debug.append({"site": "geberit", "seed_url": u, "status_code": st, "final_url": final, "error": err, "candidates_found": 0, "method": "crawl", "is_index": None})
+            continue
+
+        final_c = _canonicalize_url(final)
+        if _in_scope(final_c):
+            pages.add(final_c)
+
+        for cand in _extract_catalog_links(html, final_c):
+            if cand not in seen and cand not in queue:
+                queue.append(cand)
+
+    product_urls: List[str] = []
+    bom_urls: List[str] = []
+    unknown_length_count = 0
+
+    for u in sorted(pages):
+        st, final, html, err = _safe_get_text(u)
+        if st != 200 or not html:
+            continue
+
+        title = _extract_title(html, final)
+        flat = _main_flat_text(html)
+        if not _is_cleanline_product_page(u, title, flat):
+            continue
+
+        length_mm, length_mode, range_txt, range_match = _length_info(f"{title} {flat}", want)
+        if length_mode == "fixed" and length_mm is not None and not (min_len <= length_mm <= max_len):
+            continue
+        if length_mode == "variable" and not range_match:
+            continue
+
+        # keep product set clean for validator: require explicit flow + DN on product page
+        flow_opts, _ = _extract_flow(flat)
+        dns, _ = _extract_dn(flat)
+        if not flow_opts or not dns:
+            continue
+
+        pid = _product_id(u, f"{title} {flat}")
+        out.append({
+            "manufacturer": "geberit",
+            "product_id": pid,
+            "product_family": "CleanLine",
+            "product_name": f"{title} ({length_mm} mm)" if length_mm is not None else title,
+            "product_url": u,
+            "sources": u,
+            "candidate_type": "drain",
+            "complete_system": "yes",
+            "selected_length_mm": want,
+            "length_mode": length_mode,
+            "length_delta_mm": None if length_mm is None else (length_mm - want),
+            "discovery_evidence": "Length (range)" if length_mode == "variable" else None,
         })
-        if seed_status != 200 or not seed_html:
-            continue
+        product_urls.append(u)
+        if length_mode == "unknown":
+            unknown_length_count += 1
+        bom_urls.extend(_extract_rohbau_links(html, u))
 
-        canonical_final = _canonical_fetch_url(seed_final)
-        if canonical_final not in seen_pages:
-            seen_pages.add(canonical_final)
-            page_urls.append(seed_final)
+    dedup: Dict[str, Dict[str, Any]] = {}
+    for r in out:
+        pid = str(r.get("product_id") or "").strip()
+        if pid and pid not in dedup:
+            dedup[pid] = r
 
-        for related_url in _section_links(seed_html, seed_final, ["Weitere Produkte"]):
-            canonical_related = _canonical_fetch_url(related_url)
-            if canonical_related not in seen_pages:
-                seen_pages.add(canonical_related)
-                page_urls.append(related_url)
+    debug.append({
+        "site": "geberit",
+        "seed_url": PRIMARY_SEED,
+        "status_code": 200 if dedup else None,
+        "final_url": PRIMARY_SEED,
+        "error": "" if dedup else "No accepted candidates.",
+        "candidates_found": len(dedup),
+        "method": "summary",
+        "is_index": None,
+        "products_count": sum(1 for r in dedup.values() if str(r.get("candidate_type")) == "drain"),
+        "bom_options_count": len(set(bom_urls)),
+        "unknown_length_count": unknown_length_count,
+        "sample_products_urls": json.dumps(product_urls[:10], ensure_ascii=False),
+        "sample_bom_urls": json.dumps(list(dict.fromkeys(bom_urls))[:10], ensure_ascii=False),
+    })
 
-    for page_url in page_urls:
-        status, final_url, html, error = _safe_get_text(page_url)
-        if status != 200 or not html:
-            debug.append({
-                "site": "geberit",
-                "seed_url": page_url,
-                "status_code": status,
-                "final_url": final_url,
-                "error": error,
-                "method": "page_fetch",
-                "candidates_found": 0,
-                "is_index": None,
-            })
-            continue
-
-        title = _extract_title(html, final_url)
-        main_text = _main_text(html)
-        if not _is_cleanline_product_page(title, main_text, final_url):
-            debug.append({
-                "site": "geberit",
-                "seed_url": page_url,
-                "status_code": status,
-                "final_url": final_url,
-                "error": "filtered_non_cleanline_or_excluded",
-                "method": "page_filter",
-                "candidates_found": 0,
-                "is_index": None,
-            })
-            continue
-
-        flow_values, _ = _extract_flow_values(main_text)
-        if not flow_values:
-            debug.append({
-                "site": "geberit",
-                "seed_url": page_url,
-                "status_code": status,
-                "final_url": final_url,
-                "error": "missing_flow",
-                "method": "page_filter",
-                "candidates_found": 0,
-                "is_index": None,
-            })
-            continue
-
-        series = _series_name(title) or "CleanLine"
-        product_code = (_extract_product_code(final_url) or _stable_fallback(final_url)).lower()
-        page_rows = 0
-
-        for variant in _article_variants(main_text):
-            length_mm = int(variant["length_mm"])
-            length_min_mm = int(variant["length_min_mm"])
-            if not (length_min_mm <= target <= length_mm):
-                continue
-            if abs(length_mm - target) > tolerance and target not in range(length_min_mm, length_mm + 1):
-                continue
-
-            article_no = str(variant["article_no"])
-            detail = str(variant["detail"] or "").strip()
-            suffix = f" - {detail}" if detail else ""
-            rows.append({
-                "manufacturer": "geberit",
-                "product_family": "CleanLine",
-                "product_name": f"{title}{suffix}",
-                "product_url": _build_variant_url(final_url, article_no),
-                "product_id": f"geberit-{product_code}-{re.sub(r'[^0-9A-Za-z]', '', article_no).lower()}",
-                "candidate_type": "drain",
-                "complete_system": "yes",
-                "product_series": series,
-                "length_mm": length_mm,
-                "selected_length_mm": target,
-                "length_delta_mm": length_mm - target,
-                "available_lengths_mm": f"{length_min_mm}-{length_mm}",
-                "discovery_evidence": "Length (range)",
-            })
-            page_rows += 1
-
-        debug.append({
-            "site": "geberit",
-            "seed_url": page_url,
-            "status_code": status,
-            "final_url": final_url,
-            "error": "",
-            "method": "page_filter",
-            "candidates_found": page_rows,
-            "is_index": None,
-        })
-
-    deduped: Dict[str, Dict[str, Any]] = {}
-    for row in rows:
-        product_id = str(row.get("product_id") or "").strip()
-        if product_id and product_id not in deduped:
-            deduped[product_id] = row
-
-    return list(deduped.values()), debug
+    return list(dedup.values()), debug
 
 
 def extract_parameters(product_url: str) -> Dict[str, Any]:
-    result: Dict[str, Any] = {
-        "product_series": None,
-        "product_family": "CleanLine",
-        "length_mm": None,
-        "resolved_length_mm": None,
+    res: Dict[str, Any] = {
         "flow_rate_lps": None,
         "flow_rate_raw_text": None,
         "flow_rate_unit": None,
@@ -399,61 +363,104 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
         "outlet_dn_options_json": None,
         "sealing_fleece_preassembled": None,
         "colours_count": None,
+        "resolved_length_mm": None,
         "evidence": [],
     }
 
-    fetch_url, article_no = _split_variant_url(product_url)
-    status, final_url, html, error = _safe_get_text(fetch_url)
-    result["evidence"].append(("HTML fetch", f"status={status} err={error}".strip(), final_url))
-    if status != 200 or not html:
-        return result
+    src = _canonicalize_url((product_url or "").strip())
+    st, final, html, err = _safe_get_text(src)
+    res["evidence"].append(("HTML fetch", f"status={st} err={err}".strip(), final))
+    if st != 200 or not html:
+        return res
 
-    title = _extract_title(html, final_url)
-    text = _main_text(html)
-    primary_text = _truncate_for_primary_product(text)
-    result["product_series"] = _series_name(title)
+    flat = _main_flat_text(html)
 
-    for variant in _article_variants(text):
-        if article_no and variant["article_no"] != article_no:
-            continue
-        result["length_mm"] = int(variant["length_mm"])
-        result["resolved_length_mm"] = int(variant["length_mm"])
-        result["evidence"].append(("Length", f"{variant['length_min_mm']}-{variant['length_mm']} mm", final_url))
-        break
+    m_mat = re.search(r"\b(edelstahl|stahl|kunststoff|metall)\b", flat, re.IGNORECASE)
+    if m_mat:
+        res["material_detail"] = m_mat.group(1)
+        res["material_v4a"] = "yes" if "edelstahl" in m_mat.group(1).lower() else None
+        res["evidence"].append(("Material", _snippet(flat, m_mat.start(), m_mat.end()), final))
 
-    material_match = MATERIAL_RE.search(primary_text)
-    if material_match:
-        result["material_detail"] = material_match.group(1)
-        if "1.4404" in material_match.group(1) or material_match.group(1).lower() == "edelstahl":
-            result["material_v4a"] = "yes"
-        result["evidence"].append(("Material", material_match.group(1), final_url))
+    len_mm, len_mode, range_txt, _ = _length_info(flat, 1200)
+    if len_mm is not None:
+        res["resolved_length_mm"] = len_mm
+        res["evidence"].append(("Length", f"{len_mm} mm", final))
+    elif len_mode == "variable" and range_txt:
+        res["evidence"].append(("Length (range)", range_txt, final))
 
-    if EN1253_RE.search(primary_text):
-        result["din_en_1253_cert"] = "yes"
-        result["evidence"].append(("EN 1253", "Güteüberwacht nach EN 1253-3", final_url))
+    dns, dn_span = _extract_dn(flat)
+    if dns:
+        res["outlet_dn"] = "/".join(dns)
+        res["outlet_dn_default"] = "DN50" if "DN50" in dns else dns[0]
+        res["outlet_dn_options_json"] = json.dumps(dns, ensure_ascii=False)
+        if dn_span:
+            res["evidence"].append(("Outlet DN", _snippet(flat, dn_span[0], dn_span[1]), final))
 
-    flow_values, flow_snippet = _extract_flow_values(primary_text)
-    if flow_values:
-        result["flow_rate_lps"] = max(flow_values)
-        result["flow_rate_raw_text"] = flow_snippet
-        result["flow_rate_unit"] = "l/s"
-        result["flow_rate_status"] = "ok"
-        result["flow_rate_lps_options"] = json.dumps(flow_values, ensure_ascii=False)
-        if flow_snippet:
-            result["evidence"].append(("Flow rate", flow_snippet, final_url))
+    flow_opts, flow_span = _extract_flow(flat)
+    if flow_opts:
+        res["flow_rate_lps_options"] = json.dumps(flow_opts, ensure_ascii=False)
+        res["flow_rate_lps"] = max(flow_opts)
+        res["flow_rate_unit"] = "l/s"
+        res["flow_rate_status"] = "ok"
+        if flow_span:
+            res["evidence"].append(("Flow rate (Ablaufleistung)", _snippet(flat, flow_span[0], flow_span[1]), final))
 
-    dn_values, dn_evidence = _extract_dn_from_rohbausets(html, final_url)
-    if dn_values:
-        ordered = sorted(dn_values, key=lambda item: (0 if item == "DN50" else 1, item))
-        result["outlet_dn"] = "/".join(ordered)
-        result["outlet_dn_default"] = ordered[0]
-        result["outlet_dn_options_json"] = json.dumps(ordered, ensure_ascii=False)
-    result["evidence"].extend(dn_evidence)
+    hmin, hmax, hspan = _extract_height(flat)
+    if hmin is not None and hmax is not None:
+        res["height_adj_min_mm"] = hmin
+        res["height_adj_max_mm"] = hmax
+        if hspan:
+            res["evidence"].append(("Installation height (mm)", _snippet(flat, hspan[0], hspan[1]), final))
 
-    return result
+    return res
+
+
+def _parse_rohbauset_page(url: str) -> Optional[Dict[str, Any]]:
+    st, final, html, _ = _safe_get_text(url)
+    if st != 200 or not html:
+        return None
+    title = _extract_title(html, final)
+    flat = _main_flat_text(html)
+    article = _article_from_text(f"{title} {flat}")
+    aid = _normalize_article(article or "")
+    dns, dn_span = _extract_dn(flat)
+    hmin, hmax, hspan = _extract_height(flat)
+
+    evidence = []
+    if dn_span:
+        evidence.append(("BOM Outlet DN", _snippet(flat, dn_span[0], dn_span[1]), final))
+    if hspan:
+        evidence.append(("BOM Installation height", _snippet(flat, hspan[0], hspan[1]), final))
+
+    return {
+        "bom_code": f"ROHBAU-{aid}" if aid else (article or title[:40]),
+        "bom_name": title,
+        "bom_url": final,
+        "article_no": article,
+        "outlet_dn": "/".join(dns) if dns else None,
+        "height_adj_min_mm": hmin,
+        "height_adj_max_mm": hmax,
+        "is_default": "yes",
+        "evidence_json": json.dumps(evidence, ensure_ascii=False) if evidence else None,
+    }
 
 
 def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-    _ = product_url
     _ = params
-    return []
+    src = _canonicalize_url((product_url or "").strip())
+    st, final, html, _ = _safe_get_text(src)
+    if st != 200 or not html:
+        return []
+
+    rohbau_links = _extract_rohbau_links(html, final)
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for u in rohbau_links[:10]:
+        if u in seen:
+            continue
+        seen.add(u)
+        parsed = _parse_rohbauset_page(u)
+        if parsed:
+            out.append(parsed)
+
+    return out

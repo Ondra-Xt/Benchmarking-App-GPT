@@ -608,7 +608,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             "product_url": u,
             "sources": sources_map.get(u, u),
             "candidate_type": ct,
-            "complete_system": "yes" if ct == "product" else "component",
+            "complete_system": "yes" if ct == "product" else "no",
             "selected_length_mm": want,
             "length_mode": "parsed",
             "length_delta_mm": length_mm - want,
@@ -778,6 +778,51 @@ def _extract_bauhoehe_from_pdf_text(text: str) -> Tuple[Optional[int], Optional[
 
     return best if best is not None else (None, None, None)
 
+def _extract_bauhoehe_from_pdf_text(text: str) -> Tuple[Optional[int], Optional[int], Optional[str]]:
+    if not text:
+        return None, None, None
+
+    t = " ".join(text.split())
+    pos_keys = ["bauhöhe", "einbauhöhe", "installationshöhe", "aufbauhöhe"]
+    neg_keys = ["water seal", "sperrwasser", "geruchsverschluss"]
+
+    best: Optional[Tuple[int, int, str]] = None
+
+    for key in pos_keys:
+        for m in re.finditer(re.escape(key), t, flags=re.IGNORECASE):
+            start = m.start()
+            window = t[start: min(len(t), m.end() + 160)]
+            win_l = window.lower()
+            if any(nk in win_l for nk in neg_keys):
+                continue
+
+            # range first
+            rm = re.search(r"(\d{1,3})\s*[-–]\s*(\d{1,3})\s*mm", window, re.IGNORECASE)
+            if rm:
+                try:
+                    a, b = int(rm.group(1)), int(rm.group(2))
+                    if 1 <= a <= 300 and 1 <= b <= 300 and b >= a:
+                        sn = window[:220]
+                        best = (a, b, sn)
+                        break
+                except Exception:
+                    pass
+
+            sm = re.search(r"(\d{1,3})\s*mm", window, re.IGNORECASE)
+            if sm:
+                try:
+                    v = int(sm.group(1))
+                    if 1 <= v <= 300:
+                        sn = window[:220]
+                        best = (v, v, sn)
+                        break
+                except Exception:
+                    pass
+        if best is not None:
+            break
+
+    return best if best is not None else (None, None, None)
+
 def _dns_from_text(text: str) -> List[str]:
     if not text:
         return []
@@ -824,6 +869,130 @@ def _extract_flow_options_json(text: str) -> Optional[str]:
     opts = sorted(set(opts))
     return json.dumps(opts, ensure_ascii=False) if opts else None
 
+
+_FLOW_LABEL_RE = re.compile(
+    r"(?P<label>drainage\s*capacity|flow\s*rate|ablaufleistung|abflussleistung|debit d['’]?[ée]coulement|débit d['’]?[ée]coulement|caudal(?:\s+de\s+desag[üu]e)?|dallmer|required|min\.?\s*flow\s*rate\s*according\s*to\s*norm|min\.?\s*flow\s*rate\s*according\s*to\s*standard)",
+    re.IGNORECASE,
+)
+_MATERIAL_BLOCK_RE = re.compile(
+    r"(?:^|\b)(?:material|mat[ée]riau|materiale?)\s*[:\-]?\s*(.{0,240})",
+    re.IGNORECASE,
+)
+
+
+def _to_lps(value: float, unit: str) -> Optional[float]:
+    u = (unit or "").lower().replace(" ", "")
+    v = float(value)
+    if "min" in u or "/m" in u:
+        v = v / 60.0
+    if 0.05 <= v <= 5.0:
+        return round(v, 4)
+    return None
+
+
+
+def _extract_dallmer_flow_rate(text: str) -> Tuple[Optional[float], Optional[str], Optional[str], Optional[str]]:
+    if not text:
+        return None, None, None, None
+
+    t = _clean_text(text)
+
+    table_patterns = [
+        re.compile(
+            r"min\.?\s*flow\s*rate\s*according\s*to\s*(?:norm|standard)\s*(?P<req>\d+(?:[.,]\d+)?)\s*l\s*/\s*s.*?drainage\s*capacity\s*(?P<actual>\d+(?:[.,]\d+)?)\s*l\s*/\s*s",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"required\s*\|?\s*dallmer.*?dn\s*\d{2,3}\s*\|?\s*(?P<req>\d+(?:[.,]\d+)?)\s*l\s*/\s*s\s*\|?\s*(?P<actual>\d+(?:[.,]\d+)?)\s*l\s*/\s*s",
+            re.IGNORECASE,
+        ),
+    ]
+    for pat in table_patterns:
+        m = pat.search(t)
+        if not m:
+            continue
+        actual = _to_lps(float(m.group("actual").replace(",", ".")), "l/s")
+        if actual is not None:
+            raw = t[max(0, m.start() - 30): min(len(t), m.end() + 30)]
+            has_en1253 = bool(re.search(r"(DIN\s*)?EN\s*1253", raw, re.IGNORECASE) or re.search(r"(DIN\s*)?EN\s*1253", t, re.IGNORECASE))
+            return actual, raw, "l/s", "ok" if has_en1253 else "ok_no_en1253"
+
+    labeled_candidates = []
+    for label_match in _FLOW_LABEL_RE.finditer(t):
+        label = label_match.group("label")
+        window = t[label_match.start(): min(len(t), label_match.end() + 100)]
+        value_match = re.search(r"(\d+(?:[.,]\d+)?)\s*(l\s*/\s*s|l\s*/\s*min|l/s|l/min)", window, re.IGNORECASE)
+        if not value_match:
+            continue
+        lps = _to_lps(float(value_match.group(1).replace(",", ".")), value_match.group(2))
+        if lps is None:
+            continue
+        label_l = label.lower()
+        score = 0
+        if any(k in label_l for k in ["drainage capacity", "ablaufleistung", "abflussleistung", "débit", "debit", "caudal"]):
+            score += 5
+        if "dallmer" in label_l:
+            score += 4
+        if any(k in label_l for k in ["required", "min", "standard", "norm"]):
+            score -= 4
+        raw = window[:180]
+        labeled_candidates.append((score, lps, raw, value_match.group(2)))
+
+    if labeled_candidates:
+        score, lps, raw, unit = sorted(labeled_candidates, key=lambda x: (-x[0], -x[1]))[0]
+        if score >= 0:
+            has_en1253 = bool(re.search(r"(DIN\s*)?EN\s*1253", raw, re.IGNORECASE) or re.search(r"(DIN\s*)?EN\s*1253", t, re.IGNORECASE))
+            return lps, raw, unit.replace(" ", ""), "ok" if has_en1253 else "ok_no_en1253"
+
+    return None, None, None, None
+
+
+
+def _extract_material_fields(text: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    if not text:
+        return None, None, None
+    t = _clean_text(text)
+    snippet = None
+    m = _MATERIAL_BLOCK_RE.search(t)
+    if m:
+        snippet = m.group(1).strip(" :-")
+        snippet = snippet[:220]
+    elif re.search(r"stainless\s*steel|edelstahl|polypropylen|polypropylene|kunststoff", t, re.IGNORECASE):
+        m2 = re.search(r"(.{0,80}(?:stainless\s*steel|edelstahl|polypropylen|polypropylene|kunststoff).{0,140})", t, re.IGNORECASE)
+        if m2:
+            snippet = m2.group(1).strip()
+
+    detail = snippet
+    v4a = None
+    lower = t.lower()
+    if re.search(r"\bv4a\b|1\.4404|1\.4571|316\s*stainless", lower, re.IGNORECASE):
+        v4a = "yes"
+    elif re.search(r"1\.4301|304\s*stainless|edelstahl|stainless\s*steel", lower, re.IGNORECASE):
+        v4a = "no"
+
+    return detail, v4a, snippet
+
+
+
+def _extract_din_compliance(text: str) -> Tuple[Optional[str], Optional[str], List[Tuple[str, str]]]:
+    if not text:
+        return None, None, []
+    t = _clean_text(text)
+    evidence: List[Tuple[str, str]] = []
+    en1253 = None
+    din18534 = None
+
+    m1253 = re.search(r"(.{0,60}(?:conforming\s*to|according\s*to|product\s*standard|norme\s*de\s*produit|Norme de produit)?\s*(?:DIN\s*)?EN\s*1253.{0,80})", t, re.IGNORECASE)
+    if m1253:
+        en1253 = "yes"
+        evidence.append(("DIN EN 1253", m1253.group(1).strip()))
+
+    m18534 = re.search(r"(.{0,80}DIN\s*18534.{0,120})", t, re.IGNORECASE)
+    if m18534:
+        din18534 = "yes"
+        evidence.append(("DIN 18534", m18534.group(1).strip()))
+
+    return en1253, din18534, evidence
 
 
 
@@ -936,8 +1105,26 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
 
     # HTML parse
     if page_text:
-        # flow best
-        lps, raw_txt, unit, status = select_flow_rate(page_text)
+        material_detail, material_v4a, material_snip = _extract_material_fields(page_text)
+        if material_detail and res["material_detail"] is None:
+            res["material_detail"] = material_detail
+        if material_v4a is not None and res["material_v4a"] is None:
+            res["material_v4a"] = material_v4a
+        if material_snip:
+            res["evidence"].append(("Material", material_snip, final))
+
+        en1253, din18534, din_evidence = _extract_din_compliance(page_text)
+        if en1253 and res["din_en_1253_cert"] is None:
+            res["din_en_1253_cert"] = en1253
+        if din18534 and res["din_18534_compliance"] is None:
+            res["din_18534_compliance"] = din18534
+        for label, snip in din_evidence:
+            res["evidence"].append((label, snip, final))
+
+        # flow best, preferring explicit Dallmer/drainage-capacity evidence over generic max-value parsing
+        lps, raw_txt, unit, status = _extract_dallmer_flow_rate(page_text)
+        if lps is None:
+            lps, raw_txt, unit, status = select_flow_rate(page_text)
         if lps is not None:
             res["flow_rate_lps"] = lps
             res["flow_rate_raw_text"] = raw_txt
@@ -980,8 +1167,26 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
             if not pdf_text:
                 continue
 
+            material_detail, material_v4a, material_snip = _extract_material_fields(pdf_text)
+            if material_detail and res.get("material_detail") is None:
+                res["material_detail"] = material_detail
+            if material_v4a is not None and res.get("material_v4a") is None:
+                res["material_v4a"] = material_v4a
+            if material_snip:
+                res["evidence"].append(("Material", material_snip, pdf_url))
+
+            en1253, din18534, din_evidence = _extract_din_compliance(pdf_text)
+            if en1253 and res.get("din_en_1253_cert") is None:
+                res["din_en_1253_cert"] = en1253
+            if din18534 and res.get("din_18534_compliance") is None:
+                res["din_18534_compliance"] = din18534
+            for label, snip in din_evidence:
+                res["evidence"].append((label, snip, pdf_url))
+
             if res.get("flow_rate_lps") is None:
-                lps, raw_txt, unit, status = select_flow_rate(pdf_text)
+                lps, raw_txt, unit, status = _extract_dallmer_flow_rate(pdf_text)
+                if lps is None:
+                    lps, raw_txt, unit, status = select_flow_rate(pdf_text)
                 if lps is not None:
                     res["flow_rate_lps"] = lps
                     res["flow_rate_raw_text"] = raw_txt
