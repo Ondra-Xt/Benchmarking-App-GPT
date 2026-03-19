@@ -778,6 +778,96 @@ def _extract_bauhoehe_from_pdf_text(text: str) -> Tuple[Optional[int], Optional[
 
     return best if best is not None else (None, None, None)
 
+def _extract_bauhoehe_from_pdf_text(text: str) -> Tuple[Optional[int], Optional[int], Optional[str]]:
+    if not text:
+        return None, None, None
+
+    t = " ".join(text.split())
+    pos_keys = ["bauhöhe", "einbauhöhe", "installationshöhe", "aufbauhöhe"]
+    neg_keys = ["water seal", "sperrwasser", "geruchsverschluss"]
+
+    best: Optional[Tuple[int, int, str]] = None
+
+    for key in pos_keys:
+        for m in re.finditer(re.escape(key), t, flags=re.IGNORECASE):
+            start = m.start()
+            window = t[start: min(len(t), m.end() + 160)]
+            win_l = window.lower()
+            if any(nk in win_l for nk in neg_keys):
+                continue
+
+            # range first
+            rm = re.search(r"(\d{1,3})\s*[-–]\s*(\d{1,3})\s*mm", window, re.IGNORECASE)
+            if rm:
+                try:
+                    a, b = int(rm.group(1)), int(rm.group(2))
+                    if 1 <= a <= 300 and 1 <= b <= 300 and b >= a:
+                        sn = window[:220]
+                        best = (a, b, sn)
+                        break
+                except Exception:
+                    pass
+
+            sm = re.search(r"(\d{1,3})\s*mm", window, re.IGNORECASE)
+            if sm:
+                try:
+                    v = int(sm.group(1))
+                    if 1 <= v <= 300:
+                        sn = window[:220]
+                        best = (v, v, sn)
+                        break
+                except Exception:
+                    pass
+        if best is not None:
+            break
+
+    return best if best is not None else (None, None, None)
+
+def _extract_bauhoehe_from_pdf_text(text: str) -> Tuple[Optional[int], Optional[int], Optional[str]]:
+    if not text:
+        return None, None, None
+
+    t = " ".join(text.split())
+    pos_keys = ["bauhöhe", "einbauhöhe", "installationshöhe", "aufbauhöhe"]
+    neg_keys = ["water seal", "sperrwasser", "geruchsverschluss"]
+
+    best: Optional[Tuple[int, int, str]] = None
+
+    for key in pos_keys:
+        for m in re.finditer(re.escape(key), t, flags=re.IGNORECASE):
+            start = m.start()
+            window = t[start: min(len(t), m.end() + 160)]
+            win_l = window.lower()
+            if any(nk in win_l for nk in neg_keys):
+                continue
+
+            # range first
+            rm = re.search(r"(\d{1,3})\s*[-–]\s*(\d{1,3})\s*mm", window, re.IGNORECASE)
+            if rm:
+                try:
+                    a, b = int(rm.group(1)), int(rm.group(2))
+                    if 1 <= a <= 300 and 1 <= b <= 300 and b >= a:
+                        sn = window[:220]
+                        best = (a, b, sn)
+                        break
+                except Exception:
+                    pass
+
+            sm = re.search(r"(\d{1,3})\s*mm", window, re.IGNORECASE)
+            if sm:
+                try:
+                    v = int(sm.group(1))
+                    if 1 <= v <= 300:
+                        sn = window[:220]
+                        best = (v, v, sn)
+                        break
+                except Exception:
+                    pass
+        if best is not None:
+            break
+
+    return best if best is not None else (None, None, None)
+
 def _dns_from_text(text: str) -> List[str]:
     if not text:
         return []
