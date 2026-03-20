@@ -59,15 +59,15 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         self.assertEqual(params["material_v4a"], "no")
         self.assertEqual(params["colours_count"], 4)
 
-    def test_discovery_returns_cleanline_candidate_without_html_flow_gate(self):
+    def test_discovery_returns_cleanline_candidate_without_over_strict_product_text_gate(self):
         marketing_url = geberit.MARKETING_SEED
         seed_url = geberit.PRIMARY_SEED
         product_url = "https://catalog.geberit.de/de-DE/product/PRO_9999999/"
         marketing_html = f'<html><body><a href="{product_url}">CleanLine80</a></body></html>'
         product_html = """
         <html><body><main>
-        <h1>Geberit CleanLine80 Duschrinne 1200 mm</h1>
-        Geberit CleanLine80 Duschrinne 1200 mm für Duschen.
+        <h1>Geberit CleanLine80 1200 mm</h1>
+        Geberit CleanLine80 1200 mm für bodenebene Duschen.
         </main></body></html>
         """
 
@@ -90,6 +90,8 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         summary = debug[-1]
         self.assertGreaterEqual(summary["total_found_links"], 1)
         self.assertIn(product_url, summary["accepted_product_links"])
+        self.assertIn("sample_rejected_lengths", summary)
+        self.assertIn("sample_missing_length_rows", summary)
 
 
 if __name__ == "__main__":

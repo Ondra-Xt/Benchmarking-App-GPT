@@ -272,8 +272,6 @@ def _is_cleanline_product_page(url: str, title: str, flat: str) -> bool:
         return False
     if "/product/" not in (url or ""):
         return False
-    if not DRAIN_RE.search(txt):
-        return False
     return True
 
 
@@ -334,6 +332,16 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     bom_urls: List[str] = []
     unknown_length_count = 0
     dropped: List[Dict[str, str]] = []
+    dropped_reason: Dict[str, int] = {}
+    rejected_lengths: List[Dict[str, Any]] = []
+    missing_length_rows: List[Dict[str, str]] = []
+
+    def add_drop(url: str, reason: str, extra: Optional[Dict[str, Any]] = None) -> None:
+        row: Dict[str, Any] = {"url": url, "reason": reason}
+        if extra:
+            row.update(extra)
+        dropped.append(row)
+        dropped_reason[reason] = dropped_reason.get(reason, 0) + 1
 
     for u in sorted(pages):
         st, final, html, err = _safe_get_text(u)
@@ -343,16 +351,20 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         title = _extract_title(html, final)
         flat = _main_flat_text(html)
         if not _is_cleanline_product_page(u, title, flat):
-            dropped.append({"url": u, "reason": "not_cleanline_product_page"})
+            add_drop(u, "not_cleanline_product_page")
             continue
 
         length_mm, length_mode, range_txt, range_match = _length_info(f"{title} {flat}", want)
         if length_mode == "fixed" and length_mm is not None and not (min_len <= length_mm <= max_len):
-            dropped.append({"url": u, "reason": f"length_out_of_range:{length_mm}"})
+            rejected_lengths.append({"url": u, "length_mm": length_mm, "target_mm": want})
+            add_drop(u, "length_out_of_range", {"length_mm": length_mm})
             continue
         if length_mode == "variable" and not range_match:
-            dropped.append({"url": u, "reason": f"variable_length_no_match:{range_txt or 'unknown'}"})
+            rejected_lengths.append({"url": u, "length_range": range_txt or "unknown", "target_mm": want})
+            add_drop(u, "variable_length_no_match", {"length_range": range_txt or "unknown"})
             continue
+        if length_mode == "unknown":
+            missing_length_rows.append({"url": u, "title": title})
 
         pid = _product_id(u, f"{title} {flat}")
         out.append({
@@ -393,9 +405,13 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "products_count": sum(1 for r in dedup.values() if str(r.get("candidate_type")) == "drain"),
         "bom_options_count": len(set(bom_urls)),
         "unknown_length_count": unknown_length_count,
+        "dropped_reason": json.dumps(dropped_reason, ensure_ascii=False),
         "accepted_product_links": json.dumps(product_urls[:20], ensure_ascii=False),
         "dropped_links": json.dumps(dropped[:20], ensure_ascii=False),
+        "sample_product_urls": json.dumps(product_urls[:10], ensure_ascii=False),
         "sample_products_urls": json.dumps(product_urls[:10], ensure_ascii=False),
+        "sample_rejected_lengths": json.dumps(rejected_lengths[:10], ensure_ascii=False),
+        "sample_missing_length_rows": json.dumps(missing_length_rows[:10], ensure_ascii=False),
         "sample_bom_urls": json.dumps(list(dict.fromkeys(bom_urls))[:10], ensure_ascii=False),
     })
 
