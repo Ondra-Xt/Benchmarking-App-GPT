@@ -59,6 +59,38 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         self.assertEqual(params["material_v4a"], "no")
         self.assertEqual(params["colours_count"], 4)
 
+    def test_discovery_returns_cleanline_candidate_without_html_flow_gate(self):
+        marketing_url = geberit.MARKETING_SEED
+        seed_url = geberit.PRIMARY_SEED
+        product_url = "https://catalog.geberit.de/de-DE/product/PRO_9999999/"
+        marketing_html = f'<html><body><a href="{product_url}">CleanLine80</a></body></html>'
+        product_html = """
+        <html><body><main>
+        <h1>Geberit CleanLine80 Duschrinne 1200 mm</h1>
+        Geberit CleanLine80 Duschrinne 1200 mm für Duschen.
+        </main></body></html>
+        """
+
+        def fake_get(url, timeout=35):
+            if url == marketing_url:
+                return 200, marketing_url, marketing_html, ""
+            if url == seed_url:
+                return 200, seed_url, product_html, ""
+            if url == product_url:
+                return 200, product_url, product_html, ""
+            return 404, url, "", "not mocked"
+
+        with patch.object(geberit, "_safe_get_text", side_effect=fake_get):
+            candidates, debug = geberit.discover_candidates(target_length_mm=1200, tolerance_mm=100)
+
+        self.assertTrue(candidates)
+        self.assertEqual(candidates[0]["manufacturer"], "geberit")
+        self.assertEqual(candidates[0]["candidate_type"], "drain")
+        self.assertEqual(candidates[0]["complete_system"], "yes")
+        summary = debug[-1]
+        self.assertGreaterEqual(summary["total_found_links"], 1)
+        self.assertIn(product_url, summary["accepted_product_links"])
+
 
 if __name__ == "__main__":
     unittest.main()

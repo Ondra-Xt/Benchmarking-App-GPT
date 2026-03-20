@@ -333,6 +333,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     product_urls: List[str] = []
     bom_urls: List[str] = []
     unknown_length_count = 0
+    dropped: List[Dict[str, str]] = []
 
     for u in sorted(pages):
         st, final, html, err = _safe_get_text(u)
@@ -342,18 +343,15 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         title = _extract_title(html, final)
         flat = _main_flat_text(html)
         if not _is_cleanline_product_page(u, title, flat):
+            dropped.append({"url": u, "reason": "not_cleanline_product_page"})
             continue
 
         length_mm, length_mode, range_txt, range_match = _length_info(f"{title} {flat}", want)
         if length_mode == "fixed" and length_mm is not None and not (min_len <= length_mm <= max_len):
+            dropped.append({"url": u, "reason": f"length_out_of_range:{length_mm}"})
             continue
         if length_mode == "variable" and not range_match:
-            continue
-
-        # keep product set clean for validator: require explicit flow + DN on product page
-        flow_opts, _ = _extract_flow(flat)
-        dns, _ = _extract_dn(flat)
-        if not flow_opts or not dns:
+            dropped.append({"url": u, "reason": f"variable_length_no_match:{range_txt or 'unknown'}"})
             continue
 
         pid = _product_id(u, f"{title} {flat}")
@@ -391,9 +389,12 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "candidates_found": len(dedup),
         "method": "summary",
         "is_index": None,
+        "total_found_links": len(pages),
         "products_count": sum(1 for r in dedup.values() if str(r.get("candidate_type")) == "drain"),
         "bom_options_count": len(set(bom_urls)),
         "unknown_length_count": unknown_length_count,
+        "accepted_product_links": json.dumps(product_urls[:20], ensure_ascii=False),
+        "dropped_links": json.dumps(dropped[:20], ensure_ascii=False),
         "sample_products_urls": json.dumps(product_urls[:10], ensure_ascii=False),
         "sample_bom_urls": json.dumps(list(dict.fromkeys(bom_urls))[:10], ensure_ascii=False),
     })
