@@ -22,6 +22,10 @@ def _slug(s: str) -> str:
     return s.strip("-")
 
 
+def _normalize_manufacturer(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
 def _make_product_id(manufacturer: str, url: str) -> str:
     """
     Stabilní ID (string) – žádné DataFrame->Series omyly.
@@ -87,7 +91,7 @@ def run_discovery(target_length_mm: int = 1200, tolerance_mm: int = 100) -> Tupl
             product_name = r.get("product_name") or r.get("product") or "unknown"
 
             row = dict(r)
-            row["manufacturer"] = str(manufacturer).lower()
+            row["manufacturer"] = _normalize_manufacturer(manufacturer)
             row["product_url"] = str(product_url)
             row["product_name"] = str(product_name)
 
@@ -155,6 +159,10 @@ def run_update(
         empty = pd.DataFrame()
         return empty, empty, empty, empty, empty
 
+    registry_df = registry_df.copy()
+    if "manufacturer" in registry_df.columns:
+        registry_df["manufacturer"] = registry_df["manufacturer"].map(_normalize_manufacturer)
+
     products_rows: List[Dict[str, Any]] = []
     comparison_rows: List[Dict[str, Any]] = []
     excluded_rows: List[Dict[str, Any]] = []
@@ -162,18 +170,35 @@ def run_update(
     bom_rows: List[Dict[str, Any]] = []
 
     for _, r in registry_df.iterrows():
-        manufacturer = str(r.get("manufacturer", "")).lower()
+        manufacturer = _normalize_manufacturer(r.get("manufacturer", ""))
         url = str(r.get("product_url", "")).strip()
         product_id = str(r.get("product_id", _make_product_id(manufacturer, url)))
         candidate_type = str(r.get("candidate_type", "product_detail"))
+        complete_system = str(r.get("complete_system", "unknown")).strip().lower()
+        excluded_reason = str(r.get("excluded_reason") or r.get("reason") or "").strip()
+
+        if complete_system == "no":
+            excluded_rows.append({
+                "manufacturer": manufacturer,
+                "product_id": product_id,
+                "product_name": r.get("product_name"),
+                "product_url": url,
+                "candidate_type": candidate_type,
+                "complete_system": complete_system,
+                "excluded_reason": excluded_reason or "complete_system_no",
+            })
+            continue
 
         connector = _pick_connector(manufacturer, url)
         if connector is None:
             excluded_rows.append({
                 "manufacturer": manufacturer,
                 "product_id": product_id,
+                "product_name": r.get("product_name"),
                 "product_url": url,
-                "reason": "no_connector",
+                "candidate_type": candidate_type,
+                "complete_system": complete_system,
+                "excluded_reason": "no_connector",
             })
             continue
 
@@ -187,16 +212,22 @@ def run_update(
                 excluded_rows.append({
                     "manufacturer": manufacturer,
                     "product_id": product_id,
+                    "product_name": r.get("product_name"),
                     "product_url": url,
-                    "reason": "missing_flow_after_html_pdf",
+                    "candidate_type": candidate_type,
+                    "complete_system": complete_system,
+                    "excluded_reason": "missing_flow_after_html_pdf",
                 })
                 continue
             elif params.get("outlet_dn") in (None, ""):
                 excluded_rows.append({
                     "manufacturer": manufacturer,
                     "product_id": product_id,
+                    "product_name": r.get("product_name"),
                     "product_url": url,
-                    "reason": "missing_outlet_dn_after_html_pdf",
+                    "candidate_type": candidate_type,
+                    "complete_system": complete_system,
+                    "excluded_reason": "missing_outlet_dn_after_html_pdf",
                 })
                 continue
 
@@ -205,8 +236,11 @@ def run_update(
             excluded_rows.append({
                 "manufacturer": manufacturer,
                 "product_id": product_id,
+                "product_name": r.get("product_name"),
                 "product_url": url,
-                "reason": "missing_flow_after_html",
+                "candidate_type": candidate_type,
+                "complete_system": complete_system,
+                "excluded_reason": "missing_flow_after_html",
             })
             continue
         # get_bom_options je volitelné
