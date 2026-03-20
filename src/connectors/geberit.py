@@ -39,6 +39,7 @@ TRAP_SEAL_RE = re.compile(r"sperrwasserh(?:ö|oe)he|geruchsverschluss|verschluss
 LEN_MM_RE = re.compile(r"\b(\d{3,4})\s*mm\b", re.IGNORECASE)
 LEN_RANGE_CM_RE = re.compile(r"\b(\d{2,3})\s*[-–]\s*(\d{2,3})\s*cm\b", re.IGNORECASE)
 LEN_RANGE_MM_RE = re.compile(r"\b(\d{3,4})\s*[-–]\s*(\d{3,4})\s*mm\b", re.IGNORECASE)
+MATERIAL_TOKEN_RE = re.compile(r"\b(1\.4404|1\.4571|1\.4301|316L|316|304|V4A|V2A)\b", re.IGNORECASE)
 
 
 def _safe_get_text(url: str, timeout: int = 35) -> Tuple[Optional[int], str, str, str]:
@@ -194,6 +195,61 @@ def _extract_height(flat: str) -> Tuple[Optional[int], Optional[int], Optional[T
         if 20 <= v <= 350:
             return v, v, (hs.start(), hs.end())
     return None, None, None
+
+
+def _extract_material(flat: str) -> Tuple[Optional[str], Optional[str], Optional[Tuple[int, int]]]:
+    src = flat or ""
+    token_match = MATERIAL_TOKEN_RE.search(src)
+    if token_match:
+        token = token_match.group(1).upper()
+        v4a = "yes" if token in {"1.4404", "1.4571", "316", "316L", "V4A"} else "no"
+        return token, v4a, token_match.span()
+
+    text_match = re.search(r"\b(edelstahl|stahl|kunststoff|metall)\b", src, re.IGNORECASE)
+    if text_match:
+        token = text_match.group(1).lower()
+        v4a = "yes" if token == "edelstahl" and bool(re.search(r"\bv4a\b|1\.4404|1\.4571|316", src, re.IGNORECASE)) else None
+        return token, v4a, text_match.span()
+
+    return None, None, None
+
+
+def _extract_din_compliance(flat: str) -> Tuple[Optional[str], Optional[Tuple[int, int]], Optional[str], Optional[Tuple[int, int]]]:
+    src = flat or ""
+    en_match = re.search(r"(DIN\s*)?EN\s*1253", src, re.IGNORECASE)
+    din18534_match = re.search(
+        r"(DIN\s*18534|Verbundabdichtung\s+nach\s+DIN\s*18534|Dichtvlies[^\.\n]{0,80}DIN\s*18534|abdichtung[^\.\n]{0,80}DIN\s*18534)",
+        src,
+        re.IGNORECASE,
+    )
+    return (
+        "yes" if en_match else None,
+        en_match.span() if en_match else None,
+        "yes" if din18534_match else None,
+        din18534_match.span() if din18534_match else None,
+    )
+
+
+def _extract_sealing_fleece(flat: str) -> Tuple[Optional[str], Optional[Tuple[int, int]]]:
+    src = flat or ""
+    match = re.search(r"(dichtvlies|abdichtungs?vlies|sealing\s+fleece)[^\.\n]{0,80}(vormontiert|vorinstalliert|werkseitig\s+montiert|preassembled)", src, re.IGNORECASE)
+    if match:
+        return "yes", match.span()
+    return None, None
+
+
+def _extract_colours_count(flat: str) -> Tuple[Optional[int], Optional[Tuple[int, int]]]:
+    src = flat or ""
+    count_match = re.search(r"\b(\d+)\s*(?:farben|colors?|colour variants?)\b", src, re.IGNORECASE)
+    if count_match:
+        return int(count_match.group(1)), count_match.span()
+
+    list_match = re.search(r"(?:farben|colors?)\s*:\s*([A-Za-zÄÖÜäöüß ,/]+)", src, re.IGNORECASE)
+    if list_match:
+        items = [x.strip() for x in re.split(r"[,/]", list_match.group(1)) if x.strip()]
+        if items:
+            return len(items), list_match.span()
+    return None, None
 
 
 def _extract_catalog_links(html: str, base_url: str) -> Set[str]:
@@ -375,11 +431,34 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
 
     flat = _main_flat_text(html)
 
-    m_mat = re.search(r"\b(edelstahl|stahl|kunststoff|metall)\b", flat, re.IGNORECASE)
-    if m_mat:
-        res["material_detail"] = m_mat.group(1)
-        res["material_v4a"] = "yes" if "edelstahl" in m_mat.group(1).lower() else None
-        res["evidence"].append(("Material", _snippet(flat, m_mat.start(), m_mat.end()), final))
+    material_detail, material_v4a, material_span = _extract_material(flat)
+    if material_detail:
+        res["material_detail"] = material_detail
+        res["material_v4a"] = material_v4a
+        if material_span:
+            res["evidence"].append(("Material", _snippet(flat, material_span[0], material_span[1]), final))
+
+    din_en_1253_cert, en_span, din_18534_compliance, din18534_span = _extract_din_compliance(flat)
+    if din_en_1253_cert:
+        res["din_en_1253_cert"] = din_en_1253_cert
+        if en_span:
+            res["evidence"].append(("DIN EN 1253", _snippet(flat, en_span[0], en_span[1]), final))
+    if din_18534_compliance:
+        res["din_18534_compliance"] = din_18534_compliance
+        if din18534_span:
+            res["evidence"].append(("DIN 18534", _snippet(flat, din18534_span[0], din18534_span[1]), final))
+
+    sealing_fleece, fleece_span = _extract_sealing_fleece(flat)
+    if sealing_fleece:
+        res["sealing_fleece_preassembled"] = sealing_fleece
+        if fleece_span:
+            res["evidence"].append(("Sealing fleece", _snippet(flat, fleece_span[0], fleece_span[1]), final))
+
+    colours_count, colours_span = _extract_colours_count(flat)
+    if colours_count is not None:
+        res["colours_count"] = colours_count
+        if colours_span:
+            res["evidence"].append(("Colours", _snippet(flat, colours_span[0], colours_span[1]), final))
 
     len_mm, len_mode, range_txt, _ = _length_info(flat, 1200)
     if len_mm is not None:
