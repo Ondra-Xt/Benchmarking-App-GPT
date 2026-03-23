@@ -59,15 +59,22 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         self.assertEqual(params["material_v4a"], "no")
         self.assertEqual(params["colours_count"], 4)
 
-    def test_discovery_returns_cleanline_candidate_without_over_strict_product_text_gate(self):
+    def test_discovery_accepts_product_reached_from_cleanline_context(self):
         marketing_url = geberit.MARKETING_SEED
         seed_url = geberit.PRIMARY_SEED
         product_url = "https://catalog.geberit.de/de-DE/product/PRO_9999999/"
-        marketing_html = f'<html><body><a href="{product_url}">CleanLine80</a></body></html>'
+        unrelated_url = "https://catalog.geberit.de/de-DE/product/PRO_0000001/"
+        marketing_html = f'<html><body><a href="{product_url}">CleanLine80</a><a href="{unrelated_url}">Irgendein Produkt</a></body></html>'
         product_html = """
         <html><body><main>
-        <h1>Geberit CleanLine80 1200 mm</h1>
-        Geberit CleanLine80 1200 mm für bodenebene Duschen.
+        <h1>Geberit Duschentwässerung 1200 mm</h1>
+        Produktseite 1200 mm für bodenebene Duschen.
+        </main></body></html>
+        """
+        unrelated_html = """
+        <html><body><main>
+        <h1>Geberit Duofix Element</h1>
+        Irgendein anderes Produkt 1200 mm.
         </main></body></html>
         """
 
@@ -75,9 +82,11 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
             if url == marketing_url:
                 return 200, marketing_url, marketing_html, ""
             if url == seed_url:
-                return 200, seed_url, product_html, ""
+                return 200, seed_url, unrelated_html, ""
             if url == product_url:
                 return 200, product_url, product_html, ""
+            if url == unrelated_url:
+                return 200, unrelated_url, unrelated_html, ""
             return 404, url, "", "not mocked"
 
         with patch.object(geberit, "_safe_get_text", side_effect=fake_get):
@@ -90,6 +99,10 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         summary = debug[-1]
         self.assertGreaterEqual(summary["total_found_links"], 1)
         self.assertIn(product_url, summary["accepted_product_links"])
+        self.assertNotIn(unrelated_url, summary["accepted_product_links"])
+        self.assertIn("sample_accepted_urls", summary)
+        self.assertIn("sample_rejected_urls", summary)
+        self.assertIn("dropped_reason_counts", summary)
         self.assertIn("sample_rejected_lengths", summary)
         self.assertIn("sample_missing_length_rows", summary)
 

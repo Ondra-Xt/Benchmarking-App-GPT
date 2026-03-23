@@ -259,14 +259,14 @@ def _extract_catalog_links(html: str, base_url: str) -> Set[str]:
         href = a.get("href") or ""
         txt = _clean_text(a.get_text(" ", strip=True)).lower()
         u = _canonicalize_url(urljoin(base_url, href))
-        if _in_scope(u) and ("/product/" in u or "cleanline" in txt or "weitere produkte" in txt):
+        if _in_scope(u) and "/product/" in u and CLEANLINE_RE.search(f"{txt} {href} {u}"):
             out.add(u)
     return out
 
 
-def _is_cleanline_product_page(url: str, title: str, flat: str) -> bool:
+def _is_cleanline_product_page(url: str, title: str, flat: str, from_cleanline_context: bool = False) -> bool:
     txt = f"{url} {title} {flat}".lower()
-    if not CLEANLINE_RE.search(txt):
+    if not from_cleanline_context and not CLEANLINE_RE.search(txt):
         return False
     if ACCESSORY_RE.search(txt):
         return False
@@ -299,18 +299,19 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     out: List[Dict[str, Any]] = []
     debug: List[Dict[str, Any]] = []
 
-    queue = [_canonicalize_url(PRIMARY_SEED)]
+    queue: List[Tuple[str, bool]] = [(_canonicalize_url(PRIMARY_SEED), False)]
     seen: Set[str] = set()
-    pages: Set[str] = set()
+    pages: Dict[str, bool] = {}
 
     # optional helper seed: only use to find additional catalog links
     st_m, final_m, html_m, err_m = _safe_get_text(MARKETING_SEED)
     debug.append({"site": "geberit", "seed_url": MARKETING_SEED, "status_code": st_m, "final_url": final_m, "error": err_m, "candidates_found": 0, "method": "marketing_seed", "is_index": None})
     if st_m == 200 and html_m:
-        queue.extend(sorted(_extract_catalog_links(html_m, final_m)))
+        queue.extend((u, True) for u in sorted(_extract_catalog_links(html_m, final_m)))
 
     while queue and len(seen) < 120:
-        u = _canonicalize_url(queue.pop(0))
+        u, from_cleanline_context = queue.pop(0)
+        u = _canonicalize_url(u)
         if u in seen:
             continue
         seen.add(u)
@@ -322,11 +323,11 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
         final_c = _canonicalize_url(final)
         if _in_scope(final_c):
-            pages.add(final_c)
+            pages[final_c] = pages.get(final_c, False) or from_cleanline_context or bool(CLEANLINE_RE.search(f"{final_c} {html}"))
 
         for cand in _extract_catalog_links(html, final_c):
-            if cand not in seen and cand not in queue:
-                queue.append(cand)
+            if cand not in seen and not any(cu == cand for cu, _ in queue):
+                queue.append((cand, pages.get(final_c, False)))
 
     product_urls: List[str] = []
     bom_urls: List[str] = []
@@ -350,7 +351,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
         title = _extract_title(html, final)
         flat = _main_flat_text(html)
-        if not _is_cleanline_product_page(u, title, flat):
+        if not _is_cleanline_product_page(u, title, flat, from_cleanline_context=pages.get(u, False)):
             add_drop(u, "not_cleanline_product_page")
             continue
 
@@ -406,8 +407,11 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "bom_options_count": len(set(bom_urls)),
         "unknown_length_count": unknown_length_count,
         "dropped_reason": json.dumps(dropped_reason, ensure_ascii=False),
+        "dropped_reason_counts": json.dumps(dropped_reason, ensure_ascii=False),
         "accepted_product_links": json.dumps(product_urls[:20], ensure_ascii=False),
         "dropped_links": json.dumps(dropped[:20], ensure_ascii=False),
+        "sample_accepted_urls": json.dumps(product_urls[:10], ensure_ascii=False),
+        "sample_rejected_urls": json.dumps([row.get("url") for row in dropped[:10]], ensure_ascii=False),
         "sample_product_urls": json.dumps(product_urls[:10], ensure_ascii=False),
         "sample_products_urls": json.dumps(product_urls[:10], ensure_ascii=False),
         "sample_rejected_lengths": json.dumps(rejected_lengths[:10], ensure_ascii=False),
