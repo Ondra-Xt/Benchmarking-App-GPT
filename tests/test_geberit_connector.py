@@ -65,7 +65,12 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         product_url = "https://catalog.geberit.de/de-DE/product/154.441.KS.1/"
         unrelated_url = "https://www.geberit.de/badezimmerprodukte/duofix/"
         marketing_html = f'<html><body><a href="{landing_url}">CleanLine30</a><a href="{unrelated_url}">Irgendein Produkt</a></body></html>'
-        landing_html = f'<html><body><a href="{product_url}">CleanLine80</a></body></html>'
+        landing_html = """
+        <html><body>
+        <div data-product-url="/de-DE/product/154.441.KS.1/">CleanLine80</div>
+        <script type="application/json">{"detailUrl":"\/de-DE\/product\/154.441.KS.1\/"}</script>
+        </body></html>
+        """
         product_html = """
         <html><body><main>
         <h1>Geberit Duschentwässerung 1200 mm</h1>
