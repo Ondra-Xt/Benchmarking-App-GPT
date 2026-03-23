@@ -102,6 +102,15 @@ def _is_public_geberit_url(url: str) -> bool:
         return False
 
 
+def _is_landing_page(url: str) -> bool:
+    try:
+        p = urlparse(url)
+    except Exception:
+        return False
+    path = (p.path or "").lower()
+    return "/landingpages/" in path or path.rstrip("/") == "/badezimmerprodukte/duschen-badewannenablaeufe/duschen/duschrinnen-geberit-cleanline"
+
+
 def _extract_title(html: str, fallback_url: str) -> str:
     soup = BeautifulSoup(html or "", "lxml")
     h1 = soup.select_one("h1")
@@ -279,12 +288,17 @@ def _extract_catalog_links(html: str, base_url: str) -> Set[str]:
 def _extract_public_links(html: str, base_url: str) -> Set[str]:
     soup = BeautifulSoup(html or "", "lxml")
     out: Set[str] = set()
+    html_norm = (html or "").replace("\\/", "/")
     for a in soup.select("a[href]"):
         href = a.get("href") or ""
         txt = _clean_text(a.get_text(" ", strip=True)).lower()
         u = _canonicalize_url(urljoin(base_url, href))
         if _is_public_geberit_url(u) and CLEANLINE_RE.search(f"{txt} {href} {u}"):
             out.add(u)
+        if _in_scope(u) and "/product/" in u and CLEANLINE_RE.search(f"{txt} {href} {u}"):
+            out.add(u)
+    for m in re.finditer(r"https://catalog\.geberit\.de/de-DE/product/[A-Za-z0-9\._-]+", html_norm, re.IGNORECASE):
+        out.add(_canonicalize_url(m.group(0)))
     return out
 
 
@@ -293,6 +307,8 @@ def _is_cleanline_product_page(url: str, title: str, flat: str, from_cleanline_c
     if not from_cleanline_context and not CLEANLINE_RE.search(txt):
         return False
     if ACCESSORY_RE.search(txt):
+        return False
+    if _is_public_geberit_url(url) and _is_landing_page(url):
         return False
     if not ("/product/" in (url or "") or _is_public_geberit_url(url)):
         return False
@@ -354,6 +370,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     dropped_reason: Dict[str, int] = {}
     rejected_lengths: List[Dict[str, Any]] = []
     missing_length_rows: List[Dict[str, str]] = []
+    landing_urls = [u for u in sorted(pages) if _is_landing_page(u)]
+    detail_urls = [u for u in sorted(pages) if not _is_landing_page(u)]
 
     def add_drop(url: str, reason: str, extra: Optional[Dict[str, Any]] = None) -> None:
         row: Dict[str, Any] = {"url": url, "reason": reason}
@@ -421,6 +439,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "method": "summary",
         "is_index": None,
         "total_found_links": len(pages),
+        "landing_pages_found": len(landing_urls),
+        "detail_pages_found": len(detail_urls),
         "products_count": sum(1 for r in dedup.values() if str(r.get("candidate_type")) == "drain"),
         "bom_options_count": len(set(bom_urls)),
         "unknown_length_count": unknown_length_count,
@@ -428,6 +448,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "dropped_reason_counts": json.dumps(dropped_reason, ensure_ascii=False),
         "accepted_product_links": json.dumps(product_urls[:20], ensure_ascii=False),
         "dropped_links": json.dumps(dropped[:20], ensure_ascii=False),
+        "sample_landing_urls": json.dumps(landing_urls[:10], ensure_ascii=False),
+        "sample_detail_urls": json.dumps(detail_urls[:10], ensure_ascii=False),
         "sample_accepted_urls": json.dumps(product_urls[:10], ensure_ascii=False),
         "sample_rejected_urls": json.dumps([row.get("url") for row in dropped[:10]], ensure_ascii=False),
         "sample_product_urls": json.dumps(product_urls[:10], ensure_ascii=False),

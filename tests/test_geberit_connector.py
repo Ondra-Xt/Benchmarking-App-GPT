@@ -62,9 +62,9 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
     def test_discovery_accepts_product_reached_from_cleanline_context(self):
         marketing_url = geberit.MARKETING_SEED
         landing_url = geberit.PUBLIC_SEEDS[1]
-        product_url = "https://www.geberit.de/landingpages/geberit-cleanline80/"
+        product_url = "https://catalog.geberit.de/de-DE/product/154.441.KS.1/"
         unrelated_url = "https://www.geberit.de/badezimmerprodukte/duofix/"
-        marketing_html = f'<html><body><a href="{product_url}">CleanLine80</a><a href="{unrelated_url}">Irgendein Produkt</a></body></html>'
+        marketing_html = f'<html><body><a href="{landing_url}">CleanLine30</a><a href="{product_url}">CleanLine80</a><a href="{unrelated_url}">Irgendein Produkt</a></body></html>'
         product_html = """
         <html><body><main>
         <h1>Geberit Duschentwässerung 1200 mm</h1>
@@ -98,8 +98,12 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         self.assertEqual(candidates[0]["complete_system"], "yes")
         summary = debug[-1]
         self.assertGreaterEqual(summary["total_found_links"], 1)
+        self.assertGreaterEqual(summary["landing_pages_found"], 1)
+        self.assertGreaterEqual(summary["detail_pages_found"], 1)
         self.assertIn(product_url, summary["accepted_product_links"])
         self.assertNotIn(unrelated_url, summary["accepted_product_links"])
+        self.assertIn(landing_url, summary["sample_landing_urls"])
+        self.assertIn(product_url, summary["sample_detail_urls"])
         self.assertIn("sample_accepted_urls", summary)
         self.assertIn("sample_rejected_urls", summary)
         self.assertIn("dropped_reason_counts", summary)
