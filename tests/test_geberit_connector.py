@@ -64,7 +64,8 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         landing_url = geberit.PUBLIC_SEEDS[1]
         product_url = "https://catalog.geberit.de/de-DE/product/154.441.KS.1/"
         unrelated_url = "https://www.geberit.de/badezimmerprodukte/duofix/"
-        marketing_html = f'<html><body><a href="{landing_url}">CleanLine30</a><a href="{product_url}">CleanLine80</a><a href="{unrelated_url}">Irgendein Produkt</a></body></html>'
+        marketing_html = f'<html><body><a href="{landing_url}">CleanLine30</a><a href="{unrelated_url}">Irgendein Produkt</a></body></html>'
+        landing_html = f'<html><body><a href="{product_url}">CleanLine80</a></body></html>'
         product_html = """
         <html><body><main>
         <h1>Geberit Duschentwässerung 1200 mm</h1>
@@ -82,7 +83,7 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
             if url == marketing_url:
                 return 200, marketing_url, marketing_html, ""
             if url == landing_url:
-                return 200, landing_url, marketing_html, ""
+                return 200, landing_url, landing_html, ""
             if url == product_url:
                 return 200, product_url, product_html, ""
             if url == unrelated_url:

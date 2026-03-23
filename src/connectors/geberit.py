@@ -360,7 +360,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             continue
 
         final_c = _canonicalize_url(final)
-        if _is_public_geberit_url(final_c):
+        if _is_public_geberit_url(final_c) or (_in_scope(final_c) and "/product/" in final_c and from_cleanline_context):
             pages[final_c] = pages.get(final_c, False) or from_cleanline_context or bool(CLEANLINE_RE.search(f"{final_c} {html}"))
 
         for cand in _extract_public_links(html, final_c):
