@@ -20,6 +20,10 @@ BASE = "https://catalog.geberit.de"
 SCOPE = "/de-DE"
 PRIMARY_SEED = f"{BASE}{SCOPE}/product/PRO_3932352"
 MARKETING_SEED = "https://www.geberit.de/badezimmerprodukte/duschen-badewannenablaeufe/duschen/duschrinnen-geberit-cleanline/"
+PUBLIC_SEEDS = [
+    MARKETING_SEED,
+    "https://www.geberit.de/landingpages/geberit-cleanline30/",
+]
 
 ACCESSORY_RE = re.compile(
     r"verbindungsst[üu]ck|verl[äa]ngerung|reinigungszubeh[öo]r|allgemeines\s+zubeh[öo]r|\bzubeh[öo]r\b|ablaufkette",
@@ -86,6 +90,14 @@ def _in_scope(url: str) -> bool:
     try:
         p = urlparse(url)
         return p.netloc.endswith("catalog.geberit.de") and (p.path or "").startswith(SCOPE)
+    except Exception:
+        return False
+
+
+def _is_public_geberit_url(url: str) -> bool:
+    try:
+        p = urlparse(url)
+        return p.netloc.endswith("geberit.de")
     except Exception:
         return False
 
@@ -264,13 +276,25 @@ def _extract_catalog_links(html: str, base_url: str) -> Set[str]:
     return out
 
 
+def _extract_public_links(html: str, base_url: str) -> Set[str]:
+    soup = BeautifulSoup(html or "", "lxml")
+    out: Set[str] = set()
+    for a in soup.select("a[href]"):
+        href = a.get("href") or ""
+        txt = _clean_text(a.get_text(" ", strip=True)).lower()
+        u = _canonicalize_url(urljoin(base_url, href))
+        if _is_public_geberit_url(u) and CLEANLINE_RE.search(f"{txt} {href} {u}"):
+            out.add(u)
+    return out
+
+
 def _is_cleanline_product_page(url: str, title: str, flat: str, from_cleanline_context: bool = False) -> bool:
     txt = f"{url} {title} {flat}".lower()
     if not from_cleanline_context and not CLEANLINE_RE.search(txt):
         return False
     if ACCESSORY_RE.search(txt):
         return False
-    if "/product/" not in (url or ""):
+    if not ("/product/" in (url or "") or _is_public_geberit_url(url)):
         return False
     return True
 
@@ -299,15 +323,9 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     out: List[Dict[str, Any]] = []
     debug: List[Dict[str, Any]] = []
 
-    queue: List[Tuple[str, bool]] = [(_canonicalize_url(PRIMARY_SEED), False)]
+    queue: List[Tuple[str, bool]] = [(_canonicalize_url(u), True) for u in PUBLIC_SEEDS]
     seen: Set[str] = set()
     pages: Dict[str, bool] = {}
-
-    # optional helper seed: only use to find additional catalog links
-    st_m, final_m, html_m, err_m = _safe_get_text(MARKETING_SEED)
-    debug.append({"site": "geberit", "seed_url": MARKETING_SEED, "status_code": st_m, "final_url": final_m, "error": err_m, "candidates_found": 0, "method": "marketing_seed", "is_index": None})
-    if st_m == 200 and html_m:
-        queue.extend((u, True) for u in sorted(_extract_catalog_links(html_m, final_m)))
 
     while queue and len(seen) < 120:
         u, from_cleanline_context = queue.pop(0)
@@ -322,10 +340,10 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             continue
 
         final_c = _canonicalize_url(final)
-        if _in_scope(final_c):
+        if _is_public_geberit_url(final_c):
             pages[final_c] = pages.get(final_c, False) or from_cleanline_context or bool(CLEANLINE_RE.search(f"{final_c} {html}"))
 
-        for cand in _extract_catalog_links(html, final_c):
+        for cand in _extract_public_links(html, final_c):
             if cand not in seen and not any(cu == cand for cu, _ in queue):
                 queue.append((cand, pages.get(final_c, False)))
 
@@ -395,9 +413,9 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
     debug.append({
         "site": "geberit",
-        "seed_url": PRIMARY_SEED,
+        "seed_url": MARKETING_SEED,
         "status_code": 200 if dedup else None,
-        "final_url": PRIMARY_SEED,
+        "final_url": MARKETING_SEED,
         "error": "" if dedup else "No accepted candidates.",
         "candidates_found": len(dedup),
         "method": "summary",

@@ -61,9 +61,9 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
 
     def test_discovery_accepts_product_reached_from_cleanline_context(self):
         marketing_url = geberit.MARKETING_SEED
-        seed_url = geberit.PRIMARY_SEED
-        product_url = "https://catalog.geberit.de/de-DE/product/PRO_9999999/"
-        unrelated_url = "https://catalog.geberit.de/de-DE/product/PRO_0000001/"
+        landing_url = geberit.PUBLIC_SEEDS[1]
+        product_url = "https://www.geberit.de/landingpages/geberit-cleanline80/"
+        unrelated_url = "https://www.geberit.de/badezimmerprodukte/duofix/"
         marketing_html = f'<html><body><a href="{product_url}">CleanLine80</a><a href="{unrelated_url}">Irgendein Produkt</a></body></html>'
         product_html = """
         <html><body><main>
@@ -81,8 +81,8 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         def fake_get(url, timeout=35):
             if url == marketing_url:
                 return 200, marketing_url, marketing_html, ""
-            if url == seed_url:
-                return 200, seed_url, unrelated_html, ""
+            if url == landing_url:
+                return 200, landing_url, marketing_html, ""
             if url == product_url:
                 return 200, product_url, product_html, ""
             if url == unrelated_url:
