@@ -299,6 +299,10 @@ def _extract_public_links(html: str, base_url: str) -> Set[str]:
             out.add(u)
     for m in re.finditer(r"https://catalog\.geberit\.de/de-DE/product/[A-Za-z0-9\._-]+", html_norm, re.IGNORECASE):
         out.add(_canonicalize_url(m.group(0)))
+    for m in re.finditer(r"https://www\.geberit\.de/PRO_[A-Za-z0-9_-]+-DE_DE/?", html_norm, re.IGNORECASE):
+        out.add(_canonicalize_url(m.group(0)))
+    for m in re.finditer(r"/PRO_[A-Za-z0-9_-]+-DE_DE/?", html_norm, re.IGNORECASE):
+        out.add(_canonicalize_url(urljoin(base_url, m.group(0))))
     return out
 
 
