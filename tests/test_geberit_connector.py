@@ -64,8 +64,8 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         wrong_url = geberit.CATALOG_PRODUCT_SEEDS[1]
         product_html = """
         <html><body><main>
-        <h1>Geberit CleanLine20 Duschrinne</h1>
-        Produktseite 1200 mm für bodenebene Duschen.
+        <h1>Geberit Artikel 154.451.KS.1</h1>
+        Produktseite 1200 mm für bodenebene Anwendungen.
         </main></body></html>
         """
 
