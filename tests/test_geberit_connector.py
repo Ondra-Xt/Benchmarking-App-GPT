@@ -61,6 +61,7 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
 
     def test_discovery_accepts_catalog_product_seed_and_preserves_schema(self):
         product_url = geberit.CATALOG_PRODUCT_SEEDS[0]
+        wrong_url = geberit.CATALOG_PRODUCT_SEEDS[1]
         product_html = """
         <html><body><main>
         <h1>Geberit CleanLine20 Duschrinne</h1>
@@ -68,10 +69,19 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         </main></body></html>
         """
 
+        wrong_html = """
+        <html><body><main>
+        <h1>Geberit Möbelwaschtisch 1200 mm</h1>
+        Waschtisch für Badmöbel.
+        </main></body></html>
+        """
+
         def fake_get(url, timeout=35):
             if url == product_url:
                 return 200, product_url, product_html, ""
-            if url in geberit.CATALOG_PRODUCT_SEEDS[1:]:
+            if url == wrong_url:
+                return 200, wrong_url, wrong_html, ""
+            if url in geberit.CATALOG_PRODUCT_SEEDS[2:]:
                 return 404, url, "", "not mocked"
             return 404, url, "", "not mocked"
 
@@ -89,7 +99,9 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         self.assertGreaterEqual(summary["total_found_links"], 1)
         self.assertGreaterEqual(summary["detail_pages_found"], 1)
         self.assertIn(product_url, summary["accepted_product_links"])
+        self.assertNotIn(wrong_url, summary["accepted_product_links"])
         self.assertIn(product_url, summary["sample_detail_urls"])
+        self.assertIn("wrong_product_family", summary["dropped_reason_counts"])
         self.assertIn("sample_accepted_urls", summary)
         self.assertIn("sample_rejected_urls", summary)
         self.assertIn("dropped_reason_counts", summary)

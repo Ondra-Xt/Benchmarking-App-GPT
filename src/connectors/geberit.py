@@ -36,8 +36,12 @@ ACCESSORY_RE = re.compile(
     re.IGNORECASE,
 )
 CLEANLINE_RE = re.compile(r"cleanline\s*(20|50|60|80)?", re.IGNORECASE)
-DRAIN_RE = re.compile(r"duschrinne|duschprofil|duschablauf", re.IGNORECASE)
+DRAIN_RE = re.compile(r"duschrinne|duschprofil|duschablauf|duschentw[äa]sserung|shower\s*channel|shower\s*drain", re.IGNORECASE)
 ROHBAU_RE = re.compile(r"rohbauset|rohbau\s*set|rohbau", re.IGNORECASE)
+WRONG_FAMILY_RE = re.compile(
+    r"waschtisch|m[öo]belwaschtisch|sp[üu]lkasten|\bwc\b|lavabo|basin|sink|clean\s*drain",
+    re.IGNORECASE,
+)
 
 ARTICLE_RE = re.compile(r"\b(\d{3}\.\d{3}[A-Z0-9\.]*|\d{6,}[A-Z0-9\.]*)\b", re.IGNORECASE)
 FLOW_LPS_RE = re.compile(r"(\d+(?:[\.,]\d+)?)\s*l\s*/\s*s\b", re.IGNORECASE)
@@ -314,9 +318,19 @@ def _extract_public_links(html: str, base_url: str) -> Set[str]:
     return out
 
 
+
+
+def _wrong_product_family(url: str, title: str, flat: str) -> bool:
+    txt = f"{url} {title} {flat}".lower()
+    if not WRONG_FAMILY_RE.search(txt):
+        return False
+    return not DRAIN_RE.search(txt)
+
 def _is_cleanline_product_page(url: str, title: str, flat: str, from_cleanline_context: bool = False) -> bool:
     txt = f"{url} {title} {flat}".lower()
     if not from_cleanline_context and not CLEANLINE_RE.search(txt):
+        return False
+    if not (CLEANLINE_RE.search(txt) or DRAIN_RE.search(txt)):
         return False
     if ACCESSORY_RE.search(txt):
         return False
@@ -399,6 +413,9 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
         title = _extract_title(html, final)
         flat = _main_flat_text(html)
+        if _wrong_product_family(u, title, flat):
+            add_drop(u, "wrong_product_family")
+            continue
         if not _is_cleanline_product_page(u, title, flat, from_cleanline_context=pages.get(u, False)):
             add_drop(u, "not_cleanline_product_page")
             continue
