@@ -39,7 +39,7 @@ CLEANLINE_RE = re.compile(r"cleanline\s*(20|50|60|80)?", re.IGNORECASE)
 DRAIN_RE = re.compile(r"duschrinne|duschprofil|duschablauf|duschentw[äa]sserung|shower\s*channel|shower\s*drain", re.IGNORECASE)
 ROHBAU_RE = re.compile(r"rohbauset|rohbau\s*set|rohbau", re.IGNORECASE)
 WRONG_FAMILY_RE = re.compile(
-    r"waschtisch|m[öo]belwaschtisch|sp[üu]lkasten|\bwc\b|lavabo|basin|sink|clean\s*drain",
+    r"ausgussbecken|rohrbogengeruchsverschluss|waschtisch|m[öo]belwaschtisch|sp[üu]lkasten|\bwc\b|lavabo|basin|sink|clean\s*drain",
     re.IGNORECASE,
 )
 
@@ -343,9 +343,10 @@ def _wrong_product_family(url: str, title: str, flat: str) -> bool:
 def _is_cleanline_product_page(url: str, title: str, flat: str, from_cleanline_context: bool = False) -> bool:
     txt = f"{url} {title} {flat}".lower()
     is_catalog_detail = _in_scope(url) and "/product/" in (url or "")
+    is_catalog_154 = bool(re.search(r"/product/154\.", (url or ""), re.IGNORECASE))
     if not from_cleanline_context and not CLEANLINE_RE.search(txt):
         return False
-    if not (CLEANLINE_RE.search(txt) or DRAIN_RE.search(txt) or (from_cleanline_context and is_catalog_detail)):
+    if not (CLEANLINE_RE.search(txt) or DRAIN_RE.search(txt) or (from_cleanline_context and is_catalog_detail and is_catalog_154)):
         return False
     if ACCESSORY_RE.search(txt):
         return False

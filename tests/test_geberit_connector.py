@@ -61,17 +61,18 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
 
     def test_discovery_accepts_catalog_source_candidates(self):
         product_url = geberit.CATALOG_PRODUCT_SEEDS[0]
-        wrong_url = geberit.CATALOG_PRODUCT_SEEDS[1]
+        wrong_url = "https://catalog.geberit.de/de-DE/product/PRO_102454/"
         product_html = """
         <html><body><main>
         <h1>Geberit Artikel 154.451.KS.1</h1>
         Produktseite 1200 mm für bodenebene Anwendungen.
+        <a href="https://catalog.geberit.de/de-DE/product/PRO_102454/">Siphon</a>
         </main></body></html>
         """
         wrong_html = """
         <html><body><main>
-        <h1>Geberit Möbelwaschtisch 1200 mm</h1>
-        Waschtisch für Badmöbel.
+        <h1>Rohrbogengeruchsverschluss für Ausgussbecken</h1>
+        Siphon für Ausgussbecken.
         </main></body></html>
         """
 
@@ -80,7 +81,7 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
                 return 200, product_url, product_html, ""
             if url == wrong_url:
                 return 200, wrong_url, wrong_html, ""
-            if url in geberit.CATALOG_PRODUCT_SEEDS[2:]:
+            if url in geberit.CATALOG_PRODUCT_SEEDS[1:]:
                 return 404, url, "", "not mocked"
             return 404, url, "", "not mocked"
 
