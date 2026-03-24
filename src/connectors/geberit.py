@@ -299,22 +299,36 @@ def _extract_public_links(html: str, base_url: str) -> Set[str]:
     soup = BeautifulSoup(html or "", "lxml")
     out: Set[str] = set()
     html_norm = (html or "").replace("\\/", "/")
+
+    # 1) standard anchors
     for a in soup.select("a[href]"):
         href = a.get("href") or ""
         txt = _clean_text(a.get_text(" ", strip=True)).lower()
         u = _canonicalize_url(urljoin(base_url, href))
+
         if _is_public_geberit_url(u) and CLEANLINE_RE.search(f"{txt} {href} {u}"):
             out.add(u)
-        if _in_scope(u) and "/product/" in u and CLEANLINE_RE.search(f"{txt} {href} {u}"):
+
+        if _in_scope(u) and "/product/" in u:
             out.add(u)
-    for m in re.finditer(r"https://catalog\.geberit\.de/de-DE/product/[A-Za-z0-9\._-]+", html_norm, re.IGNORECASE):
+
+    # 2) absolute catalog URLs hidden in HTML / scripts / data-* attrs
+    for m in re.finditer(
+        r"https://catalog\.geberit\.de/de-DE/product/[A-Za-z0-9\._/-]+",
+        html_norm,
+        re.IGNORECASE,
+    ):
         out.add(_canonicalize_url(m.group(0)))
-    for m in re.finditer(r"(?:https://catalog\.geberit\.de)?/de-DE/product/[A-Za-z0-9\._-]+", html_norm, re.IGNORECASE):
-        out.add(_canonicalize_url(urljoin(BASE, m.group(0))))
-    for m in re.finditer(r"https://www\.geberit\.de/PRO_[A-Za-z0-9_-]+-DE_DE/?", html_norm, re.IGNORECASE):
-        out.add(_canonicalize_url(m.group(0)))
-    for m in re.finditer(r"/PRO_[A-Za-z0-9_-]+-DE_DE/?", html_norm, re.IGNORECASE):
-        out.add(_canonicalize_url(urljoin(base_url, m.group(0))))
+
+    # 3) relative catalog URLs hidden in HTML / scripts / data-* attrs
+    for m in re.finditer(
+        r"/de-DE/product/[A-Za-z0-9\._/-]+",
+        html_norm,
+        re.IGNORECASE,
+    ):
+        rel = m.group(0)
+        out.add(_canonicalize_url(urljoin("https://catalog.geberit.de", rel)))
+
     return out
 
 
