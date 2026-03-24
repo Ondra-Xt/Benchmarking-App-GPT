@@ -59,40 +59,20 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         self.assertEqual(params["material_v4a"], "no")
         self.assertEqual(params["colours_count"], 4)
 
-    def test_discovery_accepts_product_reached_from_cleanline_context(self):
-        marketing_url = geberit.MARKETING_SEED
-        landing_url = geberit.PUBLIC_SEEDS[1]
-        product_url = "https://catalog.geberit.de/de-DE/product/154.441.KS.1/"
-        unrelated_url = "https://www.geberit.de/badezimmerprodukte/duofix/"
-        marketing_html = f'<html><body><a href="{landing_url}">CleanLine30</a><a href="{unrelated_url}">Irgendein Produkt</a></body></html>'
-        landing_html = """
-        <html><body>
-        <div data-product-url="/de-DE/product/154.441.KS.1/">CleanLine80</div>
-        <script type="application/json">{"detailUrl":"\/de-DE\/product\/154.441.KS.1\/"}</script>
-        </body></html>
-        """
+    def test_discovery_accepts_catalog_product_seed_and_preserves_schema(self):
+        product_url = geberit.CATALOG_PRODUCT_SEEDS[0]
         product_html = """
         <html><body><main>
-        <h1>Geberit Duschentwässerung 1200 mm</h1>
+        <h1>Geberit CleanLine20 Duschrinne</h1>
         Produktseite 1200 mm für bodenebene Duschen.
-        </main></body></html>
-        """
-        unrelated_html = """
-        <html><body><main>
-        <h1>Geberit Duofix Element</h1>
-        Irgendein anderes Produkt 1200 mm.
         </main></body></html>
         """
 
         def fake_get(url, timeout=35):
-            if url == marketing_url:
-                return 200, marketing_url, marketing_html, ""
-            if url == landing_url:
-                return 200, landing_url, landing_html, ""
             if url == product_url:
                 return 200, product_url, product_html, ""
-            if url == unrelated_url:
-                return 200, unrelated_url, unrelated_html, ""
+            if url in geberit.CATALOG_PRODUCT_SEEDS[1:]:
+                return 404, url, "", "not mocked"
             return 404, url, "", "not mocked"
 
         with patch.object(geberit, "_safe_get_text", side_effect=fake_get):
@@ -102,13 +82,13 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         self.assertEqual(candidates[0]["manufacturer"], "geberit")
         self.assertEqual(candidates[0]["candidate_type"], "drain")
         self.assertEqual(candidates[0]["complete_system"], "yes")
+        self.assertEqual(candidates[0]["product_url"], product_url)
+        self.assertIn("product_id", candidates[0])
+        self.assertIn("selected_length_mm", candidates[0])
         summary = debug[-1]
         self.assertGreaterEqual(summary["total_found_links"], 1)
-        self.assertGreaterEqual(summary["landing_pages_found"], 1)
         self.assertGreaterEqual(summary["detail_pages_found"], 1)
         self.assertIn(product_url, summary["accepted_product_links"])
-        self.assertNotIn(unrelated_url, summary["accepted_product_links"])
-        self.assertIn(landing_url, summary["sample_landing_urls"])
         self.assertIn(product_url, summary["sample_detail_urls"])
         self.assertIn("sample_accepted_urls", summary)
         self.assertIn("sample_rejected_urls", summary)

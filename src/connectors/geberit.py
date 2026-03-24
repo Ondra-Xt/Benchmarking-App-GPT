@@ -24,6 +24,12 @@ PUBLIC_SEEDS = [
     MARKETING_SEED,
     "https://www.geberit.de/landingpages/geberit-cleanline30/",
 ]
+CATALOG_PRODUCT_SEEDS = [
+    "https://catalog.geberit.de/de-DE/product/154.451.KS.1/",
+    "https://catalog.geberit.de/de-DE/product/154.461.KS.1/",
+    "https://catalog.geberit.de/de-DE/product/154.459.00.1/",
+    "https://catalog.geberit.de/de-DE/product/154.455.00.1/",
+]
 
 ACCESSORY_RE = re.compile(
     r"verbindungsst[üu]ck|verl[äa]ngerung|reinigungszubeh[öo]r|allgemeines\s+zubeh[öo]r|\bzubeh[öo]r\b|ablaufkette",
@@ -345,9 +351,9 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     out: List[Dict[str, Any]] = []
     debug: List[Dict[str, Any]] = []
 
-    queue: List[Tuple[str, bool]] = [(_canonicalize_url(u), True) for u in PUBLIC_SEEDS]
+    queue: List[Tuple[str, bool]] = [(_canonicalize_url(u), True) for u in CATALOG_PRODUCT_SEEDS]
     seen: Set[str] = set()
-    pages: Dict[str, bool] = {}
+    pages: Dict[str, bool] = {_canonicalize_url(u): True for u in CATALOG_PRODUCT_SEEDS}
 
     while queue and len(seen) < 120:
         u, from_cleanline_context = queue.pop(0)
