@@ -59,14 +59,9 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         self.assertEqual(params["material_v4a"], "no")
         self.assertEqual(params["colours_count"], 4)
 
-    def test_discovery_accepts_downstream_catalog_page_from_cleanline_context(self):
-        marketing_url = geberit.MARKETING_SEED
-        landing_url = geberit.PUBLIC_SEEDS[1]
-        product_url = "https://catalog.geberit.de/de-DE/product/154.451.KS.1/"
-        wrong_url = "https://catalog.geberit.de/de-DE/product/111.222.33.1/"
-
-        marketing_html = f'<html><body><a href="{landing_url}">CleanLine30</a></body></html>'
-        landing_html = f'<html><body><a href="{product_url}">Produkt 154.451.KS.1</a><a href="{wrong_url}">Waschtisch</a></body></html>'
+    def test_discovery_accepts_catalog_source_candidates(self):
+        product_url = geberit.CATALOG_PRODUCT_SEEDS[0]
+        wrong_url = geberit.CATALOG_PRODUCT_SEEDS[1]
         product_html = """
         <html><body><main>
         <h1>Geberit Artikel 154.451.KS.1</h1>
@@ -81,14 +76,12 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         """
 
         def fake_get(url, timeout=35):
-            if url == marketing_url:
-                return 200, marketing_url, marketing_html, ""
-            if url == landing_url:
-                return 200, landing_url, landing_html, ""
             if url == product_url:
                 return 200, product_url, product_html, ""
             if url == wrong_url:
                 return 200, wrong_url, wrong_html, ""
+            if url in geberit.CATALOG_PRODUCT_SEEDS[2:]:
+                return 404, url, "", "not mocked"
             return 404, url, "", "not mocked"
 
         with patch.object(geberit, "_safe_get_text", side_effect=fake_get):
@@ -100,7 +93,7 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         self.assertEqual(candidates[0]["complete_system"], "yes")
         self.assertEqual(candidates[0]["product_url"], product_url)
         summary = debug[-1]
-        self.assertGreaterEqual(summary["landing_pages_found"], 1)
+        self.assertGreaterEqual(summary["total_found_links"], 1)
         self.assertGreaterEqual(summary["detail_pages_found"], 1)
         self.assertIn(product_url, summary["accepted_product_links"])
         self.assertNotIn(wrong_url, summary["accepted_product_links"])

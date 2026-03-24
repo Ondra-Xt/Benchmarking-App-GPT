@@ -24,24 +24,14 @@ PUBLIC_SEEDS = [
     MARKETING_SEED,
     "https://www.geberit.de/landingpages/geberit-cleanline30/",
 ]
-CATALOG_PRODUCT_SEEDS = [
-    "https://catalog.geberit.de/de-DE/product/154.451.KS.1/",
-    "https://catalog.geberit.de/de-DE/product/154.461.KS.1/",
-    "https://catalog.geberit.de/de-DE/product/154.459.00.1/",
-    "https://catalog.geberit.de/de-DE/product/154.455.00.1/",
-]
 
 ACCESSORY_RE = re.compile(
     r"verbindungsst[üu]ck|verl[äa]ngerung|reinigungszubeh[öo]r|allgemeines\s+zubeh[öo]r|\bzubeh[öo]r\b|ablaufkette",
     re.IGNORECASE,
 )
 CLEANLINE_RE = re.compile(r"cleanline\s*(20|50|60|80)?", re.IGNORECASE)
-DRAIN_RE = re.compile(r"duschrinne|duschprofil|duschablauf|duschentw[äa]sserung|shower\s*channel|shower\s*drain", re.IGNORECASE)
+DRAIN_RE = re.compile(r"duschrinne|duschprofil|duschablauf", re.IGNORECASE)
 ROHBAU_RE = re.compile(r"rohbauset|rohbau\s*set|rohbau", re.IGNORECASE)
-WRONG_FAMILY_RE = re.compile(
-    r"waschtisch|m[öo]belwaschtisch|sp[üu]lkasten|\bwc\b|lavabo|basin|sink|clean\s*drain",
-    re.IGNORECASE,
-)
 
 ARTICLE_RE = re.compile(r"\b(\d{3}\.\d{3}[A-Z0-9\.]*|\d{6,}[A-Z0-9\.]*)\b", re.IGNORECASE)
 FLOW_LPS_RE = re.compile(r"(\d+(?:[\.,]\d+)?)\s*l\s*/\s*s\b", re.IGNORECASE)
@@ -299,53 +289,22 @@ def _extract_public_links(html: str, base_url: str) -> Set[str]:
     soup = BeautifulSoup(html or "", "lxml")
     out: Set[str] = set()
     html_norm = (html or "").replace("\\/", "/")
-
-    # 1) standard anchors
     for a in soup.select("a[href]"):
         href = a.get("href") or ""
         txt = _clean_text(a.get_text(" ", strip=True)).lower()
         u = _canonicalize_url(urljoin(base_url, href))
-
         if _is_public_geberit_url(u) and CLEANLINE_RE.search(f"{txt} {href} {u}"):
             out.add(u)
-
-        if _in_scope(u) and "/product/" in u:
+        if _in_scope(u) and "/product/" in u and CLEANLINE_RE.search(f"{txt} {href} {u}"):
             out.add(u)
-
-    # 2) absolute catalog URLs hidden in HTML / scripts / data-* attrs
-    for m in re.finditer(
-        r"https://catalog\.geberit\.de/de-DE/product/[A-Za-z0-9\._/-]+",
-        html_norm,
-        re.IGNORECASE,
-    ):
+    for m in re.finditer(r"https://catalog\.geberit\.de/de-DE/product/[A-Za-z0-9\._-]+", html_norm, re.IGNORECASE):
         out.add(_canonicalize_url(m.group(0)))
-
-    # 3) relative catalog URLs hidden in HTML / scripts / data-* attrs
-    for m in re.finditer(
-        r"/de-DE/product/[A-Za-z0-9\._/-]+",
-        html_norm,
-        re.IGNORECASE,
-    ):
-        rel = m.group(0)
-        out.add(_canonicalize_url(urljoin("https://catalog.geberit.de", rel)))
-
     return out
 
 
-
-
-def _wrong_product_family(url: str, title: str, flat: str) -> bool:
-    txt = f"{url} {title} {flat}".lower()
-    if not WRONG_FAMILY_RE.search(txt):
-        return False
-    return not DRAIN_RE.search(txt)
-
 def _is_cleanline_product_page(url: str, title: str, flat: str, from_cleanline_context: bool = False) -> bool:
     txt = f"{url} {title} {flat}".lower()
-    is_catalog_detail = _in_scope(url) and "/product/" in (url or "")
     if not from_cleanline_context and not CLEANLINE_RE.search(txt):
-        return False
-    if not (CLEANLINE_RE.search(txt) or DRAIN_RE.search(txt) or (from_cleanline_context and is_catalog_detail)):
         return False
     if ACCESSORY_RE.search(txt):
         return False
@@ -380,9 +339,9 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     out: List[Dict[str, Any]] = []
     debug: List[Dict[str, Any]] = []
 
-    queue: List[Tuple[str, bool]] = [(_canonicalize_url(u), True) for u in CATALOG_PRODUCT_SEEDS]
+    queue: List[Tuple[str, bool]] = [(_canonicalize_url(u), True) for u in PUBLIC_SEEDS]
     seen: Set[str] = set()
-    pages: Dict[str, bool] = {_canonicalize_url(u): True for u in CATALOG_PRODUCT_SEEDS}
+    pages: Dict[str, bool] = {}
 
     while queue and len(seen) < 120:
         u, from_cleanline_context = queue.pop(0)
@@ -397,7 +356,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             continue
 
         final_c = _canonicalize_url(final)
-        if _is_public_geberit_url(final_c) or (_in_scope(final_c) and "/product/" in final_c and from_cleanline_context):
+        if _is_public_geberit_url(final_c):
             pages[final_c] = pages.get(final_c, False) or from_cleanline_context or bool(CLEANLINE_RE.search(f"{final_c} {html}"))
 
         for cand in _extract_public_links(html, final_c):
@@ -428,9 +387,6 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
         title = _extract_title(html, final)
         flat = _main_flat_text(html)
-        if _wrong_product_family(u, title, flat):
-            add_drop(u, "wrong_product_family")
-            continue
         if not _is_cleanline_product_page(u, title, flat, from_cleanline_context=pages.get(u, False)):
             add_drop(u, "not_cleanline_product_page")
             continue
