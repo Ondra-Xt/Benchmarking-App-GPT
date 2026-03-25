@@ -62,13 +62,22 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
     def test_discovery_accepts_catalog_source_candidates(self):
         product_url = geberit.CATALOG_PRODUCT_SEEDS[0]
         wrong_url = "https://catalog.geberit.de/de-DE/product/PRO_102454/"
+        detail_url = "https://catalog.geberit.de/de-DE/product/154.455.00.1/"
         product_html = """
         <html><body><main>
         <h1>Geberit Artikel 154.451.KS.1</h1>
         Produktseite 1200 mm für bodenebene Anwendungen ohne CleanLine-Text.
         <a href="https://catalog.geberit.de/de-DE/product/PRO_102454/">Siphon</a>
+        <a href="https://catalog.geberit.de/de-DE/product/154.455.00.1/">Detail</a>
         </main></body></html>
         """
+        detail_html = """
+        <html><body><main>
+        <h1>Geberit Artikel 154.455.00.1</h1>
+        Länge 1200 mm.
+        </main></body></html>
+        """
+
         wrong_html = """
         <html><body><main>
         <h1>Rohrbogengeruchsverschluss für Ausgussbecken</h1>
@@ -78,9 +87,11 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
 
         def fake_get(url, timeout=35):
             if url == product_url:
-                return 200, product_url, product_html, ""
+                return 200, "https://catalog.geberit.de/de-DE/product/154.451.ks.1/", product_html, ""
             if url == wrong_url:
                 return 200, wrong_url, wrong_html, ""
+            if url == detail_url:
+                return 200, detail_url, detail_html, ""
             if url in geberit.CATALOG_PRODUCT_SEEDS[1:]:
                 return 404, url, "", "not mocked"
             return 404, url, "", "not mocked"
@@ -97,6 +108,7 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         self.assertGreaterEqual(summary["total_found_links"], 1)
         self.assertGreaterEqual(summary["detail_pages_found"], 1)
         self.assertIn(product_url, summary["accepted_product_links"])
+        self.assertIn(detail_url, summary["accepted_product_links"])
         self.assertNotIn(wrong_url, summary["accepted_product_links"])
         self.assertIn(product_url, summary["sample_detail_urls"])
         self.assertIn("wrong_product_family", summary["dropped_reason_counts"])
