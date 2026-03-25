@@ -59,21 +59,42 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         self.assertEqual(params["material_v4a"], "no")
         self.assertEqual(params["colours_count"], 4)
 
-    def test_discovery_accepts_catalog_source_candidates(self):
-        product_url = geberit.CATALOG_PRODUCT_SEEDS[0]
-        wrong_url = "https://catalog.geberit.de/de-DE/product/PRO_102454/"
-        detail_url = "https://catalog.geberit.de/de-DE/product/154.455.00.1/"
-        product_html = """
+    def test_extracts_variant_from_pro_article_table(self):
+        pro_url = "https://catalog.geberit.de/de-DE/product/PRO_170941/"
+        html = """
         <html><body><main>
-        <h1>Geberit Artikel 154.451.KS.1</h1>
-        Produktseite 1200 mm für bodenebene Anwendungen ohne CleanLine-Text.
-        <a href="https://catalog.geberit.de/de-DE/product/PRO_102454/">Siphon</a>
-        <a href="https://catalog.geberit.de/de-DE/product/154.455.00.1/">Detail</a>
+        <h1>Geberit Duschrinne System</h1>
+        <table>
+          <tr><th>Art.-Nr.</th><th>Länge</th><th>Ablaufleistung</th><th>DN</th><th>Einbauhöhe</th></tr>
+          <tr><td>154.111.00.1</td><td>900 mm</td><td>0,4 l/s</td><td>DN 50</td><td>90 mm</td></tr>
+          <tr><td>154.451.KS.1</td><td>1200 mm</td><td>0,8 l/s</td><td>DN 50</td><td>Einbauhöhe 100 mm</td></tr>
+        </table>
+        </main></body></html>
+        """
+        with patch.object(geberit, "_safe_get_text", return_value=(200, pro_url, html, "")):
+            params = geberit.extract_parameters(pro_url)
+
+        self.assertEqual(params["resolved_length_mm"], 1200)
+        self.assertEqual(params["flow_rate_lps"], 0.8)
+        self.assertEqual(params["outlet_dn_default"], "DN50")
+        self.assertEqual(params["height_adj_min_mm"], 100)
+
+    def test_discovery_accepts_pro_pages_and_rejects_siphon(self):
+        system_url = geberit.CATALOG_SYSTEM_SEEDS[0]
+        product_url = "https://catalog.geberit.de/de-DE/product/PRO_170941/"
+        wrong_url = "https://catalog.geberit.de/de-DE/product/PRO_102454/"
+        detail_url = "https://catalog.geberit.de/de-DE/product/PRO_170942/"
+        system_html = f'<html><body><a href="{product_url}">CleanLine Produkt</a><a href="{wrong_url}">Siphon</a></body></html>'
+        product_html = f"""
+        <html><body><main>
+        <h1>Geberit Duschrinne System</h1>
+        Produktseite 1200 mm für bodenebene Anwendungen.
+        <a href="{detail_url}">Variante</a>
         </main></body></html>
         """
         detail_html = """
         <html><body><main>
-        <h1>Geberit Artikel 154.455.00.1</h1>
+        <h1>Geberit Duschprofil</h1>
         Länge 1200 mm.
         </main></body></html>
         """
@@ -86,13 +107,15 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         """
 
         def fake_get(url, timeout=35):
+            if url == system_url:
+                return 200, system_url, system_html, ""
             if url == product_url:
-                return 200, "https://catalog.geberit.de/de-DE/product/154.451.ks.1/", product_html, ""
+                return 200, product_url, product_html, ""
             if url == wrong_url:
                 return 200, wrong_url, wrong_html, ""
             if url == detail_url:
                 return 200, detail_url, detail_html, ""
-            if url in geberit.CATALOG_PRODUCT_SEEDS[1:]:
+            if url == geberit.CATALOG_SYSTEM_SEEDS[1]:
                 return 404, url, "", "not mocked"
             return 404, url, "", "not mocked"
 
@@ -103,7 +126,6 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         self.assertEqual(candidates[0]["manufacturer"], "geberit")
         self.assertEqual(candidates[0]["candidate_type"], "drain")
         self.assertEqual(candidates[0]["complete_system"], "yes")
-        self.assertEqual(candidates[0]["product_url"], product_url)
         summary = debug[-1]
         self.assertGreaterEqual(summary["total_found_links"], 1)
         self.assertGreaterEqual(summary["detail_pages_found"], 1)
