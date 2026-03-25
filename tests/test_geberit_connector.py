@@ -129,9 +129,11 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         summary = debug[-1]
         self.assertGreaterEqual(summary["total_found_links"], 1)
         self.assertGreaterEqual(summary["detail_pages_found"], 1)
+        self.assertNotIn(system_url, summary["accepted_product_links"])
         self.assertIn(product_url, summary["accepted_product_links"])
         self.assertIn(detail_url, summary["accepted_product_links"])
         self.assertNotIn(wrong_url, summary["accepted_product_links"])
+        self.assertIn(system_url, summary["sample_listing_urls"])
         self.assertIn(product_url, summary["sample_detail_urls"])
         self.assertIn("wrong_product_family", summary["dropped_reason_counts"])
 
