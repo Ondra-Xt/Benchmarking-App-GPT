@@ -41,7 +41,7 @@ WRONG_FAMILY_RE = re.compile(
     re.IGNORECASE,
 )
 HARD_WRONG_FAMILY_RE = re.compile(
-    r"waschtisch|m[öo]belwaschtisch|sp[üu]lkasten|\bwc\b|ausgussbecken|clean\s*drain",
+    r"rohrbogengeruchsverschluss|ausgussbecken|gipsfangbecken|anschlussgarnitur|waschtisch|m[öo]belwaschtisch|sp[üu]lkasten|\bwc\b|clean\s*drain",
     re.IGNORECASE,
 )
 SOFT_WRONG_FAMILY_RE = re.compile(
@@ -416,7 +416,7 @@ def _wrong_product_family(url: str, title: str, flat: str, html: str = "") -> bo
     txt = f"{url} {title} {flat}".lower()
     has_positive = bool(CLEANLINE_RE.search(txt) or DRAIN_RE.search(txt) or _has_article_table_signals(html))
     if HARD_WRONG_FAMILY_RE.search(txt):
-        return not has_positive
+        return True
     if SOFT_WRONG_FAMILY_RE.search(txt):
         return not has_positive
     if not WRONG_FAMILY_RE.search(txt):
