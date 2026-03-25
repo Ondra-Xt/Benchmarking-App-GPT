@@ -329,7 +329,7 @@ def _wrong_product_family(url: str, title: str, flat: str) -> bool:
 def _is_cleanline_product_page(url: str, title: str, flat: str, from_cleanline_context: bool = False) -> bool:
     txt = f"{url} {title} {flat}".lower()
     is_catalog_detail = _in_scope(url) and "/product/" in (url or "")
-    is_catalog_154 = bool(re.search(r"/product/154\.", (url or ""), re.IGNORECASE))
+    is_catalog_154 = bool(re.search(r"/product/154\.", (url or ""), re.IGNORECASE) or re.search(r"\b154\.\d{3}(?:\.[A-Z0-9]+)*\b", txt, re.IGNORECASE))
     if not from_cleanline_context and not CLEANLINE_RE.search(txt):
         return False
     if not (CLEANLINE_RE.search(txt) or DRAIN_RE.search(txt) or (from_cleanline_context and is_catalog_detail and is_catalog_154)):

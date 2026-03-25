@@ -65,7 +65,7 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         product_html = """
         <html><body><main>
         <h1>Geberit Artikel 154.451.KS.1</h1>
-        Produktseite 1200 mm für bodenebene Anwendungen.
+        Produktseite 1200 mm für bodenebene Anwendungen ohne CleanLine-Text.
         <a href="https://catalog.geberit.de/de-DE/product/PRO_102454/">Siphon</a>
         </main></body></html>
         """
