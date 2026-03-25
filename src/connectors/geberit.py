@@ -119,6 +119,34 @@ def _is_landing_page(url: str) -> bool:
     return "/landingpages/" in path or path.rstrip("/") == "/badezimmerprodukte/duschen-badewannenablaeufe/duschen/duschrinnen-geberit-cleanline"
 
 
+
+
+def _is_catalog_detail_page(url: str) -> bool:
+    try:
+        p = urlparse(url)
+    except Exception:
+        return False
+    path = (p.path or "")
+    return p.netloc.endswith("catalog.geberit.de") and bool(re.search(r"/de-DE/product/[^/]+/?$", path, re.IGNORECASE))
+
+
+def _is_catalog_pro_page(url: str) -> bool:
+    try:
+        p = urlparse(url)
+    except Exception:
+        return False
+    path = (p.path or "")
+    return p.netloc.endswith("catalog.geberit.de") and bool(re.search(r"/de-DE/product/PRO_[^/]+/?$", path, re.IGNORECASE))
+
+
+def _is_system_listing_page(url: str) -> bool:
+    try:
+        p = urlparse(url)
+    except Exception:
+        return False
+    path = (p.path or "")
+    return p.netloc.endswith("catalog.geberit.de") and "/systems/" in path and path.rstrip("/").endswith("/products")
+
 def _extract_title(html: str, fallback_url: str) -> str:
     soup = BeautifulSoup(html or "", "lxml")
     h1 = soup.select_one("h1")
@@ -385,13 +413,13 @@ def _wrong_product_family(url: str, title: str, flat: str) -> bool:
 
 def _is_cleanline_product_page(url: str, title: str, flat: str, from_cleanline_context: bool = False) -> bool:
     txt = f"{url} {title} {flat}".lower()
-    is_catalog_detail = _in_scope(url) and "/product/" in (url or "")
-    is_catalog_pro = bool(re.search(r"/product/pro_[a-z0-9_-]+/?", (url or ""), re.IGNORECASE))
+    is_catalog_detail = _is_catalog_detail_page(url)
+    is_catalog_pro = _is_catalog_pro_page(url)
     if ACCESSORY_RE.search(txt):
         return False
     if _is_public_geberit_url(url) and _is_landing_page(url):
         return False
-    if not ("/product/" in (url or "") or _is_public_geberit_url(url)):
+    if not (_is_catalog_detail_page(url) or _is_public_geberit_url(url)):
         return False
     if from_cleanline_context and is_catalog_detail and is_catalog_pro:
         return True
@@ -444,7 +472,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
         final_c = _canonicalize_url(final)
         page_ctx = from_cleanline_context or bool(CLEANLINE_RE.search(f"{final_c} {html}"))
-        if _is_public_geberit_url(final_c) or (_in_scope(final_c) and "/product/" in final_c and page_ctx):
+        if _is_public_geberit_url(final_c) or _is_system_listing_page(final_c) or (_is_catalog_detail_page(final_c) and page_ctx):
             pages[final_c] = pages.get(final_c, False) or page_ctx
 
         for cand in _extract_public_links(html, final_c):
@@ -459,7 +487,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     rejected_lengths: List[Dict[str, Any]] = []
     missing_length_rows: List[Dict[str, str]] = []
     landing_urls = [u for u in sorted(pages) if _is_landing_page(u)]
-    detail_urls = [u for u in sorted(pages) if not _is_landing_page(u)]
+    listing_urls = [u for u in sorted(pages) if _is_system_listing_page(u)]
+    detail_urls = [u for u in sorted(pages) if _is_catalog_detail_page(u) and not _is_system_listing_page(u)]
 
     def add_drop(url: str, reason: str, extra: Optional[Dict[str, Any]] = None) -> None:
         row: Dict[str, Any] = {"url": url, "reason": reason}
@@ -475,6 +504,9 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
         title = _extract_title(html, final)
         flat = _main_flat_text(html)
+        if _is_system_listing_page(u):
+            add_drop(u, "listing_page_intermediate")
+            continue
         if _wrong_product_family(u, title, flat):
             add_drop(u, "wrong_product_family")
             continue
@@ -531,6 +563,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "is_index": None,
         "total_found_links": len(pages),
         "landing_pages_found": len(landing_urls),
+        "listing_pages_found": len(listing_urls),
         "detail_pages_found": len(detail_urls),
         "products_count": sum(1 for r in dedup.values() if str(r.get("candidate_type")) == "drain"),
         "bom_options_count": len(set(bom_urls)),
@@ -540,6 +573,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "accepted_product_links": json.dumps(product_urls[:20], ensure_ascii=False),
         "dropped_links": json.dumps(dropped[:20], ensure_ascii=False),
         "sample_landing_urls": json.dumps(landing_urls[:10], ensure_ascii=False),
+        "sample_listing_urls": json.dumps(listing_urls[:10], ensure_ascii=False),
         "sample_detail_urls": json.dumps(detail_urls[:10], ensure_ascii=False),
         "sample_accepted_urls": json.dumps(product_urls[:10], ensure_ascii=False),
         "sample_rejected_urls": json.dumps([row.get("url") for row in dropped[:10]], ensure_ascii=False),
