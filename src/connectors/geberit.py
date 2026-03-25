@@ -384,12 +384,13 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             continue
 
         final_c = _canonicalize_url(final)
-        if _is_public_geberit_url(final_c) or (_in_scope(final_c) and "/product/" in final_c and from_cleanline_context):
-            pages[final_c] = pages.get(final_c, False) or from_cleanline_context or bool(CLEANLINE_RE.search(f"{final_c} {html}"))
+        page_ctx = from_cleanline_context or bool(CLEANLINE_RE.search(f"{final_c} {html}"))
+        if _is_public_geberit_url(final_c) or (_in_scope(final_c) and "/product/" in final_c and page_ctx):
+            pages[final_c] = pages.get(final_c, False) or page_ctx
 
         for cand in _extract_public_links(html, final_c):
             if cand not in seen and not any(cu == cand for cu, _ in queue):
-                queue.append((cand, pages.get(final_c, False)))
+                queue.append((cand, pages.get(final_c, page_ctx)))
 
     product_urls: List[str] = []
     bom_urls: List[str] = []
