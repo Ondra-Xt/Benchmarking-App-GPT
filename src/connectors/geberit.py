@@ -24,11 +24,9 @@ PUBLIC_SEEDS = [
     MARKETING_SEED,
     "https://www.geberit.de/landingpages/geberit-cleanline30/",
 ]
-CATALOG_PRODUCT_SEEDS = [
-    "https://catalog.geberit.de/de-DE/product/154.451.KS.1/",
-    "https://catalog.geberit.de/de-DE/product/154.461.KS.1/",
-    "https://catalog.geberit.de/de-DE/product/154.459.00.1/",
-    "https://catalog.geberit.de/de-DE/product/154.455.00.1/",
+CATALOG_SYSTEM_SEEDS = [
+    "https://catalog.geberit.de/de-DE/systems/CH3_3294141/products/",
+    "https://catalog.geberit.de/de-DE/product/PRO_170941/",
 ]
 
 ACCESSORY_RE = re.compile(
@@ -295,6 +293,51 @@ def _extract_catalog_links(html: str, base_url: str) -> Set[str]:
     return out
 
 
+def _select_article_variant_from_table(html: str, target_mm: int = 1200, tolerance_mm: int = 100) -> Optional[Dict[str, Any]]:
+    soup = BeautifulSoup(html or "", "lxml")
+    rows: List[Dict[str, Any]] = []
+    for tr in soup.select("table tr"):
+        cells = tr.select("th,td")
+        if not cells:
+            continue
+        row_text = _clean_text(" ".join(c.get_text(" ", strip=True) for c in cells))
+        article = _article_from_text(row_text)
+        if not article:
+            continue
+        length_mm, _, _, _ = _length_info(row_text, target_mm)
+        flow_opts = []
+        for fm in FLOW_LPS_RE.finditer(row_text):
+            try:
+                fv = float(fm.group(1).replace(",", "."))
+            except Exception:
+                continue
+            if 0.10 <= fv <= 3.0:
+                flow_opts.append(fv)
+        flow_opts = sorted(set(flow_opts))
+        dns, _ = _extract_dn(row_text)
+        hmin, hmax, _ = _extract_height(row_text)
+        rows.append({
+            "article_no": article,
+            "row_text": row_text,
+            "length_mm": length_mm,
+            "flow_opts": flow_opts,
+            "dns": dns,
+            "hmin": hmin,
+            "hmax": hmax,
+        })
+    if not rows:
+        return None
+
+    in_range = [r for r in rows if isinstance(r.get("length_mm"), int) and abs(int(r["length_mm"]) - target_mm) <= tolerance_mm]
+    if in_range:
+        return sorted(in_range, key=lambda r: abs(int(r["length_mm"]) - target_mm))[0]
+
+    with_len = [r for r in rows if isinstance(r.get("length_mm"), int)]
+    if with_len:
+        return sorted(with_len, key=lambda r: abs(int(r["length_mm"]) - target_mm))[0]
+    return rows[0]
+
+
 def _extract_public_links(html: str, base_url: str) -> Set[str]:
     soup = BeautifulSoup(html or "", "lxml")
     out: Set[str] = set()
@@ -343,14 +386,14 @@ def _wrong_product_family(url: str, title: str, flat: str) -> bool:
 def _is_cleanline_product_page(url: str, title: str, flat: str, from_cleanline_context: bool = False) -> bool:
     txt = f"{url} {title} {flat}".lower()
     is_catalog_detail = _in_scope(url) and "/product/" in (url or "")
-    is_catalog_154 = bool(re.search(r"/product/154\.", (url or ""), re.IGNORECASE) or re.search(r"\b154\.\d{3}(?:\.[A-Z0-9]+)*\b", txt, re.IGNORECASE))
+    is_catalog_pro = bool(re.search(r"/product/pro_[a-z0-9_-]+/?", (url or ""), re.IGNORECASE))
     if ACCESSORY_RE.search(txt):
         return False
     if _is_public_geberit_url(url) and _is_landing_page(url):
         return False
     if not ("/product/" in (url or "") or _is_public_geberit_url(url)):
         return False
-    if from_cleanline_context and is_catalog_detail and is_catalog_154:
+    if from_cleanline_context and is_catalog_detail and is_catalog_pro:
         return True
     if not from_cleanline_context and not CLEANLINE_RE.search(txt):
         return False
@@ -383,9 +426,9 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     out: List[Dict[str, Any]] = []
     debug: List[Dict[str, Any]] = []
 
-    queue: List[Tuple[str, bool]] = [(_canonicalize_url(u), True) for u in CATALOG_PRODUCT_SEEDS]
+    queue: List[Tuple[str, bool]] = [(_canonicalize_url(u), True) for u in CATALOG_SYSTEM_SEEDS]
     seen: Set[str] = set()
-    pages: Dict[str, bool] = {_canonicalize_url(u): True for u in CATALOG_PRODUCT_SEEDS}
+    pages: Dict[str, bool] = {}
 
     while queue and len(seen) < 120:
         u, from_cleanline_context = queue.pop(0)
@@ -539,6 +582,36 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
         return res
 
     flat = _main_flat_text(html)
+
+    if re.search(r"/product/pro_[a-z0-9_-]+/?$", src, re.IGNORECASE):
+        variant = _select_article_variant_from_table(html, target_mm=1200, tolerance_mm=100)
+        if variant:
+            row_text = str(variant.get("row_text") or "")
+            row_len = variant.get("length_mm")
+            if isinstance(row_len, int):
+                res["resolved_length_mm"] = row_len
+                res["evidence"].append(("Artikel table length", f"{row_len} mm", final))
+            flow_opts = variant.get("flow_opts") or []
+            if flow_opts:
+                res["flow_rate_lps_options"] = json.dumps(flow_opts, ensure_ascii=False)
+                res["flow_rate_lps"] = max(flow_opts)
+                res["flow_rate_unit"] = "l/s"
+                res["flow_rate_status"] = "ok"
+            dns = variant.get("dns") or []
+            if dns:
+                res["outlet_dn"] = "/".join(dns)
+                res["outlet_dn_default"] = "DN50" if "DN50" in dns else dns[0]
+                res["outlet_dn_options_json"] = json.dumps(dns, ensure_ascii=False)
+            hmin = variant.get("hmin")
+            hmax = variant.get("hmax")
+            if isinstance(hmin, int) and isinstance(hmax, int):
+                res["height_adj_min_mm"] = hmin
+                res["height_adj_max_mm"] = hmax
+            art = variant.get("article_no")
+            if art:
+                res["evidence"].append(("Artikel table article", str(art), final))
+            if row_text:
+                res["evidence"].append(("Artikel table row", row_text[:220], final))
 
     material_detail, material_v4a, material_span = _extract_material(flat)
     if material_detail:
