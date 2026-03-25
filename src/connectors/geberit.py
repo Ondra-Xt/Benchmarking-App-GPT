@@ -330,17 +330,57 @@ def _extract_catalog_links(html: str, base_url: str) -> Set[str]:
     return out
 
 
-def _has_article_table_signals(html: str) -> bool:
+def _has_article_table_base_signals(html: str) -> bool:
     soup = BeautifulSoup(html or "", "lxml")
     table_text = _clean_text(" ".join(t.get_text(" ", strip=True) for t in soup.select("table")))
     if not table_text:
         return False
     has_art = bool(re.search(r"art\.?\s*-?\s*nr|artikel\s*-?\s*nr", table_text, re.IGNORECASE))
-    has_perf = bool(re.search(r"ablaufleistung|l\s*/\s*s", table_text, re.IGNORECASE))
-    has_dn = bool(re.search(r"\bdn\s*\d{2,3}\b|\bdn\b", table_text, re.IGNORECASE))
-    has_dims = bool(re.search(r"\bL\s*cm\b", table_text, re.IGNORECASE) and re.search(r"\bH\s*cm\b", table_text, re.IGNORECASE))
+    has_len = bool(re.search(r"\bL\s*cm\b|\bl[äa]nge\b", table_text, re.IGNORECASE))
     row_count = len(soup.select("table tr"))
-    return has_art and has_dn and (has_perf or has_dims or row_count >= 2)
+    return has_art and (has_len or row_count >= 2)
+
+
+def _has_article_table_signals(html: str) -> bool:
+    if not _has_article_table_base_signals(html):
+        return False
+    table_text = _clean_text(" ".join(t.get_text(" ", strip=True) for t in BeautifulSoup(html or "", "lxml").select("table")))
+    has_perf = bool(re.search(r"ablaufleistung|l\s*/\s*s", table_text, re.IGNORECASE))
+    has_dn = bool(re.search(r"\bdn\s*\d{2,3}\b|\bdn\b|\bd\s*/\s*ø\b", table_text, re.IGNORECASE))
+    has_dims = bool(re.search(r"\bH\s*cm\b|\bH1\s*cm\b|\bh\s*cm\b", table_text, re.IGNORECASE))
+    return has_perf or has_dn or has_dims
+
+
+def _extract_pdf_url(html: str, base_url: str) -> Optional[str]:
+    soup = BeautifulSoup(html or "", "lxml")
+    for a in soup.select("a[href]"):
+        href = (a.get("href") or "").strip()
+        txt = _clean_text(a.get_text(" ", strip=True)).lower()
+        if href.lower().endswith(".pdf") or "produktdatenblatt" in txt:
+            return _canonicalize_url(urljoin(base_url, href))
+    return None
+
+
+def _extract_article_rows_from_table(html: str) -> List[Dict[str, Any]]:
+    soup = BeautifulSoup(html or "", "lxml")
+    out: List[Dict[str, Any]] = []
+    for table in soup.select("table"):
+        rows = table.select("tr")
+        if len(rows) < 2:
+            continue
+        headers = [_clean_text(x.get_text(" ", strip=True)) for x in rows[0].select("th,td")]
+        if not headers:
+            continue
+        for tr in rows[1:]:
+            vals = [_clean_text(x.get_text(" ", strip=True)) for x in tr.select("td,th")]
+            if not vals:
+                continue
+            row = {headers[i] if i < len(headers) else f"col_{i}": vals[i] for i in range(len(vals))}
+            row_text = _clean_text(" ".join(vals))
+            if _article_from_text(row_text):
+                row["_row_text"] = row_text
+                out.append(row)
+    return out
 
 
 def _select_article_variant_from_table(html: str, target_mm: int = 1200, tolerance_mm: int = 100) -> Optional[Dict[str, Any]]:
@@ -423,6 +463,8 @@ def _is_relevant_shower_pro_page(title: str, flat: str, html: str) -> bool:
     if DRAIN_TECH_RE.search(txt):
         score += 1
     if _has_article_table_signals(html):
+        score += 2
+    elif CLEANLINE_RE.search(txt) and _has_article_table_base_signals(html):
         score += 2
 
     if HARD_WRONG_FAMILY_RE.search(txt):
@@ -651,6 +693,8 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
         "sealing_fleece_preassembled": None,
         "colours_count": None,
         "resolved_length_mm": None,
+        "pdf_url": None,
+        "article_rows_json": None,
         "evidence": [],
     }
 
@@ -662,7 +706,15 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
 
     flat = _main_flat_text(html)
 
+    pdf_url = _extract_pdf_url(html, final)
+    if pdf_url:
+        res["pdf_url"] = pdf_url
+        res["evidence"].append(("PDF", pdf_url, final))
+
     if re.search(r"/product/pro_[a-z0-9_-]+/?$", src, re.IGNORECASE):
+        article_rows = _extract_article_rows_from_table(html)
+        if article_rows:
+            res["article_rows_json"] = json.dumps(article_rows[:50], ensure_ascii=False)
         variant = _select_article_variant_from_table(html, target_mm=1200, tolerance_mm=100)
         if variant:
             row_text = str(variant.get("row_text") or "")

@@ -64,6 +64,7 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         html = """
         <html><body><main>
         <h1>Geberit Duschrinne System</h1>
+        <a href="/docs/pro_170941.pdf">Produktdatenblatt herunterladen (PDF)</a>
         <table>
           <tr><th>Art.-Nr.</th><th>Länge</th><th>Ablaufleistung</th><th>DN</th><th>Einbauhöhe</th></tr>
           <tr><td>154.111.00.1</td><td>900 mm</td><td>0,4 l/s</td><td>DN 50</td><td>90 mm</td></tr>
@@ -78,6 +79,23 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         self.assertEqual(params["flow_rate_lps"], 0.8)
         self.assertEqual(params["outlet_dn_default"], "DN50")
         self.assertEqual(params["height_adj_min_mm"], 100)
+        self.assertTrue(params["pdf_url"].endswith(".pdf/"))
+        self.assertIn("154.451.KS.1", params["article_rows_json"])
+
+    def test_extracts_cover_rows_from_pro_article_table(self):
+        pro_url = "https://catalog.geberit.de/de-DE/product/PRO_1447036/"
+        html = """
+        <html><body><main>
+        <h1>Geberit CleanLine Abdeckung</h1>
+        <table>
+          <tr><th>Art.-Nr.</th><th>Farbe/Oberfläche</th><th>L cm</th></tr>
+          <tr><td>154.461.KS.1</td><td>Edelstahl</td><td>120</td></tr>
+        </table>
+        </main></body></html>
+        """
+        with patch.object(geberit, "_safe_get_text", return_value=(200, pro_url, html, "")):
+            params = geberit.extract_parameters(pro_url)
+        self.assertIn("154.461.KS.1", params["article_rows_json"])
 
     def test_discovery_accepts_pro_pages_and_rejects_siphon(self):
         system_url = geberit.CATALOG_SYSTEM_SEEDS[0]
@@ -95,8 +113,8 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         """
         detail_html = """
         <html><body><main>
-        <h1>Geberit Produktseite Variante</h1>
-        <table><tr><th>Art.-Nr.</th><th>Ablaufleistung l/s</th><th>DN</th><th>L cm</th><th>H cm</th></tr><tr><td>154.455.00.1</td><td>0,7</td><td>DN 50</td><td>120</td><td>9</td></tr></table>
+        <h1>Geberit CleanLine Abdeckung</h1>
+        <table><tr><th>Art.-Nr.</th><th>Farbe/Oberfläche</th><th>L cm</th></tr><tr><td>154.455.00.1</td><td>Edelstahl</td><td>120</td></tr></table>
         </main></body></html>
         """
 
