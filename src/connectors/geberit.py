@@ -40,6 +40,10 @@ WRONG_FAMILY_RE = re.compile(
     r"ausgussbecken|rohrbogengeruchsverschluss|waschtisch|m[öo]belwaschtisch|sp[üu]lkasten|\bwc\b|lavabo|basin|sink|clean\s*drain",
     re.IGNORECASE,
 )
+HARD_WRONG_FAMILY_RE = re.compile(
+    r"waschtisch|m[öo]belwaschtisch|sp[üu]lkasten|\bwc\b|ausgussbecken|geruchsverschluss|siphon",
+    re.IGNORECASE,
+)
 
 ARTICLE_RE = re.compile(r"\b(\d{3}\.\d{3}[A-Z0-9\.]*|\d{6,}[A-Z0-9\.]*)\b", re.IGNORECASE)
 FLOW_LPS_RE = re.compile(r"(\d+(?:[\.,]\d+)?)\s*l\s*/\s*s\b", re.IGNORECASE)
@@ -328,9 +332,10 @@ def _has_article_table_signals(html: str) -> bool:
         return False
     has_art = bool(re.search(r"art\.?\s*-?\s*nr|artikel\s*-?\s*nr", table_text, re.IGNORECASE))
     has_perf = bool(re.search(r"ablaufleistung|l\s*/\s*s", table_text, re.IGNORECASE))
+    has_dn = bool(re.search(r"\bdn\s*\d{2,3}\b|\bdn\b", table_text, re.IGNORECASE))
     has_dims = bool(re.search(r"\bL\s*cm\b", table_text, re.IGNORECASE) and re.search(r"\bH\s*cm\b", table_text, re.IGNORECASE))
     row_count = len(soup.select("table tr"))
-    return has_art and (has_perf or has_dims or row_count >= 2)
+    return has_art and has_dn and (has_perf or has_dims or row_count >= 2)
 
 
 def _select_article_variant_from_table(html: str, target_mm: int = 1200, tolerance_mm: int = 100) -> Optional[Dict[str, Any]]:
@@ -419,6 +424,8 @@ def _extract_public_links(html: str, base_url: str) -> Set[str]:
 
 def _wrong_product_family(url: str, title: str, flat: str, html: str = "") -> bool:
     txt = f"{url} {title} {flat}".lower()
+    if HARD_WRONG_FAMILY_RE.search(txt):
+        return True
     if not WRONG_FAMILY_RE.search(txt):
         return False
     if CLEANLINE_RE.search(txt) or DRAIN_RE.search(txt) or _has_article_table_signals(html):
