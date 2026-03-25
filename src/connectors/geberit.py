@@ -41,13 +41,14 @@ WRONG_FAMILY_RE = re.compile(
     re.IGNORECASE,
 )
 HARD_WRONG_FAMILY_RE = re.compile(
-    r"rohrbogengeruchsverschluss|ausgussbecken|gipsfangbecken|anschlussgarnitur|waschtisch|m[öo]belwaschtisch|sp[üu]lkasten|\bwc\b|clean\s*drain",
+    r"rohrbogengeruchsverschluss|ausgussbecken|gipsfangbecken|anschlussgarnitur|waschtisch|m[öo]belwaschtisch|sp[üu]lkasten|\bwc\b",
     re.IGNORECASE,
 )
 SOFT_WRONG_FAMILY_RE = re.compile(
-    r"geruchsverschluss|siphon|lavabo|basin|sink",
+    r"geruchsverschluss|siphon|lavabo|basin|sink|clean\s*drain",
     re.IGNORECASE,
 )
+DRAIN_TECH_RE = re.compile(r"ablaufleistung|\bdn\s*\d{2,3}\b|\bdn\b", re.IGNORECASE)
 
 ARTICLE_RE = re.compile(r"\b(\d{3}\.\d{3}[A-Z0-9\.]*|\d{6,}[A-Z0-9\.]*)\b", re.IGNORECASE)
 FLOW_LPS_RE = re.compile(r"(\d+(?:[\.,]\d+)?)\s*l\s*/\s*s\b", re.IGNORECASE)
@@ -412,8 +413,29 @@ def _extract_public_links(html: str, base_url: str) -> Set[str]:
 
 
 
+
+
+def _is_relevant_shower_pro_page(title: str, flat: str, html: str) -> bool:
+    txt = f"{title} {flat}".lower()
+    score = 0
+    if CLEANLINE_RE.search(txt) or DRAIN_RE.search(txt):
+        score += 2
+    if DRAIN_TECH_RE.search(txt):
+        score += 1
+    if _has_article_table_signals(html):
+        score += 2
+
+    if HARD_WRONG_FAMILY_RE.search(txt):
+        score -= 4
+    if SOFT_WRONG_FAMILY_RE.search(txt):
+        score -= 2
+
+    return score >= 2
+
 def _wrong_product_family(url: str, title: str, flat: str, html: str = "") -> bool:
     txt = f"{url} {title} {flat}".lower()
+    if _is_catalog_pro_page(url):
+        return not _is_relevant_shower_pro_page(title, flat, html)
     has_positive = bool(CLEANLINE_RE.search(txt) or DRAIN_RE.search(txt) or _has_article_table_signals(html))
     if HARD_WRONG_FAMILY_RE.search(txt):
         return True
@@ -434,9 +456,7 @@ def _is_cleanline_product_page(url: str, title: str, flat: str, from_cleanline_c
     if not (_is_catalog_detail_page(url) or _is_public_geberit_url(url)):
         return False
     if from_cleanline_context and is_catalog_detail and is_catalog_pro:
-        if CLEANLINE_RE.search(txt) or DRAIN_RE.search(txt) or _has_article_table_signals(html):
-            return True
-        return False
+        return _is_relevant_shower_pro_page(title, flat, html)
     if not from_cleanline_context and not CLEANLINE_RE.search(txt):
         return False
     if not (CLEANLINE_RE.search(txt) or DRAIN_RE.search(txt)):
