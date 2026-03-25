@@ -322,11 +322,15 @@ def _extract_catalog_links(html: str, base_url: str) -> Set[str]:
 
 
 def _has_article_table_signals(html: str) -> bool:
-    src = _clean_text(BeautifulSoup(html or "", "lxml").get_text(" ", strip=True))
-    has_art = bool(re.search(r"art\.?-?nr", src, re.IGNORECASE))
-    has_perf = bool(re.search(r"ablaufleistung", src, re.IGNORECASE))
-    has_dims = bool(re.search(r"\bL\s*cm\b|\bH\s*cm\b", src, re.IGNORECASE))
-    return has_art and (has_perf or has_dims)
+    soup = BeautifulSoup(html or "", "lxml")
+    table_text = _clean_text(" ".join(t.get_text(" ", strip=True) for t in soup.select("table")))
+    if not table_text:
+        return False
+    has_art = bool(re.search(r"art\.?\s*-?\s*nr|artikel\s*-?\s*nr", table_text, re.IGNORECASE))
+    has_perf = bool(re.search(r"ablaufleistung|l\s*/\s*s", table_text, re.IGNORECASE))
+    has_dims = bool(re.search(r"\bL\s*cm\b", table_text, re.IGNORECASE) and re.search(r"\bH\s*cm\b", table_text, re.IGNORECASE))
+    row_count = len(soup.select("table tr"))
+    return has_art and (has_perf or has_dims or row_count >= 2)
 
 
 def _select_article_variant_from_table(html: str, target_mm: int = 1200, tolerance_mm: int = 100) -> Optional[Dict[str, Any]]:
