@@ -87,15 +87,15 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         system_html = f'<html><body><a href="{product_url}">CleanLine Produkt</a><a href="{wrong_url}">Siphon</a></body></html>'
         product_html = f"""
         <html><body><main>
-        <h1>Geberit Duschrinne System</h1>
-        Produktseite 1200 mm für bodenebene Anwendungen.
+        <h1>Geberit Produktseite</h1>
+        <table><tr><th>Art.-Nr.</th><th>Ablaufleistung l/s</th><th>L cm</th><th>H cm</th></tr><tr><td>154.451.KS.1</td><td>0,8</td><td>120</td><td>10</td></tr></table>
         <a href="{detail_url}">Variante</a>
         </main></body></html>
         """
         detail_html = """
         <html><body><main>
-        <h1>Geberit Duschprofil</h1>
-        Länge 1200 mm.
+        <h1>Geberit Produktseite Variante</h1>
+        <table><tr><th>Art.-Nr.</th><th>Ablaufleistung l/s</th><th>L cm</th><th>H cm</th></tr><tr><td>154.455.00.1</td><td>0,7</td><td>120</td><td>9</td></tr></table>
         </main></body></html>
         """
 

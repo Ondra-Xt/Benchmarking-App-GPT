@@ -321,6 +321,14 @@ def _extract_catalog_links(html: str, base_url: str) -> Set[str]:
     return out
 
 
+def _has_article_table_signals(html: str) -> bool:
+    src = _clean_text(BeautifulSoup(html or "", "lxml").get_text(" ", strip=True))
+    has_art = bool(re.search(r"art\.?-?nr", src, re.IGNORECASE))
+    has_perf = bool(re.search(r"ablaufleistung", src, re.IGNORECASE))
+    has_dims = bool(re.search(r"\bL\s*cm\b|\bH\s*cm\b", src, re.IGNORECASE))
+    return has_art and (has_perf or has_dims)
+
+
 def _select_article_variant_from_table(html: str, target_mm: int = 1200, tolerance_mm: int = 100) -> Optional[Dict[str, Any]]:
     soup = BeautifulSoup(html or "", "lxml")
     rows: List[Dict[str, Any]] = []
@@ -411,7 +419,7 @@ def _wrong_product_family(url: str, title: str, flat: str) -> bool:
         return False
     return not DRAIN_RE.search(txt)
 
-def _is_cleanline_product_page(url: str, title: str, flat: str, from_cleanline_context: bool = False) -> bool:
+def _is_cleanline_product_page(url: str, title: str, flat: str, from_cleanline_context: bool = False, html: str = "") -> bool:
     txt = f"{url} {title} {flat}".lower()
     is_catalog_detail = _is_catalog_detail_page(url)
     is_catalog_pro = _is_catalog_pro_page(url)
@@ -422,7 +430,9 @@ def _is_cleanline_product_page(url: str, title: str, flat: str, from_cleanline_c
     if not (_is_catalog_detail_page(url) or _is_public_geberit_url(url)):
         return False
     if from_cleanline_context and is_catalog_detail and is_catalog_pro:
-        return True
+        if CLEANLINE_RE.search(txt) or DRAIN_RE.search(txt) or _has_article_table_signals(html):
+            return True
+        return False
     if not from_cleanline_context and not CLEANLINE_RE.search(txt):
         return False
     if not (CLEANLINE_RE.search(txt) or DRAIN_RE.search(txt)):
@@ -510,11 +520,22 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         if _wrong_product_family(u, title, flat):
             add_drop(u, "wrong_product_family")
             continue
-        if not _is_cleanline_product_page(u, title, flat, from_cleanline_context=pages.get(u, False)):
+        if not _is_cleanline_product_page(u, title, flat, from_cleanline_context=pages.get(u, False), html=html):
             add_drop(u, "not_cleanline_product_page")
             continue
 
-        length_mm, length_mode, range_txt, range_match = _length_info(f"{title} {flat}", want)
+        length_mm: Optional[int] = None
+        length_mode = "unknown"
+        range_txt: Optional[str] = None
+        range_match = False
+        if _is_catalog_pro_page(u):
+            variant = _select_article_variant_from_table(html, target_mm=want, tolerance_mm=tol)
+            if variant and isinstance(variant.get("length_mm"), int):
+                length_mm = int(variant["length_mm"])
+                length_mode = "fixed"
+        if length_mode == "unknown":
+            length_mm, length_mode, range_txt, range_match = _length_info(f"{title} {flat}", want)
+
         if length_mode == "fixed" and length_mm is not None and not (min_len <= length_mm <= max_len):
             rejected_lengths.append({"url": u, "length_mm": length_mm, "target_mm": want})
             add_drop(u, "length_out_of_range", {"length_mm": length_mm})
