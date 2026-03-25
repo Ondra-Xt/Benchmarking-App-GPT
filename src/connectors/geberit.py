@@ -41,7 +41,11 @@ WRONG_FAMILY_RE = re.compile(
     re.IGNORECASE,
 )
 HARD_WRONG_FAMILY_RE = re.compile(
-    r"waschtisch|m[öo]belwaschtisch|sp[üu]lkasten|\bwc\b|ausgussbecken|geruchsverschluss|siphon",
+    r"waschtisch|m[öo]belwaschtisch|sp[üu]lkasten|\bwc\b|ausgussbecken|clean\s*drain",
+    re.IGNORECASE,
+)
+SOFT_WRONG_FAMILY_RE = re.compile(
+    r"geruchsverschluss|siphon|lavabo|basin|sink",
     re.IGNORECASE,
 )
 
@@ -410,13 +414,14 @@ def _extract_public_links(html: str, base_url: str) -> Set[str]:
 
 def _wrong_product_family(url: str, title: str, flat: str, html: str = "") -> bool:
     txt = f"{url} {title} {flat}".lower()
+    has_positive = bool(CLEANLINE_RE.search(txt) or DRAIN_RE.search(txt) or _has_article_table_signals(html))
     if HARD_WRONG_FAMILY_RE.search(txt):
-        return True
+        return not has_positive
+    if SOFT_WRONG_FAMILY_RE.search(txt):
+        return not has_positive
     if not WRONG_FAMILY_RE.search(txt):
         return False
-    if CLEANLINE_RE.search(txt) or DRAIN_RE.search(txt) or _has_article_table_signals(html):
-        return False
-    return True
+    return not has_positive
 
 def _is_cleanline_product_page(url: str, title: str, flat: str, from_cleanline_context: bool = False, html: str = "") -> bool:
     txt = f"{url} {title} {flat}".lower()
