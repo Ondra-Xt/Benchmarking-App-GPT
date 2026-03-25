@@ -417,11 +417,13 @@ def _extract_public_links(html: str, base_url: str) -> Set[str]:
 
 
 
-def _wrong_product_family(url: str, title: str, flat: str) -> bool:
+def _wrong_product_family(url: str, title: str, flat: str, html: str = "") -> bool:
     txt = f"{url} {title} {flat}".lower()
     if not WRONG_FAMILY_RE.search(txt):
         return False
-    return not DRAIN_RE.search(txt)
+    if CLEANLINE_RE.search(txt) or DRAIN_RE.search(txt) or _has_article_table_signals(html):
+        return False
+    return True
 
 def _is_cleanline_product_page(url: str, title: str, flat: str, from_cleanline_context: bool = False, html: str = "") -> bool:
     txt = f"{url} {title} {flat}".lower()
@@ -521,7 +523,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         if _is_system_listing_page(u):
             add_drop(u, "listing_page_intermediate")
             continue
-        if _wrong_product_family(u, title, flat):
+        if _wrong_product_family(u, title, flat, html=html):
             add_drop(u, "wrong_product_family")
             continue
         if not _is_cleanline_product_page(u, title, flat, from_cleanline_context=pages.get(u, False), html=html):
