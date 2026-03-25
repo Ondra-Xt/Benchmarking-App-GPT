@@ -88,15 +88,15 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         product_html = f"""
         <html><body><main>
         <h1>Geberit Produktseite</h1>
-        Breadcrumb: Badezimmer / Waschtisch / Produktkatalog.
-        <table><tr><th>Art.-Nr.</th><th>Ablaufleistung l/s</th><th>L cm</th><th>H cm</th></tr><tr><td>154.451.KS.1</td><td>0,8</td><td>120</td><td>10</td></tr></table>
+        Breadcrumb: Badezimmer / Duschbereich / Produktkatalog.
+        <table><tr><th>Art.-Nr.</th><th>Ablaufleistung l/s</th><th>DN</th><th>L cm</th><th>H cm</th></tr><tr><td>154.451.KS.1</td><td>0,8</td><td>DN 50</td><td>120</td><td>10</td></tr></table>
         <a href="{detail_url}">Variante</a>
         </main></body></html>
         """
         detail_html = """
         <html><body><main>
         <h1>Geberit Produktseite Variante</h1>
-        <table><tr><th>Art.-Nr.</th><th>Ablaufleistung l/s</th><th>L cm</th><th>H cm</th></tr><tr><td>154.455.00.1</td><td>0,7</td><td>120</td><td>9</td></tr></table>
+        <table><tr><th>Art.-Nr.</th><th>Ablaufleistung l/s</th><th>DN</th><th>L cm</th><th>H cm</th></tr><tr><td>154.455.00.1</td><td>0,7</td><td>DN 50</td><td>120</td><td>9</td></tr></table>
         </main></body></html>
         """
 
