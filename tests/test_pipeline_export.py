@@ -21,6 +21,18 @@ class _FakeConnectorYes:
         return []
 
 
+class _FakeDiscoverA:
+    @staticmethod
+    def discover_candidates(target_length_mm=1200, tolerance_mm=100):
+        return ([{"manufacturer": "dallmer", "product_id": "d-1", "product_name": "A", "product_url": "https://a.example/p"}], [])
+
+
+class _FakeDiscoverB:
+    @staticmethod
+    def discover_candidates(target_length_mm=1200, tolerance_mm=100):
+        return ([{"manufacturer": "hansgrohe", "product_id": "h-1", "product_name": "B", "product_url": "https://b.example/p"}], [])
+
+
 class PipelineExportTests(unittest.TestCase):
     def _make_template(self, path: Path):
         wb = openpyxl.Workbook()
@@ -122,6 +134,27 @@ class PipelineExportTests(unittest.TestCase):
         self.assertEqual(excluded["product_id"].tolist(), ["A1"])
         self.assertEqual(excluded["excluded_reason"].tolist(), ["complete_system_no"])
         self.assertTrue((evidence["product_id"] == "A2").all())
+        self.assertTrue(bom.empty)
+
+    def test_run_discovery_respects_selected_connectors(self):
+        with patch.dict(pipeline.CONNECTORS, {"dallmer": _FakeDiscoverA(), "hansgrohe": _FakeDiscoverB()}, clear=True):
+            reg, dbg = pipeline.run_discovery(selected_connectors=["hansgrohe"])
+        self.assertEqual(reg["manufacturer"].tolist(), ["hansgrohe"])
+        self.assertTrue(dbg.empty)
+
+    def test_run_update_respects_selected_connectors(self):
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "dallmer", "product_id": "D1", "product_name": "D", "product_url": "https://d.example/p", "candidate_type": "drain", "complete_system": "yes"},
+                {"manufacturer": "hansgrohe", "product_id": "H1", "product_name": "H", "product_url": "https://h.example/p", "candidate_type": "drain", "complete_system": "yes"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"dallmer": _FakeConnectorYes(), "hansgrohe": _FakeConnectorYes()}, clear=True):
+            products, comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config(), selected_connectors=["hansgrohe"])
+        self.assertEqual(products["manufacturer"].tolist(), ["hansgrohe"])
+        self.assertEqual(comparison["manufacturer"].tolist(), ["hansgrohe"])
+        self.assertTrue(excluded.empty)
+        self.assertTrue((evidence["manufacturer"] == "hansgrohe").all())
         self.assertTrue(bom.empty)
 
 

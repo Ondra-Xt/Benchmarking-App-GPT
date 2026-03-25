@@ -1,7 +1,7 @@
 # src/pipeline.py
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple, Optional, Union
+from typing import Any, Dict, List, Tuple, Optional, Union, Iterable, Set
 import re
 import pandas as pd
 
@@ -67,9 +67,22 @@ def _is_accessory_like(text: str) -> bool:
     t = (text or "").lower()
     return any(k in t for k in ("zubehoer", "zubehör", "rost", "abdeckung", "einleger", "profil", "rahmen", "siphon", "geruch"))
 
+
+def _select_connector_keys(selected_connectors: Optional[Iterable[str]]) -> Set[str]:
+    if not selected_connectors:
+        return set(CONNECTORS.keys())
+    picked = {str(x).strip().lower() for x in selected_connectors if str(x).strip()}
+    valid = set(CONNECTORS.keys())
+    out = picked & valid
+    return out if out else valid
+
 # --- API pro app.py ------------------------------------------------------
 
-def run_discovery(target_length_mm: int = 1200, tolerance_mm: int = 100) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def run_discovery(
+    target_length_mm: int = 1200,
+    tolerance_mm: int = 100,
+    selected_connectors: Optional[Iterable[str]] = None,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Vrací:
       registry_df: kandidáti (sloupce: manufacturer, product_name, product_url, candidate_type, …)
@@ -78,7 +91,10 @@ def run_discovery(target_length_mm: int = 1200, tolerance_mm: int = 100) -> Tupl
     all_rows: List[Dict[str, Any]] = []
     debug_rows: List[Dict[str, Any]] = []
 
+    selected = _select_connector_keys(selected_connectors)
     for key, connector in CONNECTORS.items():
+        if key not in selected:
+            continue
         found, dbg = connector.discover_candidates(target_length_mm=target_length_mm, tolerance_mm=tolerance_mm)
         if dbg:
             debug_rows.extend(dbg)
@@ -148,6 +164,7 @@ def run_update(
     cfg: Union[WeightConfig, Dict[str, Any]],
     target_length_mm: Optional[int] = None,
     tolerance_mm: Optional[int] = None,
+    selected_connectors: Optional[Iterable[str]] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Vrací:
@@ -162,6 +179,12 @@ def run_update(
     registry_df = registry_df.copy()
     if "manufacturer" in registry_df.columns:
         registry_df["manufacturer"] = registry_df["manufacturer"].map(_normalize_manufacturer)
+    selected = _select_connector_keys(selected_connectors)
+    if "manufacturer" in registry_df.columns:
+        registry_df = registry_df[registry_df["manufacturer"].isin(selected)].reset_index(drop=True)
+        if registry_df.empty:
+            empty = pd.DataFrame()
+            return empty, empty, empty, empty, empty
 
     products_rows: List[Dict[str, Any]] = []
     comparison_rows: List[Dict[str, Any]] = []
