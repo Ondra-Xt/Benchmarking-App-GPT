@@ -97,6 +97,22 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
             params = geberit.extract_parameters(pro_url)
         self.assertIn("154.461.KS.1", params["article_rows_json"])
 
+    def test_does_not_infer_316_from_article_number_pattern(self):
+        pro_url = "https://catalog.geberit.de/de-DE/product/PRO_999999/"
+        html = """
+        <html><body><main>
+        <h1>Geberit CleanLine Abdeckung</h1>
+        <table>
+          <tr><th>Art.-Nr.</th><th>L cm</th><th>H cm</th></tr>
+          <tr><td>154.316.00.1</td><td>120</td><td>1</td></tr>
+        </table>
+        </main></body></html>
+        """
+        with patch.object(geberit, "_safe_get_text", return_value=(200, pro_url, html, "")):
+            params = geberit.extract_parameters(pro_url)
+        self.assertIsNone(params["material_detail"])
+        self.assertEqual(params["resolved_length_mm"], 1200)
+
     def test_discovery_accepts_pro_pages_and_rejects_siphon(self):
         system_url = geberit.CATALOG_SYSTEM_SEEDS[0]
         product_url = "https://catalog.geberit.de/de-DE/product/PRO_170941/"
