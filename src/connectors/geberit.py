@@ -606,6 +606,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             if listing_card_candidates:
                 pages[u] = pages.get(u, False) or from_cleanline_context
                 listing_card_urls.update(listing_card_candidates)
+                queue = [(cu, ctx) for cu, ctx in queue if (not _is_catalog_pro_page(cu) or cu in listing_card_urls)]
                 for cand in sorted(listing_card_candidates):
                     if cand not in seen and not any(cu == cand for cu, _ in queue):
                         queue.append((cand, True))
@@ -618,7 +619,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
         final_c = _canonicalize_url(final)
         page_ctx = from_cleanline_context or bool(CLEANLINE_RE.search(f"{final_c} {html}"))
-        if _is_public_geberit_url(final_c) or _is_system_listing_page(final_c) or (_is_catalog_detail_page(final_c) and page_ctx):
+        allow_detail_candidate = (not listing_card_urls) or (final_c in listing_card_urls)
+        if _is_public_geberit_url(final_c) or _is_system_listing_page(final_c) or (_is_catalog_detail_page(final_c) and page_ctx and allow_detail_candidate):
             pages[final_c] = pages.get(final_c, False) or page_ctx
 
         extracted_links = _extract_public_links(html, final_c)
