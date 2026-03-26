@@ -7,6 +7,7 @@ from src.config import load_config, save_config, default_config, EQUIVALENCE_KEY
 from src.run_manager import utc_run_id, create_run_dirs
 from src.pipeline import run_discovery, run_update
 from src.excel_export import export_excel
+from src.connectors import CONNECTORS
 
 APP_TITLE = "Drain Systems Benchmark – MVP"
 BASE_DIR = Path(__file__).parent
@@ -26,6 +27,12 @@ target_length = st.sidebar.number_input("Cílová délka (mm)", min_value=300, m
 tolerance = st.sidebar.number_input("Tolerance (±mm)", min_value=0, max_value=500, value=100, step=10)
 
 show_excluded = st.sidebar.checkbox("Zobrazit i nevyhovující produkty", value=False)
+connector_options = sorted(CONNECTORS.keys())
+selected_connectors = st.sidebar.multiselect(
+    "Konektory pro běh",
+    options=connector_options,
+    default=connector_options,
+)
 
 st.sidebar.subheader("Penalizace")
 cfg.unknown_penalty_score = st.sidebar.number_input("Unknown score (0–1)", min_value=0.0, max_value=1.0, value=float(cfg.unknown_penalty_score), step=0.05)
@@ -106,6 +113,14 @@ if "bom_options" not in st.session_state:
 if "last_run_dir" not in st.session_state:
     st.session_state["last_run_dir"] = ""
 
+
+def _reset_update_state() -> None:
+    st.session_state["products"] = pd.DataFrame()
+    st.session_state["comparison"] = pd.DataFrame()
+    st.session_state["excluded"] = pd.DataFrame()
+    st.session_state["evidence"] = pd.DataFrame()
+    st.session_state["bom_options"] = pd.DataFrame()
+
 # Run discovery
 if run_discovery_btn:
     run_id = utc_run_id("discovery")
@@ -113,13 +128,16 @@ if run_discovery_btn:
     # snapshot weights
     save_config(rp.run_dir / "weights.json", cfg)
 
-    reg, dbg = run_discovery(target_length_mm=int(target_length), tolerance_mm=int(tolerance))
+    reg, dbg = run_discovery(
+        target_length_mm=int(target_length),
+        tolerance_mm=int(tolerance),
+        selected_connectors=selected_connectors,
+    )
     reg.to_csv(rp.outputs_dir / "registry.csv", index=False)
-    dbg.to_csv(rp.outputs_dir / "discovery_debug.csv", index=False)
     dbg.to_csv(rp.outputs_dir / "discovery_debug.csv", index=False)
     st.session_state["registry"] = reg
     st.session_state["discovery_debug"] = dbg
-    st.session_state["discovery_debug"] = dbg
+    _reset_update_state()
     st.session_state["last_run_dir"] = str(rp.run_dir)
 
     st.success(f"Discovery dokončeno. Kandidátů: {len(reg)}. Run: {run_id}")
@@ -137,7 +155,13 @@ if run_update_btn:
     if reg.empty:
         st.warning("Nejdřív spusť Run discovery (nebo nahraj registry).")
     else:
-        products, comparison, excluded, evidence, bom_options = run_update(reg, cfg, target_length_mm=int(target_length), tolerance_mm=int(tolerance))
+        products, comparison, excluded, evidence, bom_options = run_update(
+            reg,
+            cfg,
+            target_length_mm=int(target_length),
+            tolerance_mm=int(tolerance),
+            selected_connectors=selected_connectors,
+        )
         st.session_state["products"] = products
         st.session_state["comparison"] = comparison
         st.session_state["excluded"] = excluded
@@ -145,6 +169,7 @@ if run_update_btn:
         st.session_state["bom_options"] = bom_options
 
         # persist snapshots
+        reg.to_csv(rp.outputs_dir / "registry.csv", index=False)
         products.to_csv(rp.outputs_dir / "products.csv", index=False)
         comparison.to_csv(rp.outputs_dir / "comparison.csv", index=False)
         excluded.to_csv(rp.outputs_dir / "excluded.csv", index=False)
@@ -193,6 +218,7 @@ if export_btn:
         out_path = rp.outputs_dir / "benchmark_output.xlsx"
         export_excel(
             TEMPLATE_PATH, out_path, cfg,
+            registry_df=st.session_state["registry"],
             products_df=st.session_state["products"],
             comparison_df=st.session_state["comparison"],
             excluded_df=st.session_state["excluded"],
@@ -200,6 +226,12 @@ if export_btn:
             bom_options_df=st.session_state["bom_options"],
             components_df=None,
         )
+        st.session_state["registry"].to_csv(rp.outputs_dir / "registry.csv", index=False)
+        st.session_state["products"].to_csv(rp.outputs_dir / "products.csv", index=False)
+        st.session_state["comparison"].to_csv(rp.outputs_dir / "comparison.csv", index=False)
+        st.session_state["excluded"].to_csv(rp.outputs_dir / "excluded.csv", index=False)
+        st.session_state["evidence"].to_csv(rp.outputs_dir / "evidence.csv", index=False)
+        st.session_state["bom_options"].to_csv(rp.outputs_dir / "bom_options.csv", index=False)
         st.session_state["last_run_dir"] = str(rp.run_dir)
         st.success("Excel export hotový.")
         with open(out_path, "rb") as f:
