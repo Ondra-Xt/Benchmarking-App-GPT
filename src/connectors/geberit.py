@@ -659,13 +659,14 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
         title = _extract_title(html, final)
         flat = _main_flat_text(html)
+        trusted_listing_card = u in listing_card_urls
         if _is_system_listing_page(u):
             add_drop(u, "listing_page_intermediate")
             continue
         if _wrong_product_family(u, title, flat, html=html):
             add_drop(u, "wrong_product_family")
             continue
-        if not _is_cleanline_product_page(u, title, flat, from_cleanline_context=pages.get(u, False), html=html):
+        if not trusted_listing_card and not _is_cleanline_product_page(u, title, flat, from_cleanline_context=pages.get(u, False), html=html):
             add_drop(u, "not_cleanline_product_page")
             continue
 
