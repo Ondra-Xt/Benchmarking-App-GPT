@@ -72,8 +72,16 @@ def export_excel(
     """
     wb = openpyxl.load_workbook(template_path)
 
+    registry_df = pd.DataFrame() if registry_df is None else registry_df.copy()
+    products_df = pd.DataFrame() if products_df is None else products_df.copy()
+    comparison_df = pd.DataFrame() if comparison_df is None else comparison_df.copy()
+    excluded_df = pd.DataFrame() if excluded_df is None else excluded_df.copy()
+    evidence_df = pd.DataFrame() if evidence_df is None else evidence_df.copy()
+    bom_options_df = pd.DataFrame() if bom_options_df is None else bom_options_df.copy()
+    components_df = pd.DataFrame() if components_df is None else components_df.copy()
+
     # --- AUTO split base_set -> Components ---
-    if products_df is not None and not products_df.empty and components_df is None:
+    if not products_df.empty and components_df.empty:
         df = products_df.copy()
 
         cand = df["candidate_type"].astype(str).str.lower() if "candidate_type" in df.columns else pd.Series([""] * len(df))
@@ -84,10 +92,7 @@ def export_excel(
         components_df = df[is_component].copy()
         products_df = df[~is_component].copy()
 
-    def write_df(sheet_name: str, df: Optional[pd.DataFrame]):
-        if df is None:
-            return
-
+    def write_df(sheet_name: str, df: pd.DataFrame):
         # přepiš sheet
         if sheet_name in wb.sheetnames:
             ws_old = wb[sheet_name]
@@ -101,7 +106,7 @@ def export_excel(
         for _, row in df.iterrows():
             ws.append([_to_excel_cell(v) for v in row.tolist()])
 
-    write_df("Registry", registry_df)
+    write_df("Candidates_All", registry_df)
     write_df("Products", products_df)
     write_df("Components", components_df)
     write_df("Comparison", comparison_df)
