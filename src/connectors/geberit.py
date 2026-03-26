@@ -71,6 +71,47 @@ def _safe_get_text(url: str, timeout: int = 35) -> Tuple[Optional[int], str, str
         return None, url, "", f"{type(e).__name__}: {e}"
 
 
+def _extract_visible_listing_card_links_playwright(url: str, timeout_ms: int = 30000) -> Set[str]:
+    """
+    Render Geberit system listing pages and return visible product-card PRO links only.
+    Falls back to empty set if Playwright/browser is unavailable.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception:
+        return set()
+
+    out: Set[str] = set()
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            page.wait_for_selector('a[href*="/de-DE/product/PRO_"]', timeout=timeout_ms)
+            page.wait_for_timeout(900)
+
+            handles = page.query_selector_all('a[href*="/de-DE/product/PRO_"]')
+            for a in handles:
+                try:
+                    href = a.get_attribute("href") or ""
+                    if not href:
+                        continue
+                    box = a.bounding_box()
+                    if box is None or box.get("width", 0) <= 1 or box.get("height", 0) <= 1:
+                        continue
+                    if not a.is_visible():
+                        continue
+                    u = _canonicalize_url(urljoin(url, href))
+                    if _is_catalog_pro_page(u):
+                        out.add(u)
+                except Exception:
+                    continue
+            browser.close()
+    except Exception:
+        return set()
+    return out
+
+
 def _clean_text(s: str) -> str:
     return " ".join((s or "").split())
 
@@ -558,6 +599,16 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         if u in seen:
             continue
         seen.add(u)
+
+        if _is_system_listing_page(u):
+            listing_card_candidates = _extract_visible_listing_card_links_playwright(u)
+            if listing_card_candidates:
+                pages[u] = pages.get(u, False) or from_cleanline_context
+                listing_card_urls.update(listing_card_candidates)
+                for cand in sorted(listing_card_candidates):
+                    if cand not in seen and not any(cu == cand for cu, _ in queue):
+                        queue.append((cand, True))
+                continue
 
         st, final, html, err = _safe_get_text(u)
         if st != 200 or not html:
