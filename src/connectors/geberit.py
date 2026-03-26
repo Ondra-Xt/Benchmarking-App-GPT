@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Set, Tuple
 import json
+from io import BytesIO
 import re
 from urllib.parse import urljoin, urlparse
 
@@ -306,9 +307,14 @@ def _extract_height(flat: str) -> Tuple[Optional[int], Optional[int], Optional[T
 
 def _extract_material(flat: str) -> Tuple[Optional[str], Optional[str], Optional[Tuple[int, int]]]:
     src = flat or ""
-    token_match = MATERIAL_TOKEN_RE.search(src)
-    if token_match:
+    for token_match in MATERIAL_TOKEN_RE.finditer(src):
         token = token_match.group(1).upper()
+        lo, hi = token_match.span()
+        left = src[lo - 1] if lo > 0 else ""
+        right = src[hi] if hi < len(src) else ""
+        right_next = src[hi + 1] if (hi + 1) < len(src) else ""
+        if token in {"316", "304"} and (left == "." or (right == "." and right_next.isdigit())):
+            continue
         v4a = "yes" if token in {"1.4404", "1.4571", "316", "316L", "V4A"} else "no"
         return token, v4a, token_match.span()
 
@@ -402,6 +408,54 @@ def _extract_pdf_url(html: str, base_url: str) -> Optional[str]:
     return None
 
 
+def _extract_pdf_text(pdf_url: str, timeout: int = 35) -> str:
+    try:
+        from pypdf import PdfReader
+    except Exception:
+        return ""
+    try:
+        r = requests.get(pdf_url, headers=HEADERS, timeout=timeout, allow_redirects=True)
+        if r.status_code != 200 or not r.content:
+            return ""
+        reader = PdfReader(BytesIO(r.content))
+        parts: List[str] = []
+        for p in reader.pages[:5]:
+            try:
+                t = p.extract_text() or ""
+            except Exception:
+                t = ""
+            if t:
+                parts.append(t)
+        return _clean_text(" ".join(parts))
+    except Exception:
+        return ""
+
+
+def _normalize_header_key(header: str) -> str:
+    h = (header or "").strip().lower().replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
+    h = re.sub(r"\s+", " ", h)
+    return h
+
+
+def _parse_mm_value(raw: str, header: str = "") -> Optional[int]:
+    s = _clean_text(raw or "")
+    if not s:
+        return None
+    m_mm = re.search(r"\b(\d{2,4})\s*mm\b", s, re.IGNORECASE)
+    if m_mm:
+        v = int(m_mm.group(1))
+        return v if 20 <= v <= 2500 else None
+    m_num = re.search(r"\b(\d{1,4})(?:[.,]\d+)?\b", s)
+    if not m_num:
+        return None
+    v = int(float(m_num.group(1).replace(",", ".")))
+    if re.search(r"\bcm\b", (header or "") + " " + s, re.IGNORECASE):
+        v = v * 10
+    if 20 <= v <= 2500:
+        return v
+    return None
+
+
 def _extract_article_rows_from_table(html: str) -> List[Dict[str, Any]]:
     soup = BeautifulSoup(html or "", "lxml")
     out: List[Dict[str, Any]] = []
@@ -418,43 +472,110 @@ def _extract_article_rows_from_table(html: str) -> List[Dict[str, Any]]:
                 continue
             row = {headers[i] if i < len(headers) else f"col_{i}": vals[i] for i in range(len(vals))}
             row_text = _clean_text(" ".join(vals))
-            if _article_from_text(row_text):
-                row["_row_text"] = row_text
-                out.append(row)
+            art = _article_from_text(row_text)
+            if not art:
+                continue
+            row["article_no"] = art
+            row["_row_text"] = row_text
+
+            for i, val in enumerate(vals):
+                key = headers[i] if i < len(headers) else f"col_{i}"
+                norm_key = _normalize_header_key(key)
+                row[f"col_{i}_raw"] = val
+
+                if re.search(r"art\.?\s*-?\s*nr|artikel\s*-?\s*nr", norm_key):
+                    row["article_no"] = _article_from_text(val) or row["article_no"]
+                elif "ablaufleistung" in norm_key:
+                    fopts = []
+                    for m in FLOW_LPS_RE.finditer(val):
+                        try:
+                            fv = float(m.group(1).replace(",", "."))
+                        except Exception:
+                            continue
+                        if 0.10 <= fv <= 3.0:
+                            fopts.append(fv)
+                    if fopts:
+                        row["flow_opts"] = sorted(set(fopts))
+                        row["flow_rate_lps"] = max(fopts)
+                elif re.search(r"\bdn\b|d\s*/\s*ø|durchmesser|\bø\b", norm_key):
+                    dns, _ = _extract_dn(val)
+                    if dns:
+                        row["dns"] = dns
+                elif re.search(r"^l1\b|^l1\s*cm", norm_key):
+                    mm = _parse_mm_value(val, key)
+                    if mm is not None:
+                        row["l1_mm"] = mm
+                elif re.search(r"^l\b|laenge|l\s*cm", norm_key):
+                    mm = _parse_mm_value(val, key)
+                    if mm is not None:
+                        row["length_mm"] = mm
+                elif re.search(r"^b\b|b\s*cm|breite", norm_key):
+                    mm = _parse_mm_value(val, key)
+                    if mm is not None:
+                        row["width_mm"] = mm
+                elif re.search(r"^h1\b|h1\s*cm", norm_key):
+                    mm = _parse_mm_value(val, key)
+                    if mm is not None:
+                        row["h1_mm"] = mm
+                elif re.search(r"^h\b|einbauhoehe|einbauhohe|h\s*cm", norm_key):
+                    mm = _parse_mm_value(val, key)
+                    if mm is not None:
+                        row["h_mm"] = mm
+                elif "farbe" in norm_key or "oberflaeche" in norm_key:
+                    if val:
+                        row["surface"] = val
+
+            if "length_mm" not in row:
+                len_mm, _, _, _ = _length_info(row_text, 1200)
+                if isinstance(len_mm, int):
+                    row["length_mm"] = len_mm
+            if "flow_opts" not in row:
+                fopts = []
+                for fm in FLOW_LPS_RE.finditer(row_text):
+                    try:
+                        fv = float(fm.group(1).replace(",", "."))
+                    except Exception:
+                        continue
+                    if 0.10 <= fv <= 3.0:
+                        fopts.append(fv)
+                if fopts:
+                    row["flow_opts"] = sorted(set(fopts))
+                    row["flow_rate_lps"] = max(fopts)
+            if "dns" not in row:
+                dns, _ = _extract_dn(row_text)
+                if dns:
+                    row["dns"] = dns
+            if "h_mm" not in row and "h1_mm" not in row:
+                hmin, hmax, _ = _extract_height(row_text)
+                if isinstance(hmin, int):
+                    row["h_mm"] = hmin
+                if isinstance(hmax, int):
+                    row["h1_mm"] = hmax
+            out.append(row)
     return out
 
 
 def _select_article_variant_from_table(html: str, target_mm: int = 1200, tolerance_mm: int = 100) -> Optional[Dict[str, Any]]:
-    soup = BeautifulSoup(html or "", "lxml")
+    parsed_rows = _extract_article_rows_from_table(html)
     rows: List[Dict[str, Any]] = []
-    for tr in soup.select("table tr"):
-        cells = tr.select("th,td")
-        if not cells:
-            continue
-        row_text = _clean_text(" ".join(c.get_text(" ", strip=True) for c in cells))
-        article = _article_from_text(row_text)
-        if not article:
-            continue
-        length_mm, _, _, _ = _length_info(row_text, target_mm)
-        flow_opts = []
-        for fm in FLOW_LPS_RE.finditer(row_text):
-            try:
-                fv = float(fm.group(1).replace(",", "."))
-            except Exception:
-                continue
-            if 0.10 <= fv <= 3.0:
-                flow_opts.append(fv)
-        flow_opts = sorted(set(flow_opts))
-        dns, _ = _extract_dn(row_text)
-        hmin, hmax, _ = _extract_height(row_text)
+    for r in parsed_rows:
+        hmin = r.get("h_mm")
+        hmax = r.get("h1_mm")
+        if isinstance(hmin, int) and not isinstance(hmax, int):
+            hmax = hmin
+        if isinstance(hmax, int) and not isinstance(hmin, int):
+            hmin = hmax
         rows.append({
-            "article_no": article,
-            "row_text": row_text,
-            "length_mm": length_mm,
-            "flow_opts": flow_opts,
-            "dns": dns,
+            "article_no": r.get("article_no"),
+            "row_text": str(r.get("_row_text") or ""),
+            "length_mm": r.get("length_mm"),
+            "flow_opts": r.get("flow_opts") or ([] if r.get("flow_rate_lps") is None else [r.get("flow_rate_lps")]),
+            "dns": r.get("dns") or [],
             "hmin": hmin,
             "hmax": hmax,
+            "surface": r.get("surface"),
+            "l1_mm": r.get("l1_mm"),
+            "width_mm": r.get("width_mm"),
         })
     if not rows:
         return None
@@ -786,11 +907,18 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
         return res
 
     flat = _main_flat_text(html)
+    title = _extract_title(html, final)
+    if title:
+        res["evidence"].append(("Title", title, final))
 
     pdf_url = _extract_pdf_url(html, final)
+    pdf_flat = ""
     if pdf_url:
         res["pdf_url"] = pdf_url
         res["evidence"].append(("PDF", pdf_url, final))
+        pdf_flat = _extract_pdf_text(pdf_url)
+        if pdf_flat:
+            res["evidence"].append(("PDF text", pdf_flat[:220], pdf_url))
 
     if re.search(r"/product/pro_[a-z0-9_-]+/?$", src, re.IGNORECASE):
         article_rows = _extract_article_rows_from_table(html)
@@ -825,14 +953,14 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
             if row_text:
                 res["evidence"].append(("Artikel table row", row_text[:220], final))
 
-    material_detail, material_v4a, material_span = _extract_material(flat)
+    material_detail, material_v4a, material_span = _extract_material(f"{flat} {pdf_flat}".strip())
     if material_detail:
         res["material_detail"] = material_detail
         res["material_v4a"] = material_v4a
         if material_span:
             res["evidence"].append(("Material", _snippet(flat, material_span[0], material_span[1]), final))
 
-    din_en_1253_cert, en_span, din_18534_compliance, din18534_span = _extract_din_compliance(flat)
+    din_en_1253_cert, en_span, din_18534_compliance, din18534_span = _extract_din_compliance(f"{flat} {pdf_flat}".strip())
     if din_en_1253_cert:
         res["din_en_1253_cert"] = din_en_1253_cert
         if en_span:
@@ -842,7 +970,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
         if din18534_span:
             res["evidence"].append(("DIN 18534", _snippet(flat, din18534_span[0], din18534_span[1]), final))
 
-    sealing_fleece, fleece_span = _extract_sealing_fleece(flat)
+    sealing_fleece, fleece_span = _extract_sealing_fleece(f"{flat} {pdf_flat}".strip())
     if sealing_fleece:
         res["sealing_fleece_preassembled"] = sealing_fleece
         if fleece_span:
