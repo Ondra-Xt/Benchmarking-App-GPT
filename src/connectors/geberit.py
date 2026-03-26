@@ -369,6 +369,39 @@ def _extract_colours_count(flat: str) -> Tuple[Optional[int], Optional[Tuple[int
     return None, None
 
 
+def _classify_pro_page_type(title: str, flat: str) -> str:
+    t = (title or "").lower()
+    txt = f"{title} {flat}".lower()
+    if re.search(r"abdeckung|duschrinne\s*befliesbar|rost|oberteil|cover|profil", t):
+        return "cover"
+    if re.search(r"rohbauset|grundk[oö]rper|ablaufgeh[aä]use|rohbau\s*set|einbauset", t):
+        return "body"
+    if re.search(r"abdeckung|duschrinne\s*befliesbar|rost|oberteil|cover|profil", txt):
+        return "cover"
+    if re.search(r"rohbauset|grundk[oö]rper|ablaufgeh[aä]use|rohbau\s*set|einbauset", txt):
+        return "body"
+    if re.search(r"ablaufleistung|\bdn\s*\d{2,3}\b|geruchsverschluss", txt):
+        return "body"
+    return "unknown"
+
+
+def _extract_compatibility_evidence(flat: str) -> List[str]:
+    out: List[str] = []
+    src = flat or ""
+    for m in re.finditer(r"zus[aä]tzlich\s+zu\s+bestellen[^\.\n]{0,180}", src, re.IGNORECASE):
+        out.append(_clean_text(m.group(0)))
+    for m in re.finditer(r"kompatibel[^\.\n]{0,160}", src, re.IGNORECASE):
+        out.append(_clean_text(m.group(0)))
+    return out[:5]
+
+
+def _strip_compatibility_sections(flat: str) -> str:
+    txt = flat or ""
+    txt = re.sub(r"zus[aä]tzlich\s+zu\s+bestellen[^\.\n]{0,240}", " ", txt, flags=re.IGNORECASE)
+    txt = re.sub(r"kompatibel[^\.\n]{0,200}", " ", txt, flags=re.IGNORECASE)
+    return _clean_text(txt)
+
+
 def _extract_catalog_links(html: str, base_url: str) -> Set[str]:
     soup = BeautifulSoup(html or "", "lxml")
     out: Set[str] = set()
@@ -930,6 +963,8 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
     title = _extract_title(html, final)
     if title:
         res["evidence"].append(("Title", title, final))
+    page_type = _classify_pro_page_type(title, flat)
+    res["evidence"].append(("Product type", page_type, final))
 
     pdf_url = _extract_pdf_url(html, final)
     pdf_flat = ""
@@ -973,6 +1008,10 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
             if row_text:
                 res["evidence"].append(("Artikel table row", row_text[:220], final))
 
+    if page_type == "cover":
+        for note in _extract_compatibility_evidence(f"{flat} {pdf_flat}".strip()):
+            res["evidence"].append(("Compatibility note", note, final))
+
     material_detail, material_v4a, material_span = _extract_material(f"{flat} {pdf_flat}".strip())
     if material_detail:
         res["material_detail"] = material_detail
@@ -1009,29 +1048,31 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
     elif len_mode == "variable" and range_txt:
         res["evidence"].append(("Length (range)", range_txt, final))
 
-    dns, dn_span = _extract_dn(flat)
+    tech_flat = _strip_compatibility_sections(flat) if page_type == "cover" else flat
+
+    dns, dn_span = _extract_dn(tech_flat)
     if dns:
         res["outlet_dn"] = "/".join(dns)
         res["outlet_dn_default"] = "DN50" if "DN50" in dns else dns[0]
         res["outlet_dn_options_json"] = json.dumps(dns, ensure_ascii=False)
         if dn_span:
-            res["evidence"].append(("Outlet DN", _snippet(flat, dn_span[0], dn_span[1]), final))
+            res["evidence"].append(("Outlet DN", _snippet(tech_flat, dn_span[0], dn_span[1]), final))
 
-    flow_opts, flow_span = _extract_flow(flat)
+    flow_opts, flow_span = _extract_flow(tech_flat)
     if flow_opts:
         res["flow_rate_lps_options"] = json.dumps(flow_opts, ensure_ascii=False)
         res["flow_rate_lps"] = max(flow_opts)
         res["flow_rate_unit"] = "l/s"
         res["flow_rate_status"] = "ok"
         if flow_span:
-            res["evidence"].append(("Flow rate (Ablaufleistung)", _snippet(flat, flow_span[0], flow_span[1]), final))
+            res["evidence"].append(("Flow rate (Ablaufleistung)", _snippet(tech_flat, flow_span[0], flow_span[1]), final))
 
-    hmin, hmax, hspan = _extract_height(flat)
+    hmin, hmax, hspan = _extract_height(tech_flat)
     if hmin is not None and hmax is not None:
         res["height_adj_min_mm"] = hmin
         res["height_adj_max_mm"] = hmax
         if hspan:
-            res["evidence"].append(("Installation height (mm)", _snippet(flat, hspan[0], hspan[1]), final))
+            res["evidence"].append(("Installation height (mm)", _snippet(tech_flat, hspan[0], hspan[1]), final))
 
     return res
 

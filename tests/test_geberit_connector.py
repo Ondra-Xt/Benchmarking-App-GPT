@@ -113,6 +113,26 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         self.assertIsNone(params["material_detail"])
         self.assertEqual(params["resolved_length_mm"], 1200)
 
+    def test_cover_page_does_not_inherit_rohbauset_flow_or_height_range(self):
+        pro_url = "https://catalog.geberit.de/de-DE/product/PRO_472894/"
+        html = """
+        <html><body><main>
+        <h1>Geberit CleanLine Duschrinne befliesbar</h1>
+        <table>
+          <tr><th>Art.-Nr.</th><th>L cm</th><th>B cm</th><th>H cm</th><th>Farbe/Oberfläche</th></tr>
+          <tr><td>154.441.KS.1</td><td>120</td><td>4,3</td><td>1</td><td>Edelstahl</td></tr>
+        </table>
+        Zusätzlich zu bestellen: Rohbauset, Einbauhöhe 90-220 mm, Ablaufleistung 0,8 l/s, DN 50.
+        </main></body></html>
+        """
+        with patch.object(geberit, "_safe_get_text", return_value=(200, pro_url, html, "")):
+            params = geberit.extract_parameters(pro_url)
+        self.assertEqual(params["resolved_length_mm"], 1200)
+        self.assertEqual(params["height_adj_min_mm"], 10)
+        self.assertEqual(params["height_adj_max_mm"], 10)
+        self.assertIsNone(params["flow_rate_lps"])
+        self.assertIsNone(params["outlet_dn"])
+
     def test_discovery_accepts_pro_pages_and_rejects_siphon(self):
         system_url = geberit.CATALOG_SYSTEM_SEEDS[0]
         product_url = "https://catalog.geberit.de/de-DE/product/PRO_170941/"
