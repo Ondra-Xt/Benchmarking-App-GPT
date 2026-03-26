@@ -307,6 +307,7 @@ def _extract_height(flat: str) -> Tuple[Optional[int], Optional[int], Optional[T
 
 def _extract_material(flat: str) -> Tuple[Optional[str], Optional[str], Optional[Tuple[int, int]]]:
     src = flat or ""
+    material_ctx_re = re.compile(r"werkstoff|material|edelstahl|stahl|kunststoff|metall|oberflaeche|oberfläche", re.IGNORECASE)
     for token_match in MATERIAL_TOKEN_RE.finditer(src):
         token = token_match.group(1).upper()
         lo, hi = token_match.span()
@@ -314,6 +315,9 @@ def _extract_material(flat: str) -> Tuple[Optional[str], Optional[str], Optional
         right = src[hi] if hi < len(src) else ""
         right_next = src[hi + 1] if (hi + 1) < len(src) else ""
         if token in {"316", "304"} and (left == "." or (right == "." and right_next.isdigit())):
+            continue
+        ctx = _snippet(src, lo, hi, pad=45)
+        if token in {"316", "304", "1.4404", "1.4571", "1.4301", "316L"} and not material_ctx_re.search(ctx):
             continue
         v4a = "yes" if token in {"1.4404", "1.4571", "316", "316L", "V4A"} else "no"
         return token, v4a, token_match.span()
@@ -444,14 +448,14 @@ def _parse_mm_value(raw: str, header: str = "") -> Optional[int]:
     m_mm = re.search(r"\b(\d{2,4})\s*mm\b", s, re.IGNORECASE)
     if m_mm:
         v = int(m_mm.group(1))
-        return v if 20 <= v <= 2500 else None
+        return v if 1 <= v <= 5000 else None
     m_num = re.search(r"\b(\d{1,4})(?:[.,]\d+)?\b", s)
     if not m_num:
         return None
     v = int(float(m_num.group(1).replace(",", ".")))
     if re.search(r"\bcm\b", (header or "") + " " + s, re.IGNORECASE):
         v = v * 10
-    if 20 <= v <= 2500:
+    if 1 <= v <= 5000:
         return v
     return None
 
@@ -497,10 +501,26 @@ def _extract_article_rows_from_table(html: str) -> List[Dict[str, Any]]:
                     if fopts:
                         row["flow_opts"] = sorted(set(fopts))
                         row["flow_rate_lps"] = max(fopts)
+                    else:
+                        vm = re.search(r"(\d+(?:[.,]\d+)?)", val)
+                        if vm:
+                            try:
+                                fv = float(vm.group(1).replace(",", "."))
+                            except Exception:
+                                fv = None
+                            if fv is not None and 0.10 <= fv <= 3.0:
+                                row["flow_opts"] = [fv]
+                                row["flow_rate_lps"] = fv
                 elif re.search(r"\bdn\b|d\s*/\s*ø|durchmesser|\bø\b", norm_key):
                     dns, _ = _extract_dn(val)
                     if dns:
                         row["dns"] = dns
+                    else:
+                        dnum = re.search(r"\b(\d{2,3})\b", val)
+                        if dnum:
+                            dv = int(dnum.group(1))
+                            if 30 <= dv <= 200:
+                                row["dns"] = [f"DN{dv}"]
                 elif re.search(r"^l1\b|^l1\s*cm", norm_key):
                     mm = _parse_mm_value(val, key)
                     if mm is not None:
