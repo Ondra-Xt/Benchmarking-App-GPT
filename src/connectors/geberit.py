@@ -428,10 +428,27 @@ def _select_article_variant_from_table(html: str, target_mm: int = 1200, toleran
     return rows[0]
 
 
+def _extract_listing_card_links(html: str, base_url: str) -> Set[str]:
+    soup = BeautifulSoup(html or "", "lxml")
+    out: Set[str] = set()
+    for a in soup.select('a[href*="/de-DE/product/PRO_"]'):
+        href = a.get("href") or ""
+        u = _canonicalize_url(urljoin(base_url, href))
+        if not _is_catalog_pro_page(u):
+            continue
+        card = a.find_parent(["article", "li", "div"])
+        card_text = _clean_text((card.get_text(" ", strip=True) if card else a.get_text(" ", strip=True)) or "")
+        if CLEANLINE_RE.search(card_text) or DRAIN_RE.search(card_text):
+            out.add(u)
+    return out
+
+
 def _extract_public_links(html: str, base_url: str) -> Set[str]:
     soup = BeautifulSoup(html or "", "lxml")
     out: Set[str] = set()
     html_norm = (html or "").replace("\\/", "/")
+    if _is_system_listing_page(base_url):
+        return _extract_listing_card_links(html, base_url)
     for a in soup.select("a[href]"):
         href = a.get("href") or ""
         txt = _clean_text(a.get_text(" ", strip=True)).lower()
@@ -533,6 +550,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     queue: List[Tuple[str, bool]] = [(_canonicalize_url(u), True) for u in CATALOG_SYSTEM_SEEDS]
     seen: Set[str] = set()
     pages: Dict[str, bool] = {}
+    listing_card_urls: Set[str] = set()
 
     while queue and len(seen) < 120:
         u, from_cleanline_context = queue.pop(0)
@@ -551,7 +569,12 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         if _is_public_geberit_url(final_c) or _is_system_listing_page(final_c) or (_is_catalog_detail_page(final_c) and page_ctx):
             pages[final_c] = pages.get(final_c, False) or page_ctx
 
-        for cand in _extract_public_links(html, final_c):
+        extracted_links = _extract_public_links(html, final_c)
+        if _is_system_listing_page(final_c):
+            for cu in extracted_links:
+                if _is_catalog_pro_page(cu):
+                    listing_card_urls.add(cu)
+        for cand in extracted_links:
             if cand not in seen and not any(cu == cand for cu, _ in queue):
                 queue.append((cand, pages.get(final_c, page_ctx)))
 
@@ -661,6 +684,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "dropped_links": json.dumps(dropped[:20], ensure_ascii=False),
         "sample_landing_urls": json.dumps(landing_urls[:10], ensure_ascii=False),
         "sample_listing_urls": json.dumps(listing_urls[:10], ensure_ascii=False),
+        "sample_listing_card_urls": json.dumps(sorted(listing_card_urls)[:10], ensure_ascii=False),
         "sample_detail_urls": json.dumps(detail_urls[:10], ensure_ascii=False),
         "sample_accepted_urls": json.dumps(product_urls[:10], ensure_ascii=False),
         "sample_rejected_urls": json.dumps([row.get("url") for row in dropped[:10]], ensure_ascii=False),
