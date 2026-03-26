@@ -153,8 +153,9 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         self.assertIn(detail_url, summary["accepted_product_links"])
         self.assertNotIn(wrong_url, summary["accepted_product_links"])
         self.assertIn(system_url, summary["sample_listing_urls"])
+        self.assertIn(product_url, summary["sample_listing_card_urls"])
         self.assertIn(product_url, summary["sample_detail_urls"])
-        self.assertIn("wrong_product_family", summary["dropped_reason_counts"])
+        self.assertNotIn("wrong_product_family", summary["dropped_reason_counts"])
 
 
 if __name__ == "__main__":
