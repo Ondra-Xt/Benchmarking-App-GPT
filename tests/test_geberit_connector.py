@@ -82,6 +82,27 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         self.assertTrue(params["pdf_url"].endswith(".pdf/"))
         self.assertIn("154.451.KS.1", params["article_rows_json"])
 
+    def test_uses_rendered_html_fallback_for_pdf_and_article_rows(self):
+        pro_url = "https://catalog.geberit.de/de-DE/product/PRO_170944/"
+        static_html = "<html><body><main><h1>Geberit Rohbauset</h1></main></body></html>"
+        rendered_html = """
+        <html><body><main>
+        <h1>Geberit Rohbauset für CleanLine Duschrinnen</h1>
+        <a href="/docs/pro_170944.pdf">Produktdatenblatt herunterladen (PDF)</a>
+        <table>
+          <tr><th>Art.-Nr.</th><th>Ablaufleistung l/s</th><th>DN</th><th>L cm</th><th>H cm</th></tr>
+          <tr><td>154.452.KS.1</td><td>0,8</td><td>50</td><td>120</td><td>10</td></tr>
+        </table>
+        </main></body></html>
+        """
+        with patch.object(geberit, "_safe_get_text", return_value=(200, pro_url, static_html, "")), patch.object(
+            geberit, "_safe_get_rendered_html", return_value=(True, rendered_html)
+        ):
+            params = geberit.extract_parameters(pro_url)
+        self.assertIsNotNone(params["pdf_url"])
+        self.assertIn("154.452.KS.1", params["article_rows_json"])
+        self.assertEqual(params["flow_rate_lps"], 0.8)
+
     def test_extracts_cover_rows_from_pro_article_table(self):
         pro_url = "https://catalog.geberit.de/de-DE/product/PRO_1447036/"
         html = """
@@ -96,6 +117,18 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         with patch.object(geberit, "_safe_get_text", return_value=(200, pro_url, html, "")):
             params = geberit.extract_parameters(pro_url)
         self.assertIn("154.461.KS.1", params["article_rows_json"])
+
+    def test_edelstahl_without_explicit_v4a_stays_unknown(self):
+        params = self._run_extract(
+            "PRO_6666666",
+            """
+            Geberit CleanLine Abdeckung.
+            Material Edelstahl.
+            Art.-Nr. 154.316.00.1
+            """,
+        )
+        self.assertEqual(params["material_detail"], "edelstahl")
+        self.assertIsNone(params["material_v4a"])
 
     def test_does_not_infer_316_from_article_number_pattern(self):
         pro_url = "https://catalog.geberit.de/de-DE/product/PRO_999999/"
