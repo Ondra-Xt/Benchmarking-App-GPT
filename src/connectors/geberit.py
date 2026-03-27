@@ -622,12 +622,29 @@ def _parse_mm_value(raw: str, header: str = "") -> Optional[int]:
 def _extract_article_rows_from_table(html: str) -> List[Dict[str, Any]]:
     soup = BeautifulSoup(html or "", "lxml")
     out: List[Dict[str, Any]] = []
+    exclude_ctx_re = re.compile(r"weitere\s+produkte|kombinierbar|zus[aä]tzlich\s+zu\s+bestellen|zubeh[öo]r|kompatibel", re.IGNORECASE)
+    header_art_re = re.compile(r"art\.?\s*-?\s*nr|artikel\s*-?\s*nr", re.IGNORECASE)
     for table in soup.select("table"):
+        ctx_bits: List[str] = []
+        cap = table.find("caption")
+        if cap:
+            ctx_bits.append(_clean_text(cap.get_text(" ", strip=True)))
+        prev = table
+        for _ in range(3):
+            prev = prev.find_previous(["h1", "h2", "h3", "h4"])
+            if prev is None:
+                break
+            ctx_bits.append(_clean_text(prev.get_text(" ", strip=True)))
+        table_ctx = _clean_text(" ".join(ctx_bits))
+        if exclude_ctx_re.search(table_ctx):
+            continue
         rows = table.select("tr")
         if len(rows) < 2:
             continue
         headers = [_clean_text(x.get_text(" ", strip=True)) for x in rows[0].select("th,td")]
         if not headers:
+            continue
+        if not any(header_art_re.search(h or "") for h in headers):
             continue
         for tr in rows[1:]:
             vals = [_clean_text(x.get_text(" ", strip=True)) for x in tr.select("td,th")]
@@ -1126,8 +1143,6 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
 
     if re.search(r"/product/pro_[a-z0-9_-]+/?$", src, re.IGNORECASE):
         article_rows = pre_rows or _extract_article_rows_from_table(html)
-        if not article_rows:
-            article_rows = _extract_article_rows_from_text(_main_flat_text(html))
         if article_rows:
             res["article_rows_json"] = json.dumps(article_rows[:50], ensure_ascii=False)
         variant = _select_article_variant_from_table(html, target_mm=1200, tolerance_mm=100)
