@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import patch
+import json
 
 from src.connectors import geberit
 
@@ -133,6 +134,34 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         )
         self.assertEqual(params["material_detail"], "edelstahl")
         self.assertIsNone(params["material_v4a"])
+
+    def test_article_rows_ignore_related_products_and_compatibility_tables(self):
+        pro_url = "https://catalog.geberit.de/de-DE/product/PRO_170941/"
+        html = """
+        <html><body><main>
+        <h1>Geberit Rohbauset für CleanLine Duschrinnen</h1>
+        <section>
+          <h2>Artikel</h2>
+          <table>
+            <tr><th>Art.-Nr.</th><th>Ablaufleistung l/s</th><th>DN</th><th>L cm</th><th>H cm</th></tr>
+            <tr><td>154.451.KS.1</td><td>0,8</td><td>DN 50</td><td>120</td><td>10</td></tr>
+          </table>
+        </section>
+        <section>
+          <h2>Weitere Produkte</h2>
+          <table>
+            <tr><th>Art.-Nr.</th><th>L cm</th></tr>
+            <tr><td>999.999.99.9</td><td>80</td></tr>
+          </table>
+        </section>
+        </main></body></html>
+        """
+        with patch.object(geberit, "_safe_get_text", return_value=(200, pro_url, html, "")):
+            params = geberit.extract_parameters(pro_url)
+        rows = json.loads(params["article_rows_json"])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["article_no"], "154.451.KS.1")
+        self.assertEqual(params["flow_rate_lps"], 0.8)
 
     def test_does_not_infer_316_from_article_number_pattern(self):
         pro_url = "https://catalog.geberit.de/de-DE/product/PRO_999999/"
