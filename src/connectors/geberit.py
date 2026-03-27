@@ -82,7 +82,50 @@ def _safe_get_rendered_html(url: str, timeout_ms: int = 30000) -> Tuple[bool, st
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
             page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
-            page.wait_for_timeout(1200)
+            page.wait_for_timeout(900)
+
+            for _ in range(6):
+                try:
+                    page.mouse.wheel(0, 1600)
+                except Exception:
+                    pass
+                page.wait_for_timeout(180)
+
+            click_texts = [
+                "Artikel",
+                "Technische Daten",
+                "Eigenschaften",
+                "Downloads",
+                "Produktdatenblatt herunterladen (PDF)",
+                "Mehr anzeigen",
+                "Alle anzeigen",
+            ]
+            for txt in click_texts:
+                try:
+                    loc = page.get_by_text(txt, exact=False).first
+                    if loc and loc.count() > 0:
+                        loc.click(timeout=1200)
+                        page.wait_for_timeout(220)
+                except Exception:
+                    continue
+
+            for sel in ["button", "[role='button']", "[aria-expanded='false']"]:
+                try:
+                    elems = page.locator(sel)
+                    n = min(20, elems.count())
+                    for i in range(n):
+                        e = elems.nth(i)
+                        t = (e.inner_text(timeout=600) or "").strip().lower()
+                        if re.search(r"technische daten|eigenschaften|artikel|downloads|mehr anzeigen|aufklappen|show more", t):
+                            try:
+                                e.click(timeout=800)
+                                page.wait_for_timeout(120)
+                            except Exception:
+                                pass
+                except Exception:
+                    continue
+
+            page.wait_for_timeout(600)
             html = page.content() or ""
             browser.close()
             return bool(html), html
