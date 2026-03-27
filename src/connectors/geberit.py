@@ -72,6 +72,24 @@ def _safe_get_text(url: str, timeout: int = 35) -> Tuple[Optional[int], str, str
         return None, url, "", f"{type(e).__name__}: {e}"
 
 
+def _safe_get_rendered_html(url: str, timeout_ms: int = 30000) -> Tuple[bool, str]:
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception:
+        return False, ""
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            page.wait_for_timeout(1200)
+            html = page.content() or ""
+            browser.close()
+            return bool(html), html
+    except Exception:
+        return False, ""
+
+
 def _extract_visible_listing_card_links_playwright(url: str, timeout_ms: int = 30000) -> Set[str]:
     """
     Render Geberit system listing pages and return visible product-card PRO links only.
@@ -325,7 +343,18 @@ def _extract_material(flat: str) -> Tuple[Optional[str], Optional[str], Optional
     text_match = re.search(r"\b(edelstahl|stahl|kunststoff|metall)\b", src, re.IGNORECASE)
     if text_match:
         token = text_match.group(1).lower()
-        v4a = "yes" if token == "edelstahl" and bool(re.search(r"\bv4a\b|1\.4404|1\.4571|316", src, re.IGNORECASE)) else None
+        explicit_v4a = False
+        for m in re.finditer(r"\b(v4a|1\.4404|1\.4571|316l?|aisi\s*316)\b", src, re.IGNORECASE):
+            tk = m.group(1).upper().replace(" ", "")
+            lo, hi = m.span()
+            left = src[lo - 1] if lo > 0 else ""
+            right = src[hi] if hi < len(src) else ""
+            right_next = src[hi + 1] if (hi + 1) < len(src) else ""
+            if tk in {"316", "316L"} and (left == "." or (right == "." and right_next.isdigit())):
+                continue
+            explicit_v4a = True
+            break
+        v4a = "yes" if token == "edelstahl" and explicit_v4a else None
         return token, v4a, text_match.span()
 
     return None, None, None
@@ -964,9 +993,32 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
     if title:
         res["evidence"].append(("Title", title, final))
     page_type = _classify_pro_page_type(title, flat)
-    res["evidence"].append(("Product type", page_type, final))
 
     pdf_url = _extract_pdf_url(html, final)
+    pre_rows = _extract_article_rows_from_table(html) if re.search(r"/product/pro_[a-z0-9_-]+/?$", src, re.IGNORECASE) else []
+    if (not pdf_url or not pre_rows) and _is_catalog_pro_page(src):
+        ok_rendered, rendered_html = _safe_get_rendered_html(final)
+        if ok_rendered and rendered_html:
+            rendered_pdf = _extract_pdf_url(rendered_html, final)
+            rendered_rows = _extract_article_rows_from_table(rendered_html)
+            if rendered_pdf or rendered_rows:
+                html = rendered_html
+                flat = _main_flat_text(html)
+                title = _extract_title(html, final)
+                page_type = _classify_pro_page_type(title, flat)
+                pdf_url = rendered_pdf or pdf_url
+                pre_rows = rendered_rows or pre_rows
+                res["evidence"].append(("Rendered HTML fallback", "used", final))
+
+    if pre_rows:
+        has_surface = any(bool(r.get("surface")) for r in pre_rows)
+        has_hydraulic = any(bool(r.get("flow_opts")) or bool(r.get("dns")) for r in pre_rows)
+        if has_surface and not has_hydraulic:
+            page_type = "cover"
+        elif has_hydraulic:
+            page_type = "body"
+    res["evidence"].append(("Product type", page_type, final))
+
     pdf_flat = ""
     if pdf_url:
         res["pdf_url"] = pdf_url
@@ -976,7 +1028,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
             res["evidence"].append(("PDF text", pdf_flat[:220], pdf_url))
 
     if re.search(r"/product/pro_[a-z0-9_-]+/?$", src, re.IGNORECASE):
-        article_rows = _extract_article_rows_from_table(html)
+        article_rows = pre_rows or _extract_article_rows_from_table(html)
         if article_rows:
             res["article_rows_json"] = json.dumps(article_rows[:50], ensure_ascii=False)
         variant = _select_article_variant_from_table(html, target_mm=1200, tolerance_mm=100)
