@@ -77,6 +77,8 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
 
         self.assertEqual(params["resolved_length_mm"], 1200)
         self.assertEqual(params["flow_rate_lps"], 0.8)
+        self.assertEqual(params["flow_rate_unit"], "l/s")
+        self.assertIn("0,8", params["flow_rate_raw_text"])
         self.assertEqual(params["outlet_dn_default"], "DN50")
         self.assertEqual(params["height_adj_min_mm"], 100)
         self.assertTrue(params["pdf_url"].endswith(".pdf/"))
@@ -102,6 +104,8 @@ class GeberitExtractionRegressionTests(unittest.TestCase):
         self.assertIsNotNone(params["pdf_url"])
         self.assertIn("154.452.KS.1", params["article_rows_json"])
         self.assertEqual(params["flow_rate_lps"], 0.8)
+        self.assertEqual(params["flow_rate_unit"], "l/s")
+        self.assertIn("0,8", params["flow_rate_raw_text"])
 
     def test_extracts_cover_rows_from_pro_article_table(self):
         pro_url = "https://catalog.geberit.de/de-DE/product/PRO_1447036/"

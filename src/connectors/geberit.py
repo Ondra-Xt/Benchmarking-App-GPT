@@ -512,9 +512,63 @@ def _extract_pdf_url(html: str, base_url: str) -> Optional[str]:
     for a in soup.select("a[href]"):
         href = (a.get("href") or "").strip()
         txt = _clean_text(a.get_text(" ", strip=True)).lower()
-        if href.lower().endswith(".pdf") or "produktdatenblatt" in txt:
+        title_attr = _clean_text((a.get("title") or "")).lower()
+        if href.lower().endswith(".pdf") or ".pdf" in href.lower() or "produktdatenblatt" in txt or "datenblatt" in txt or "pdf" in title_attr:
             return _canonicalize_url(urljoin(base_url, href))
+    for a in soup.select("a[data-href], a[onclick]"):
+        raw = " ".join(
+            [
+                str(a.get("data-href") or ""),
+                str(a.get("onclick") or ""),
+                _clean_text(a.get_text(" ", strip=True)).lower(),
+            ]
+        )
+        m = re.search(r"(https?://[^\s\"']+\.pdf(?:\?[^\s\"']*)?|/[^\s\"']+\.pdf(?:\?[^\s\"']*)?)", raw, re.IGNORECASE)
+        if m:
+            return _canonicalize_url(urljoin(base_url, m.group(1)))
     return None
+
+
+def _extract_article_rows_from_text(flat: str) -> List[Dict[str, Any]]:
+    src = flat or ""
+    out: List[Dict[str, Any]] = []
+    seen: Set[str] = set()
+    for m in ARTICLE_RE.finditer(src):
+        art = m.group(1)
+        if art in seen:
+            continue
+        row_txt = _snippet(src, m.start(), m.end(), pad=90)
+        row_txt = _clean_text(row_txt)
+        if not row_txt:
+            continue
+        row: Dict[str, Any] = {"article_no": art, "_row_text": row_txt}
+        fopts = []
+        for fm in FLOW_LPS_RE.finditer(row_txt):
+            try:
+                fv = float(fm.group(1).replace(",", "."))
+            except Exception:
+                continue
+            if 0.10 <= fv <= 3.0:
+                fopts.append(fv)
+        if fopts:
+            row["flow_opts"] = sorted(set(fopts))
+            row["flow_rate_lps"] = max(fopts)
+        dns, _ = _extract_dn(row_txt)
+        if dns:
+            row["dns"] = dns
+        len_mm, _, _, _ = _length_info(row_txt, 1200)
+        if isinstance(len_mm, int):
+            row["length_mm"] = len_mm
+        hmin, hmax, _ = _extract_height(row_txt)
+        if isinstance(hmin, int):
+            row["h_mm"] = hmin
+        if isinstance(hmax, int):
+            row["h1_mm"] = hmax
+        out.append(row)
+        seen.add(art)
+        if len(out) >= 50:
+            break
+    return out
 
 
 def _extract_pdf_text(pdf_url: str, timeout: int = 35) -> str:
@@ -1072,9 +1126,28 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
 
     if re.search(r"/product/pro_[a-z0-9_-]+/?$", src, re.IGNORECASE):
         article_rows = pre_rows or _extract_article_rows_from_table(html)
+        if not article_rows:
+            article_rows = _extract_article_rows_from_text(_main_flat_text(html))
         if article_rows:
             res["article_rows_json"] = json.dumps(article_rows[:50], ensure_ascii=False)
         variant = _select_article_variant_from_table(html, target_mm=1200, tolerance_mm=100)
+        if not variant and article_rows:
+            v = article_rows[0]
+            vhmin = v.get("h_mm")
+            vhmax = v.get("h1_mm")
+            if isinstance(vhmin, int) and not isinstance(vhmax, int):
+                vhmax = vhmin
+            if isinstance(vhmax, int) and not isinstance(vhmin, int):
+                vhmin = vhmax
+            variant = {
+                "article_no": v.get("article_no"),
+                "row_text": str(v.get("_row_text") or ""),
+                "length_mm": v.get("length_mm"),
+                "flow_opts": v.get("flow_opts") or ([] if v.get("flow_rate_lps") is None else [v.get("flow_rate_lps")]),
+                "dns": v.get("dns") or [],
+                "hmin": vhmin,
+                "hmax": vhmax,
+            }
         if variant:
             row_text = str(variant.get("row_text") or "")
             row_len = variant.get("length_mm")
@@ -1085,6 +1158,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
             if flow_opts:
                 res["flow_rate_lps_options"] = json.dumps(flow_opts, ensure_ascii=False)
                 res["flow_rate_lps"] = max(flow_opts)
+                res["flow_rate_raw_text"] = ", ".join(str(v).replace(".", ",") for v in flow_opts)
                 res["flow_rate_unit"] = "l/s"
                 res["flow_rate_status"] = "ok"
             dns = variant.get("dns") or []
@@ -1157,6 +1231,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
     if flow_opts:
         res["flow_rate_lps_options"] = json.dumps(flow_opts, ensure_ascii=False)
         res["flow_rate_lps"] = max(flow_opts)
+        res["flow_rate_raw_text"] = ", ".join(str(v).replace(".", ",") for v in flow_opts)
         res["flow_rate_unit"] = "l/s"
         res["flow_rate_status"] = "ok"
         if flow_span:
