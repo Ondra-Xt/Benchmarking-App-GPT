@@ -86,7 +86,42 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         self.assertEqual(params["flow_rate_lps"], 0.7)
         self.assertEqual(params["outlet_dn_default"], "DN50")
 
+    def test_tempoplex_is_classified_as_drain_taxonomy(self):
+        cand_type, drain_category, system_role, complete_system = viega._derive_taxonomy(
+            "https://www.viega.de/de/produkte/Katalog/Badewannen-und-Duschwannenablaeufe/Tempoplex/Tempoplex-Ablauf-6963-1.html",
+            "Tempoplex-Ablauf 6963.1",
+            "Tempoplex Duschwannenablauf",
+        )
+        self.assertEqual(cand_type, "drain")
+        self.assertEqual(drain_category, "shower_tray_drain")
+        self.assertEqual(system_role, "complete_drain")
+        self.assertEqual(complete_system, "yes")
+
+    def test_discovery_spans_advantix_and_tempoplex_seeds(self):
+        tempoplex_url = "https://www.viega.de/de/produkte/Katalog/Badewannen-und-Duschwannenablaeufe/Tempoplex/Tempoplex-Ablauf-6963-1.html"
+        advantix_url = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinne-4983-10.html"
+
+        def fake_get(url, timeout=35):
+            if url == tempoplex_url:
+                html = "<html><body><main><h1>Tempoplex-Ablauf 6963.1</h1></main></body></html>"
+                return 200, url, html, ""
+            if url == advantix_url:
+                html = "<html><body><main><h1>Advantix Duschrinne 4983.10</h1></main></body></html>"
+                return 200, url, html, ""
+            return 200, url, "<html><body><a href='x'>seed</a></body></html>", ""
+
+        with patch.object(viega, "_safe_get_text", side_effect=fake_get), patch.object(
+            viega, "_crawl_category_pages", return_value={tempoplex_url, advantix_url}
+        ):
+            rows, _dbg = viega.discover_candidates(1200, 100)
+
+        urls = {r["product_url"] for r in rows}
+        self.assertIn(tempoplex_url, urls)
+        self.assertIn(advantix_url, urls)
+        by_url = {r["product_url"]: r for r in rows}
+        self.assertEqual(by_url[tempoplex_url]["drain_category"], "shower_tray_drain")
+        self.assertEqual(by_url[advantix_url]["drain_category"], "line_channel")
+
 
 if __name__ == "__main__":
     unittest.main()
-
