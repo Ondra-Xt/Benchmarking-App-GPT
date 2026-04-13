@@ -23,6 +23,12 @@ CATALOG_SEEDS = [
     f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen.html",
     f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Cleviva-Duschrinnen.html",
     f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Duschablaeufe.html",
+    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Bodenablaeufe.html",
+    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Eckablaeufe.html",
+    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Vario-Duschrinnen.html",
+    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Vario-Duschrinnen-Wand.html",
+    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik.html",
+    f"{BASE}/de/produkte/Katalog/Badewannen-und-Duschwannenablaeufe/Duschwannengarnituren.html",
     f"{BASE}/de/produkte/Katalog/Badewannen-und-Duschwannenablaeufe/Tempoplex.html",
     f"{BASE}/de/produkte/Katalog/Badewannen-und-Duschwannenablaeufe/Tempoplex-Plus.html",
     f"{BASE}/de/produkte/Katalog/Badewannen-und-Duschwannenablaeufe/Tempoplex-60.html",
@@ -35,6 +41,18 @@ DETAIL_SEEDS = [
 CATEGORY_SEEDS = [
     *CATALOG_SEEDS,
 ]
+SEED_FAMILY_HINTS: Dict[str, str] = {
+    "advantix-duschrinnen": "advantix_line",
+    "advantix-cleviva": "advantix_line",
+    "advantix-vario": "advantix_line",
+    "advantix-bodenablaeufe": "advantix_floor",
+    "advantix-eckablaeufe": "advantix_corner",
+    "duschwannengarnituren": "shower_tray",
+    "tempoplex": "shower_tray",
+    "domoplex": "shower_tray",
+    "duoplex": "shower_tray",
+    "varioplex": "shower_tray",
+}
 
 DETAIL_URL_RE = re.compile(r"-\d{4,5}-\d{2}\.html$", re.IGNORECASE)
 ARTICLE_FROM_URL_RE = re.compile(r"-(\d{4,5}-\d{2})\.html(?:$|[?#])", re.IGNORECASE)
@@ -197,20 +215,36 @@ def _derive_taxonomy(url: str, title: str, flat: str = "") -> Tuple[str, str, st
     elif re.search(r"profil", txt):
         system_role = "profile"
 
-    if re.search(r"tempoplex", txt):
+    if system_role == "accessory":
+        drain_category = "accessory"
+    elif re.search(r"tempoplex|domoplex|duoplex|varioplex|duschwanne", txt):
         drain_category = "shower_tray_drain"
+    elif re.search(r"wand", txt):
+        drain_category = "wall_channel"
+    elif re.search(r"eckablauf", txt):
+        drain_category = "corner_drain"
+    elif re.search(r"bodenablauf", txt):
+        drain_category = "floor_drain"
     elif re.search(r"wandablauf|wall", txt):
         drain_category = "wall_drain"
     elif re.search(r"punktablauf|bodenablauf|eckablauf", txt):
         drain_category = "point_drain"
     elif re.search(r"duschrinne|advantix|cleviva|vario", txt):
         drain_category = "line_channel"
-    elif system_role == "accessory":
-        drain_category = "accessory"
 
     cand_type = "drain" if system_role == "complete_drain" and drain_category != "accessory" else "component"
     complete_system = "yes" if cand_type == "drain" else "component"
     return cand_type, drain_category, system_role, complete_system
+
+
+def _infer_family(url: str, title: str = "") -> str:
+    txt = f"{url} {title}".lower()
+    for k, fam in SEED_FAMILY_HINTS.items():
+        if k in txt:
+            return fam
+    if "advantix" in txt:
+        return "advantix_other"
+    return "other"
 
 
 def _extract_category_links_from_sortiment(html: str, base_url: str) -> Set[str]:
@@ -581,17 +615,21 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     unknown_length_count = 0
     min_len = max(0, want - int(tolerance_mm))
     max_len = want + int(tolerance_mm)
+    sample_candidates_by_family: Dict[str, List[str]] = {}
+    counts_by_category: Dict[str, int] = {}
+    counts_by_role: Dict[str, int] = {}
 
     # Step 1: multiple seeds -> category links
     category_links: Set[str] = set(CATEGORY_SEEDS)
     for seed in CATALOG_SEEDS:
         st, final, html, err = _safe_get_text(seed, timeout=35)
         found = 0
+        fam = _infer_family(seed, "")
         if st == 200 and html:
             links = _extract_category_links_from_sortiment(html, final)
             found = len(links)
             category_links.update(links)
-        debug.append({"site": "viega", "seed_url": seed, "status_code": st, "final_url": final, "error": err, "candidates_found": found, "method": "seed_scope", "is_index": None})
+        debug.append({"site": "viega", "seed_url": seed, "status_code": st, "final_url": final, "error": err, "candidates_found": found, "method": "seed_scope", "is_index": None, "discovery_seed_family": fam})
 
     # Step 2: category crawl -> detail links
     detail_links = _crawl_category_pages(category_links, max_pages=2000)
@@ -612,6 +650,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             length, length_snip, length_kind = _resolve_length_from_text(f"{title} {flat}")
 
         cand_type, drain_category, system_role, complete_system = _derive_taxonomy(url, title, flat)
+        fam = _infer_family(url, title)
 
         # safeguard: /Zubehoer/ should never become products
         if ("/zubehoer/" in url.lower() or "/zubehör/" in url.lower()) and cand_type == "drain":
@@ -639,12 +678,18 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             "complete_system": complete_system,
             "drain_category": drain_category,
             "system_role": system_role,
+            "discovery_seed_family": fam,
             "selected_length_mm": want,
             "length_mode": "unknown" if length is None else ("variable" if length_kind == "variable" else "html"),
             "length_delta_mm": None if length is None else (length - want),
             "discovery_evidence": "Length (variable range)" if length_kind == "variable" else None,
         })
         accepted_urls.append(url)
+        counts_by_category[drain_category] = counts_by_category.get(drain_category, 0) + 1
+        counts_by_role[system_role] = counts_by_role.get(system_role, 0) + 1
+        sample_candidates_by_family.setdefault(fam, [])
+        if len(sample_candidates_by_family[fam]) < 5:
+            sample_candidates_by_family[fam].append(url)
         if cand_type == "component":
             component_urls.append(url)
         else:
@@ -688,6 +733,9 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "sample_accepted_urls": json.dumps(accepted_urls[:10], ensure_ascii=False),
         "sample_products_urls": json.dumps(product_urls[:10], ensure_ascii=False),
         "sample_components_urls": json.dumps(component_urls[:10], ensure_ascii=False),
+        "counts_by_drain_category": json.dumps(counts_by_category, ensure_ascii=False),
+        "counts_by_system_role": json.dumps(counts_by_role, ensure_ascii=False),
+        "sample_candidates_by_family": json.dumps(sample_candidates_by_family, ensure_ascii=False),
     })
     return list(dedup.values()), debug
 
