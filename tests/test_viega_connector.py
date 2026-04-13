@@ -97,6 +97,30 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         self.assertEqual(system_role, "complete_drain")
         self.assertEqual(complete_system, "yes")
 
+    def test_taxonomy_examples_for_floor_cover_accessory(self):
+        c1 = viega._derive_taxonomy(
+            "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Bodenablaeufe/Advantix-Bodenablauf-1234-10.html",
+            "Advantix Bodenablauf 1234.10",
+            "Bodenablauf",
+        )
+        self.assertEqual(c1[1], "floor_drain")
+
+        c2 = viega._derive_taxonomy(
+            "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Rost-9999-10.html",
+            "Rost für Advantix-Duschrinne",
+            "Rost",
+        )
+        self.assertEqual(c2[2], "cover")
+        self.assertEqual(c2[0], "component")
+
+        c3 = viega._derive_taxonomy(
+            "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Zubehoer/Tool-1111-10.html",
+            "Montagewerkzeug",
+            "Zubehör",
+        )
+        self.assertEqual(c3[1], "accessory")
+        self.assertEqual(c3[2], "accessory")
+
     def test_discovery_spans_advantix_and_tempoplex_seeds(self):
         tempoplex_url = "https://www.viega.de/de/produkte/Katalog/Badewannen-und-Duschwannenablaeufe/Tempoplex/Tempoplex-Ablauf-6963-1.html"
         advantix_url = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinne-4983-10.html"
@@ -121,6 +145,7 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         by_url = {r["product_url"]: r for r in rows}
         self.assertEqual(by_url[tempoplex_url]["drain_category"], "shower_tray_drain")
         self.assertEqual(by_url[advantix_url]["drain_category"], "line_channel")
+        self.assertIn("discovery_seed_family", by_url[tempoplex_url])
 
 
 if __name__ == "__main__":
