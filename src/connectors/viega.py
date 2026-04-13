@@ -18,18 +18,22 @@ HEADERS = {
 }
 
 BASE = "https://www.viega.de"
-DETAIL_SCOPE = "/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/"
-CATALOG_SEED = f"{BASE}{DETAIL_SCOPE.rstrip('/')}.html"
+DETAIL_SCOPE = "/de/produkte/Katalog/"
+CATALOG_SEEDS = [
+    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen.html",
+    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Cleviva-Duschrinnen.html",
+    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Duschablaeufe.html",
+    f"{BASE}/de/produkte/Katalog/Badewannen-und-Duschwannenablaeufe/Tempoplex.html",
+    f"{BASE}/de/produkte/Katalog/Badewannen-und-Duschwannenablaeufe/Tempoplex-Plus.html",
+    f"{BASE}/de/produkte/Katalog/Badewannen-und-Duschwannenablaeufe/Tempoplex-60.html",
+]
 DETAIL_SEEDS = [
-    f"{BASE}{DETAIL_SCOPE}Advantix-Cleviva-Duschrinnen/Einbauhoehe-ab-70-mm/Advantix-Cleviva-Duschrinne-4981-11.html",
-    f"{BASE}{DETAIL_SCOPE}Advantix-Vario-Duschrinnen/Einbauhoehe-ab-70-mm/Advantix-Vario-Duschrinnen-4966-10.html",
+    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinne-4983-10.html",
+    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Cleviva-Duschrinnen/Advantix-Cleviva-Duschrinne-4981-10.html",
+    f"{BASE}/de/produkte/Katalog/Badewannen-und-Duschwannenablaeufe/Tempoplex/Tempoplex-Ablauf-6963-1.html",
 ]
 CATEGORY_SEEDS = [
-    f"{BASE}{DETAIL_SCOPE}Advantix-Duschrinnen.html",
-    f"{BASE}{DETAIL_SCOPE}Advantix-Cleviva-Duschrinnen.html",
-    f"{BASE}{DETAIL_SCOPE}Advantix-Vario-Duschrinnen.html",
-    f"{BASE}{DETAIL_SCOPE}Advantix-Vario-Duschrinnen-Wand.html",
-    f"{BASE}{DETAIL_SCOPE}Advantix-Eckablaeufe.html",
+    *CATALOG_SEEDS,
 ]
 
 DETAIL_URL_RE = re.compile(r"-\d{4,5}-\d{2}\.html$", re.IGNORECASE)
@@ -136,7 +140,10 @@ def _abs(href: str, base: str) -> str:
 def _in_scope(url: str) -> bool:
     try:
         p = urlparse(url)
-        return p.netloc.endswith("viega.de") and (p.path or "").startswith(DETAIL_SCOPE)
+        path = (p.path or "").lower()
+        if not (p.netloc.endswith("viega.de") and path.startswith(DETAIL_SCOPE)):
+            return False
+        return bool(re.search(r"entwaesserungstechnik|dusch|duschrinne|advantix|tempoplex|ablauf", path, re.IGNORECASE))
     except Exception:
         return False
 
@@ -168,7 +175,42 @@ def _classify_candidate(url: str, title: str, flat: str = "") -> str:
         return "component"
     if ("duschrinne" in t or "duschrinnen" in t) and not _has_component_keyword(t):
         return "drain"
+    if "tempoplex" in t and not _has_component_keyword(t):
+        return "drain"
     return "component"
+
+
+def _derive_taxonomy(url: str, title: str, flat: str = "") -> Tuple[str, str, str, str]:
+    txt = f"{url} {title} {flat}".lower()
+    system_role = "complete_drain"
+    drain_category = "unknown"
+
+    is_tempoplex = bool(re.search(r"tempoplex", txt))
+    if re.search(r"zubeh[öo]r|werkzeug|rahmen|einleger", txt):
+        system_role = "accessory"
+    elif re.search(r"grundk[öo]rper|geruchverschluss", txt):
+        system_role = "base_set"
+    elif re.search(r"ablauf(?!leistung)", txt) and not is_tempoplex:
+        system_role = "base_set"
+    elif re.search(r"rost|abdeckung", txt):
+        system_role = "cover"
+    elif re.search(r"profil", txt):
+        system_role = "profile"
+
+    if re.search(r"tempoplex", txt):
+        drain_category = "shower_tray_drain"
+    elif re.search(r"wandablauf|wall", txt):
+        drain_category = "wall_drain"
+    elif re.search(r"punktablauf|bodenablauf|eckablauf", txt):
+        drain_category = "point_drain"
+    elif re.search(r"duschrinne|advantix|cleviva|vario", txt):
+        drain_category = "line_channel"
+    elif system_role == "accessory":
+        drain_category = "accessory"
+
+    cand_type = "drain" if system_role == "complete_drain" and drain_category != "accessory" else "component"
+    complete_system = "yes" if cand_type == "drain" else "component"
+    return cand_type, drain_category, system_role, complete_system
 
 
 def _extract_category_links_from_sortiment(html: str, base_url: str) -> Set[str]:
@@ -540,19 +582,21 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     min_len = max(0, want - int(tolerance_mm))
     max_len = want + int(tolerance_mm)
 
-    # Step 1: seed -> Sortiment category links (+ explicit range seeds)
-    st, final, html, err = _safe_get_text(CATALOG_SEED, timeout=35)
+    # Step 1: multiple seeds -> category links
     category_links: Set[str] = set(CATEGORY_SEEDS)
-    if st == 200 and html:
-        category_links.update(_extract_category_links_from_sortiment(html, final))
-        debug.append({"site": "viega", "seed_url": CATALOG_SEED, "status_code": st, "final_url": final, "error": err, "candidates_found": len(category_links), "method": "sortiment", "is_index": None})
-    else:
-        debug.append({"site": "viega", "seed_url": CATALOG_SEED, "status_code": st, "final_url": final, "error": err, "candidates_found": 0, "method": "sortiment", "is_index": None})
+    for seed in CATALOG_SEEDS:
+        st, final, html, err = _safe_get_text(seed, timeout=35)
+        found = 0
+        if st == 200 and html:
+            links = _extract_category_links_from_sortiment(html, final)
+            found = len(links)
+            category_links.update(links)
+        debug.append({"site": "viega", "seed_url": seed, "status_code": st, "final_url": final, "error": err, "candidates_found": found, "method": "seed_scope", "is_index": None})
 
     # Step 2: category crawl -> detail links
     detail_links = _crawl_category_pages(category_links, max_pages=2000)
     discovered.update(detail_links)
-    debug.append({"site": "viega", "seed_url": CATALOG_SEED, "status_code": 200 if detail_links else None, "final_url": CATALOG_SEED, "error": "" if detail_links else "No detail links from categories", "candidates_found": len(detail_links), "method": "category_crawl", "is_index": None})
+    debug.append({"site": "viega", "seed_url": CATALOG_SEEDS[0], "status_code": 200 if detail_links else None, "final_url": CATALOG_SEEDS[0], "error": "" if detail_links else "No detail links from categories", "candidates_found": len(detail_links), "method": "category_crawl", "is_index": None})
 
     for url in sorted(discovered):
         st, final, html, err = _safe_get_text(url, timeout=35)
@@ -567,7 +611,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             flat = _main_flat_text(html)
             length, length_snip, length_kind = _resolve_length_from_text(f"{title} {flat}")
 
-        cand_type = _classify_candidate(url, title, flat)
+        cand_type, drain_category, system_role, complete_system = _derive_taxonomy(url, title, flat)
 
         # safeguard: /Zubehoer/ should never become products
         if ("/zubehoer/" in url.lower() or "/zubehör/" in url.lower()) and cand_type == "drain":
@@ -592,7 +636,9 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             "product_url": url,
             "sources": url,
             "candidate_type": cand_type,
-            "complete_system": "component" if cand_type == "component" else "yes",
+            "complete_system": complete_system,
+            "drain_category": drain_category,
+            "system_role": system_role,
             "selected_length_mm": want,
             "length_mode": "unknown" if length is None else ("variable" if length_kind == "variable" else "html"),
             "length_delta_mm": None if length is None else (length - want),
@@ -626,9 +672,9 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
     debug.append({
         "site": "viega",
-        "seed_url": CATALOG_SEED,
+        "seed_url": CATALOG_SEEDS[0],
         "status_code": 200 if dedup else None,
-        "final_url": CATALOG_SEED,
+        "final_url": CATALOG_SEEDS[0],
         "error": "" if dedup else "No accepted candidates.",
         "candidates_found": len(dedup),
         "method": "summary",
