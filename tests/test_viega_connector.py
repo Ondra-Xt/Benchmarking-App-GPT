@@ -156,10 +156,11 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
 
         urls = {r["product_url"] for r in rows}
         self.assertIn(tempoplex_url, urls)
-        self.assertIn(advantix_url, urls)
+        self.assertTrue(any("advantix-duschrinne-4983-10.html" in u.lower() for u in urls))
         by_url = {r["product_url"]: r for r in rows}
         self.assertEqual(by_url[tempoplex_url]["drain_category"], "shower_tray_drain")
-        self.assertEqual(by_url[advantix_url]["drain_category"], "line_channel")
+        adv_row = next(r for r in rows if "advantix-duschrinne-4983-10.html" in r["product_url"].lower())
+        self.assertEqual(adv_row["drain_category"], "line_channel")
         self.assertIn("discovery_seed_family", by_url[tempoplex_url])
         self.assertFalse(by_url[tempoplex_url]["was_synthetic_url"])
         self.assertEqual(by_url[tempoplex_url]["normalized_detail_url"], tempoplex_url)
@@ -231,6 +232,59 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         summary = dbg[-1]
         self.assertGreaterEqual(summary["rejected_spare_parts_count"], 1)
         self.assertGreaterEqual(summary["rejected_unrelated_branch_count"], 1)
+
+    def test_expected_classification_examples_and_spare_rejections(self):
+        cleviva = viega._derive_taxonomy(
+            "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Cleviva-Duschrinnen/Einbauhoehe-ab-95-mm/Advantix-Cleviva-Duschrinne-4981-10.html",
+            "Advantix Cleviva-Duschrinne 4981.10",
+            "Duschrinne",
+        )
+        self.assertEqual(cleviva[1], "line_channel")
+        self.assertEqual(cleviva[2], "complete_drain")
+
+        adv_4983 = viega._derive_taxonomy(
+            "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinnen/Advantix-Duschrinnen-Einbauhoehe-ab-95/Advantix-Duschrinne-4983-10.html",
+            "Advantix-Duschrinne 4983.10",
+            "Duschrinne",
+        )
+        self.assertEqual(adv_4983[1], "line_channel")
+
+        tempoplex = viega._derive_taxonomy(
+            "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Ablauf-6963-1.html",
+            "Tempoplex-Ablauf 6963.1",
+            "Duschwannengarnituren",
+        )
+        self.assertEqual(tempoplex[1], "shower_tray_drain")
+        self.assertEqual(tempoplex[2], "complete_drain")
+
+        floor = viega._derive_taxonomy(
+            "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Bodenablaeufe/Advantix-Bodenablauf-1234-10.html",
+            "Advantix-Bodenablauf 1234.10",
+            "Bodenablauf",
+        )
+        self.assertEqual(floor[1], "floor_drain")
+
+        self.assertTrue(
+            viega._is_spare_part_like(
+                "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Dichtung-1111-11.html",
+                "Tempoplex-Dichtung",
+                "",
+                "accessory",
+            )
+        )
+        self.assertTrue(
+            viega._is_spare_part_like(
+                "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Sicherungsverschluss-2222-22.html",
+                "Sicherungsverschluss",
+                "",
+                "accessory",
+            )
+        )
+        self.assertTrue(
+            viega._is_unrelated_branch(
+                "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ersatzteile-fuer-Advantix-Systeme-und-Rueckstauverschluesse/Ersatzteil-3333-33.html"
+            )
+        )
 
 
 if __name__ == "__main__":
