@@ -197,6 +197,41 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         self.assertEqual(rows[0]["product_url"], real_url)
         self.assertFalse(rows[0]["was_synthetic_url"])
 
+    def test_discovery_filters_spare_parts_and_unrelated_branches(self):
+        good1 = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinne-4983-10.html"
+        good2 = "https://www.viega.de/de/produkte/Katalog/Badewannen-und-Duschwannenablaeufe/Tempoplex/Tempoplex-Ablauf-6963-1.html"
+        bad_spare = "https://www.viega.de/de/produkte/Katalog/Badewannen-und-Duschwannenablaeufe/Tempoplex/Tempoplex-Dichtung-6961-95.html"
+        bad_unrel = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Rueckstauverschluesse/Rueckstauverschluss-1111-11.html"
+
+        def fake_get(url, timeout=35):
+            if url == good1:
+                return 200, url, "<html><body><main><h1>Advantix-Duschrinne 4983.10</h1></main></body></html>", ""
+            if url == good2:
+                return 200, url, "<html><body><main><h1>Tempoplex-Ablauf 6963.1</h1></main></body></html>", ""
+            if url == bad_spare:
+                return 200, url, "<html><body><main><h1>Tempoplex-Dichtung 6961.95</h1></main></body></html>", ""
+            if url == bad_unrel:
+                return 200, url, "<html><body><main><h1>Rückstauverschluss 1111.11</h1></main></body></html>", ""
+            return 200, url, "<html><body>seed</body></html>", ""
+
+        crawl_map = {
+            u: {"raw_discovered_href": u, "normalized_detail_url": u, "href_source_page": "seed", "was_synthetic_url": False}
+            for u in [good1, good2, bad_spare, bad_unrel]
+        }
+        with patch.object(viega, "_safe_get_text", side_effect=fake_get), patch.object(
+            viega, "_crawl_category_pages", return_value=crawl_map
+        ), patch.object(viega, "DETAIL_SEEDS", []):
+            rows, dbg = viega.discover_candidates(1200, 100)
+
+        urls = {r["product_url"] for r in rows}
+        self.assertIn(good1, urls)
+        self.assertIn(good2, urls)
+        self.assertNotIn(bad_spare, urls)
+        self.assertNotIn(bad_unrel, urls)
+        summary = dbg[-1]
+        self.assertGreaterEqual(summary["rejected_spare_parts_count"], 1)
+        self.assertGreaterEqual(summary["rejected_unrelated_branch_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

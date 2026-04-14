@@ -4,9 +4,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 import json
+import re
 
 import pandas as pd
 import openpyxl
+
+_ILLEGAL_EXCEL_XML_CHARS_RE = re.compile(r"[\x00-\x08\x0B-\x0C\x0E-\x1F]")
+_ILLEGAL_ESCAPED_UNICODE_RE = re.compile(r"\\u00(?:0[0-8BCEFbcef]|1[0-9A-Fa-f])")
+_EXCEL_MAX_CELL_LEN = 32767
 
 
 def _is_nan(x: Any) -> bool:
@@ -14,6 +19,15 @@ def _is_nan(x: Any) -> bool:
         return x != x  # NaN != NaN
     except Exception:
         return False
+
+
+def _sanitize_excel_string(value: str) -> str:
+    s = value or ""
+    s = _ILLEGAL_EXCEL_XML_CHARS_RE.sub("", s)
+    s = _ILLEGAL_ESCAPED_UNICODE_RE.sub("", s)
+    if len(s) > _EXCEL_MAX_CELL_LEN:
+        s = s[:_EXCEL_MAX_CELL_LEN]
+    return s
 
 
 def _to_excel_cell(v: Any) -> Any:
@@ -34,21 +48,24 @@ def _to_excel_cell(v: Any) -> Any:
             pass
 
     if isinstance(v, Path):
-        return str(v)
+        return _sanitize_excel_string(str(v))
 
     if isinstance(v, (bytes, bytearray)):
         try:
-            return v.decode("utf-8", errors="ignore")
+            return _sanitize_excel_string(v.decode("utf-8", errors="ignore"))
         except Exception:
-            return str(v)
+            return _sanitize_excel_string(str(v))
 
     if isinstance(v, (list, tuple, set, dict)):
         try:
             if isinstance(v, set):
                 v = sorted(list(v))
-            return json.dumps(v, ensure_ascii=False)
+            return _sanitize_excel_string(json.dumps(v, ensure_ascii=False))
         except Exception:
-            return str(v)
+            return _sanitize_excel_string(str(v))
+
+    if isinstance(v, str):
+        return _sanitize_excel_string(v)
 
     return v
 
@@ -100,7 +117,7 @@ def export_excel(
         ws = wb.create_sheet(sheet_name)
 
         # hlavička
-        ws.append([str(c) for c in df.columns])
+        ws.append([_sanitize_excel_string(str(c)) for c in df.columns])
 
         # řádky
         for _, row in df.iterrows():
