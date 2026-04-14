@@ -148,6 +148,14 @@ def _abs(href: str, base: str) -> str:
     return urljoin(base, href or "")
 
 
+def _normalize_discovered_url(url: str) -> str:
+    try:
+        p = urlparse((url or "").strip())
+        return f"{p.scheme}://{p.netloc}{p.path}"
+    except Exception:
+        return (url or "").split("#", 1)[0].split("?", 1)[0]
+
+
 def _in_scope(url: str) -> bool:
     try:
         p = urlparse(url)
@@ -270,10 +278,10 @@ def _extract_category_links_from_sortiment(html: str, base_url: str) -> Set[str]
     return out
 
 
-def _crawl_category_pages(start_pages: Set[str], max_pages: int = 2000) -> Set[str]:
+def _crawl_category_pages(start_pages: Set[str], max_pages: int = 2000) -> Dict[str, Dict[str, Any]]:
     queue = list(start_pages)
     seen: Set[str] = set()
-    details: Set[str] = set()
+    details: Dict[str, Dict[str, Any]] = {}
 
     while queue and len(seen) < max_pages:
         u = queue.pop(0)
@@ -287,11 +295,18 @@ def _crawl_category_pages(start_pages: Set[str], max_pages: int = 2000) -> Set[s
 
         soup = BeautifulSoup(html, "lxml")
         for a in soup.select("a[href]"):
-            cand = _abs(a.get("href") or "", final)
+            raw_href = a.get("href") or ""
+            cand = _normalize_discovered_url(_abs(raw_href, final))
             if not _in_scope(cand):
                 continue
             if _is_detail_url(cand):
-                details.add(cand)
+                if cand not in details:
+                    details[cand] = {
+                        "raw_discovered_href": raw_href,
+                        "normalized_detail_url": cand,
+                        "href_source_page": final,
+                        "was_synthetic_url": False,
+                    }
             else:
                 if cand not in seen and cand not in queue:
                     queue.append(cand)
@@ -603,7 +618,15 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     out: List[Dict[str, Any]] = []
     debug: List[Dict[str, Any]] = []
 
-    discovered: Set[str] = set(DETAIL_SEEDS)
+    discovered_meta: Dict[str, Dict[str, Any]] = {
+        _normalize_discovered_url(u): {
+            "raw_discovered_href": u,
+            "normalized_detail_url": _normalize_discovered_url(u),
+            "href_source_page": "detail_seed",
+            "was_synthetic_url": True,
+        }
+        for u in DETAIL_SEEDS
+    }
     accepted_urls: List[str] = []
     component_urls: List[str] = []
     product_urls: List[str] = []
@@ -631,10 +654,12 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
     # Step 2: category crawl -> detail links
     detail_links = _crawl_category_pages(category_links, max_pages=2000)
-    discovered.update(detail_links)
+    for du, meta in detail_links.items():
+        discovered_meta[du] = meta
     debug.append({"site": "viega", "seed_url": CATALOG_SEEDS[0], "status_code": 200 if detail_links else None, "final_url": CATALOG_SEEDS[0], "error": "" if detail_links else "No detail links from categories", "candidates_found": len(detail_links), "method": "category_crawl", "is_index": None})
 
-    for url in sorted(discovered):
+    for url in sorted(discovered_meta):
+        link_meta = discovered_meta.get(url, {})
         st, final, html, err = _safe_get_text(url, timeout=35)
         title = url.rstrip("/").split("/")[-1].replace("-", " ")
         length = None
@@ -681,6 +706,10 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             "length_mode": "unknown" if length is None else ("variable" if length_kind == "variable" else "html"),
             "length_delta_mm": None if length is None else (length - want),
             "discovery_evidence": "Length (variable range)" if length_kind == "variable" else None,
+            "raw_discovered_href": link_meta.get("raw_discovered_href"),
+            "normalized_detail_url": link_meta.get("normalized_detail_url", url),
+            "href_source_page": link_meta.get("href_source_page"),
+            "was_synthetic_url": bool(link_meta.get("was_synthetic_url")),
         })
         accepted_urls.append(url)
         counts_by_category[drain_category] = counts_by_category.get(drain_category, 0) + 1
@@ -704,13 +733,25 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             "candidates_found": 1,
             "method": "detail",
             "is_index": None,
+            "raw_discovered_href": link_meta.get("raw_discovered_href"),
+            "normalized_detail_url": link_meta.get("normalized_detail_url", url),
+            "href_source_page": link_meta.get("href_source_page"),
+            "was_synthetic_url": bool(link_meta.get("was_synthetic_url")),
         })
 
     # keep unique product_id to avoid duplicate IDs in exported Products/Components
     dedup: Dict[str, Dict[str, Any]] = {}
     for r in out:
         pid = str(r.get("product_id") or "")
-        if pid and pid not in dedup:
+        if not pid:
+            continue
+        prev = dedup.get(pid)
+        if prev is None:
+            dedup[pid] = r
+            continue
+        prev_syn = bool(prev.get("was_synthetic_url"))
+        cur_syn = bool(r.get("was_synthetic_url"))
+        if prev_syn and not cur_syn:
             dedup[pid] = r
 
     debug.append({
@@ -723,7 +764,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "method": "summary",
         "is_index": None,
         "final_count": len(dedup),
-        "total_details": len(discovered),
+        "total_details": len(discovered_meta),
         "products_count": sum(1 for r in dedup.values() if str(r.get("candidate_type",""))=="drain"),
         "components_count": sum(1 for r in dedup.values() if str(r.get("candidate_type",""))=="component"),
         "unknown_length_count": sum(1 for r in dedup.values() if str(r.get("length_mode",""))=="unknown"),
