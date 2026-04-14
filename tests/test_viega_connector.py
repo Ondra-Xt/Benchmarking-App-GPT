@@ -146,6 +146,12 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         self.assertEqual(by_url[tempoplex_url]["drain_category"], "shower_tray_drain")
         self.assertEqual(by_url[advantix_url]["drain_category"], "line_channel")
         self.assertIn("discovery_seed_family", by_url[tempoplex_url])
+        summary = _dbg[-1]
+        self.assertIn("canonical_seed_urls", summary)
+        self.assertIn("discovered_category_links", summary)
+        self.assertIn("discovered_detail_links", summary)
+        self.assertIn("dead_seed_urls", summary)
+        self.assertIn("accepted_product_links", summary)
 
 
 if __name__ == "__main__":
