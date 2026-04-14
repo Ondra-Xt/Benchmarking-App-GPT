@@ -135,7 +135,22 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
             return 200, url, "<html><body><a href='x'>seed</a></body></html>", ""
 
         with patch.object(viega, "_safe_get_text", side_effect=fake_get), patch.object(
-            viega, "_crawl_category_pages", return_value={tempoplex_url, advantix_url}
+            viega,
+            "_crawl_category_pages",
+            return_value={
+                tempoplex_url: {
+                    "raw_discovered_href": "/de/produkte/Katalog/Badewannen-und-Duschwannenablaeufe/Tempoplex/Tempoplex-Ablauf-6963-1.html",
+                    "normalized_detail_url": tempoplex_url,
+                    "href_source_page": "seed-page",
+                    "was_synthetic_url": False,
+                },
+                advantix_url: {
+                    "raw_discovered_href": "/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinne-4983-10.html",
+                    "normalized_detail_url": advantix_url,
+                    "href_source_page": "seed-page",
+                    "was_synthetic_url": False,
+                },
+            },
         ):
             rows, _dbg = viega.discover_candidates(1200, 100)
 
@@ -146,12 +161,41 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         self.assertEqual(by_url[tempoplex_url]["drain_category"], "shower_tray_drain")
         self.assertEqual(by_url[advantix_url]["drain_category"], "line_channel")
         self.assertIn("discovery_seed_family", by_url[tempoplex_url])
+        self.assertFalse(by_url[tempoplex_url]["was_synthetic_url"])
+        self.assertEqual(by_url[tempoplex_url]["normalized_detail_url"], tempoplex_url)
         summary = _dbg[-1]
         self.assertIn("canonical_seed_urls", summary)
         self.assertIn("discovered_category_links", summary)
         self.assertIn("discovered_detail_links", summary)
         self.assertIn("dead_seed_urls", summary)
         self.assertIn("accepted_product_links", summary)
+
+    def test_real_href_is_preferred_over_synthetic_seed_url(self):
+        real_url = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinnen/Advantix-Duschrinnen-Einbauhoehe-ab-95/Advantix-Duschrinne-4983-10.html"
+        synthetic_url = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinne-4983-10.html"
+
+        def fake_get(url, timeout=35):
+            if url in {real_url, synthetic_url}:
+                return 200, url, "<html><body><main><h1>Advantix Duschrinne 4983.10</h1></main></body></html>", ""
+            return 200, url, "<html><body>seed</body></html>", ""
+
+        with patch.object(viega, "_safe_get_text", side_effect=fake_get), patch.object(
+            viega,
+            "_crawl_category_pages",
+            return_value={
+                real_url: {
+                    "raw_discovered_href": "/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinnen/Advantix-Duschrinnen-Einbauhoehe-ab-95/Advantix-Duschrinne-4983-10.html",
+                    "normalized_detail_url": real_url,
+                    "href_source_page": "real-listing",
+                    "was_synthetic_url": False,
+                }
+            },
+        ), patch.object(viega, "DETAIL_SEEDS", [synthetic_url]):
+            rows, _ = viega.discover_candidates(1200, 100)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["product_url"], real_url)
+        self.assertFalse(rows[0]["was_synthetic_url"])
 
 
 if __name__ == "__main__":
