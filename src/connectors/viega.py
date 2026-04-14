@@ -67,6 +67,14 @@ COMPONENT_ONLY_RE = re.compile(
     r"grundk[öo]rper|geruchverschluss|rost|profil|einleger|rahmen|zubeh[öo]r|werkzeug|abdeckung",
     re.IGNORECASE,
 )
+UNRELATED_BRANCH_RE = re.compile(
+    r"ersatzteile-fuer-advantix-systeme|rueckstauverschluesse|spuelen-ausguesse|waschtische-und-bidets|wcs-und-urinale|balkon--und-terrassenablaeufe|kueche|urinal|wc|ausguesse",
+    re.IGNORECASE,
+)
+SPARE_TOKEN_RE = re.compile(
+    r"dichtung|o-ring|glocke|tauchrohr|siebeinsatz|schraubenset|sicherungsschraubenset|ersatzteilset|montageset|abdeckhaube|rosette|verlaengerung|verlängerung|einsatz|klappe|handbetaetigung|akku|anschlussset",
+    re.IGNORECASE,
+)
 
 # strict DN parsing; only literal DN and allowed outlet sizes
 DN_PAIR_RE = re.compile(r"\bDN\s*(\d{2,3})\s*/\s*(?:DN\s*)?(\d{2,3})\b", re.IGNORECASE)
@@ -248,6 +256,19 @@ def _infer_family(url: str, title: str = "") -> str:
     if "advantix" in txt:
         return "advantix_other"
     return "other"
+
+
+def _is_unrelated_branch(url: str, title: str = "") -> bool:
+    return bool(UNRELATED_BRANCH_RE.search(f"{url} {title}"))
+
+
+def _is_spare_part_like(url: str, title: str, flat: str, system_role: str) -> bool:
+    txt = f"{url} {title} {flat}"
+    if SPARE_TOKEN_RE.search(txt):
+        return True
+    if system_role == "accessory" and re.search(r"ersatzteil|ersatzteile|set\b", txt, re.IGNORECASE):
+        return True
+    return False
 
 
 def _extract_category_links_from_sortiment(html: str, base_url: str) -> Set[str]:
@@ -616,6 +637,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     _ = int(tolerance_mm)
 
     out: List[Dict[str, Any]] = []
+    discovered_rows: List[Dict[str, Any]] = []
     debug: List[Dict[str, Any]] = []
 
     discovered_meta: Dict[str, Dict[str, Any]] = {
@@ -637,6 +659,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     counts_by_category: Dict[str, int] = {}
     counts_by_role: Dict[str, int] = {}
     dead_seed_urls: List[str] = []
+    rejected_spare_parts: List[str] = []
+    rejected_unrelated: List[str] = []
 
     # Step 1: multiple seeds -> category links
     category_links: Set[str] = set(CATEGORY_SEEDS)
@@ -690,7 +714,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             if mrg:
                 title = f"{title} ({mrg.group(1)}–{mrg.group(2)} mm)"
 
-        out.append({
+        candidate_row = {
             "manufacturer": "viega",
             "product_id": _product_id_from_url(url),
             "product_family": "Advantix",
@@ -710,19 +734,34 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             "normalized_detail_url": link_meta.get("normalized_detail_url", url),
             "href_source_page": link_meta.get("href_source_page"),
             "was_synthetic_url": bool(link_meta.get("was_synthetic_url")),
-        })
-        accepted_urls.append(url)
-        counts_by_category[drain_category] = counts_by_category.get(drain_category, 0) + 1
-        counts_by_role[system_role] = counts_by_role.get(system_role, 0) + 1
-        sample_candidates_by_family.setdefault(fam, [])
-        if len(sample_candidates_by_family[fam]) < 5:
-            sample_candidates_by_family[fam].append(url)
-        if cand_type == "component":
-            component_urls.append(url)
+        }
+        discovered_rows.append(candidate_row)
+
+        unrelated = _is_unrelated_branch(url, title)
+        spare_like = _is_spare_part_like(url, title, flat, system_role)
+        accepted_roles = {"complete_drain", "base_set", "cover", "profile"}
+        role_ok = system_role in accepted_roles
+        is_accepted = role_ok and (not unrelated) and (not spare_like)
+
+        if is_accepted:
+            out.append(candidate_row)
+            accepted_urls.append(url)
+            counts_by_category[drain_category] = counts_by_category.get(drain_category, 0) + 1
+            counts_by_role[system_role] = counts_by_role.get(system_role, 0) + 1
+            sample_candidates_by_family.setdefault(fam, [])
+            if len(sample_candidates_by_family[fam]) < 5:
+                sample_candidates_by_family[fam].append(url)
+            if cand_type == "component":
+                component_urls.append(url)
+            else:
+                product_urls.append(url)
+            if length is None:
+                unknown_length_count += 1
         else:
-            product_urls.append(url)
-        if length is None:
-            unknown_length_count += 1
+            if unrelated:
+                rejected_unrelated.append(url)
+            elif spare_like:
+                rejected_spare_parts.append(url)
 
         debug.append({
             "site": "viega",
@@ -780,6 +819,12 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "discovered_detail_links": json.dumps(sorted(detail_links)[:40], ensure_ascii=False),
         "dead_seed_urls": json.dumps(dead_seed_urls, ensure_ascii=False),
         "accepted_product_links": json.dumps(product_urls[:40], ensure_ascii=False),
+        "discovered_catalog_candidates_count": len(discovered_rows),
+        "accepted_benchmark_candidates_count": len(dedup),
+        "rejected_spare_parts_count": len(rejected_spare_parts),
+        "rejected_unrelated_branch_count": len(rejected_unrelated),
+        "sample_rejected_spare_parts": json.dumps(rejected_spare_parts[:20], ensure_ascii=False),
+        "sample_rejected_unrelated": json.dumps(rejected_unrelated[:20], ensure_ascii=False),
     })
     return list(dedup.values()), debug
 
