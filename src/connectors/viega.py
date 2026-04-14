@@ -27,9 +27,9 @@ CATALOG_SEEDS = [
     f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen.html",
 ]
 DETAIL_SEEDS = [
-    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinne-4983-10.html",
-    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Cleviva-Duschrinnen/Advantix-Cleviva-Duschrinne-4981-10.html",
-    f"{BASE}/de/produkte/Katalog/Badewannen-und-Duschwannenablaeufe/Tempoplex/Tempoplex-Ablauf-6963-1.html",
+    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Cleviva-Duschrinnen/Einbauhoehe-ab-95-mm/Advantix-Cleviva-Duschrinne-4981-10.html",
+    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinnen/Advantix-Duschrinnen-Einbauhoehe-ab-95/Advantix-Duschrinne-4983-10.html",
+    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Ablauf-6963-1.html",
 ]
 CATEGORY_SEEDS = [
     *CATALOG_SEEDS,
@@ -68,11 +68,11 @@ COMPONENT_ONLY_RE = re.compile(
     re.IGNORECASE,
 )
 UNRELATED_BRANCH_RE = re.compile(
-    r"ersatzteile-fuer-advantix-systeme|rueckstauverschluesse|spuelen-ausguesse|waschtische-und-bidets|wcs-und-urinale|balkon--und-terrassenablaeufe|kueche|urinal|wc|ausguesse",
+    r"ersatzteile-fuer-advantix-systeme|ersatzteile-fuer-advantix-systeme-und-rueckstauverschluesse|rueckstauverschluesse|spuelen-ausguesse|waschtische-und-bidets|wcs-und-urinale|balkon--und-terrassenablaeufe|kueche|urinal|wc|ausguesse",
     re.IGNORECASE,
 )
 SPARE_TOKEN_RE = re.compile(
-    r"dichtung|o-ring|glocke|tauchrohr|siebeinsatz|schraubenset|sicherungsschraubenset|ersatzteilset|montageset|abdeckhaube|rosette|verlaengerung|verlängerung|einsatz|klappe|handbetaetigung|akku|anschlussset",
+    r"dichtung|o-ring|glocke|stopfen|tauchrohr|siebeinsatz|schraubenset|sicherungsverschluss|sicherungsschraubenset|ersatzteilset|montageset|abdeckhaube|rosette|rohrf[üu]hrung|rohreinf[üu]hrung|verlaengerung|verlängerung|einsatz|klappe|handbetaetigung|akku|anschlussset|ersatzteil",
     re.IGNORECASE,
 )
 
@@ -209,15 +209,26 @@ def _classify_candidate(url: str, title: str, flat: str = "") -> str:
     return "component"
 
 
-def _derive_taxonomy(url: str, title: str, flat: str = "") -> Tuple[str, str, str, str]:
-    txt = f"{url} {title} {flat}".lower()
+def _extract_breadcrumb_text(html: str) -> str:
+    soup = BeautifulSoup(html or "", "lxml")
+    for sel in ["nav.breadcrumb", "[class*='breadcrumb']", "[aria-label*='Brotkrume']", "[aria-label*='breadcrumb']"]:
+        node = soup.select_one(sel)
+        if node:
+            t = _clean_text(node.get_text(" ", strip=True))
+            if t:
+                return t
+    return ""
+
+
+def _derive_taxonomy(url: str, title: str, flat: str = "", breadcrumb: str = "", article_text: str = "") -> Tuple[str, str, str, str]:
+    txt = f"{url} {title} {flat} {breadcrumb} {article_text}".lower()
     system_role = "complete_drain"
     drain_category = "unknown"
 
     is_tempoplex = bool(re.search(r"tempoplex", txt))
-    if re.search(r"zubeh[öo]r|werkzeug|rahmen|einleger", txt):
+    if re.search(r"zubeh[öo]r|werkzeug|rahmen|einleger|ersatzteil|montageset|sicherungsverschluss|dichtung|o-ring|glocke|stopfen|schraubenset|siebeinsatz|rohrf[üu]hrung|rohreinf[üu]hrung", txt):
         system_role = "accessory"
-    elif re.search(r"grundk[öo]rper|geruchverschluss", txt):
+    elif re.search(r"grundk[öo]rper|geruchverschluss|ablaufk[öo]rper|ablaufgeh[äa]use", txt):
         system_role = "base_set"
     elif re.search(r"ablauf(?!leistung)", txt) and not is_tempoplex:
         system_role = "base_set"
@@ -230,18 +241,18 @@ def _derive_taxonomy(url: str, title: str, flat: str = "") -> Tuple[str, str, st
         drain_category = "accessory"
     elif re.search(r"tempoplex|domoplex|duoplex|varioplex|duschwanne", txt):
         drain_category = "shower_tray_drain"
-    elif re.search(r"wand", txt):
+    elif re.search(r"wandablauf|wandrinne|wandprofil|wand", txt):
         drain_category = "wall_channel"
     elif re.search(r"eckablauf", txt):
         drain_category = "corner_drain"
     elif re.search(r"bodenablauf", txt):
         drain_category = "floor_drain"
-    elif re.search(r"wandablauf|wall", txt):
-        drain_category = "wall_drain"
-    elif re.search(r"punktablauf|bodenablauf|eckablauf", txt):
+    elif re.search(r"punktablauf", txt):
         drain_category = "point_drain"
     elif re.search(r"duschrinne|advantix|cleviva|vario", txt):
         drain_category = "line_channel"
+    elif re.search(r"\bablauf\b", txt) and re.search(r"advantix|entwaesserungstechnik|boden", txt):
+        drain_category = "point_drain"
 
     cand_type = "drain" if system_role == "complete_drain" and drain_category != "accessory" else "component"
     complete_system = "yes" if cand_type == "drain" else "component"
@@ -264,11 +275,25 @@ def _is_unrelated_branch(url: str, title: str = "") -> bool:
 
 def _is_spare_part_like(url: str, title: str, flat: str, system_role: str) -> bool:
     txt = f"{url} {title} {flat}"
+    if _is_unrelated_branch(url, title):
+        return True
     if SPARE_TOKEN_RE.search(txt):
         return True
     if system_role == "accessory" and re.search(r"ersatzteil|ersatzteile|set\b", txt, re.IGNORECASE):
         return True
     return False
+
+
+def _belongs_to_target_families(url: str, title: str, breadcrumb: str, drain_category: str) -> bool:
+    txt = f"{url} {title} {breadcrumb}".lower()
+    if drain_category in {"line_channel", "point_drain", "floor_drain", "corner_drain", "shower_tray_drain", "wall_channel"}:
+        return True
+    return bool(
+        re.search(
+            r"advantix|tempoplex|domoplex|duoplex|varioplex|duschwannengarnituren|duschrinne|bodenablauf|eckablauf|wandablauf|ablaeufe-fuer-bade--und-duschwannen",
+            txt,
+        )
+    )
 
 
 def _extract_category_links_from_sortiment(html: str, base_url: str) -> Set[str]:
@@ -645,7 +670,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             "raw_discovered_href": u,
             "normalized_detail_url": _normalize_discovered_url(u),
             "href_source_page": "detail_seed",
-            "was_synthetic_url": True,
+            "was_synthetic_url": False,
         }
         for u in DETAIL_SEEDS
     }
@@ -695,8 +720,14 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             title = _extract_title(html, final)
             flat = _main_flat_text(html)
             length, length_snip, length_kind = _resolve_length_from_text(f"{title} {flat}")
+            breadcrumb = _extract_breadcrumb_text(html)
+            article_rows = _parse_article_table(html)
+            article_text = " ".join(str(r.get("_row_text") or "") for r in article_rows[:30])
+        else:
+            breadcrumb = ""
+            article_text = ""
 
-        cand_type, drain_category, system_role, complete_system = _derive_taxonomy(url, title, flat)
+        cand_type, drain_category, system_role, complete_system = _derive_taxonomy(url, title, flat, breadcrumb=breadcrumb, article_text=article_text)
         fam = _infer_family(url, title)
 
         # safeguard: /Zubehoer/ should never become products
@@ -740,8 +771,9 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         unrelated = _is_unrelated_branch(url, title)
         spare_like = _is_spare_part_like(url, title, flat, system_role)
         accepted_roles = {"complete_drain", "base_set", "cover", "profile"}
+        in_target_families = _belongs_to_target_families(url, title, breadcrumb, drain_category)
         role_ok = system_role in accepted_roles
-        is_accepted = role_ok and (not unrelated) and (not spare_like)
+        is_accepted = role_ok and in_target_families and (not unrelated) and (not spare_like)
 
         if is_accepted:
             out.append(candidate_row)
@@ -790,7 +822,15 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             continue
         prev_syn = bool(prev.get("was_synthetic_url"))
         cur_syn = bool(r.get("was_synthetic_url"))
+        prev_source = str(prev.get("href_source_page") or "")
+        cur_source = str(r.get("href_source_page") or "")
         if prev_syn and not cur_syn:
+            dedup[pid] = r
+            continue
+        if prev_source == "detail_seed" and cur_source != "detail_seed":
+            dedup[pid] = r
+            continue
+        if len(urlparse(str(r.get("product_url") or "")).path) > len(urlparse(str(prev.get("product_url") or "")).path):
             dedup[pid] = r
 
     debug.append({
