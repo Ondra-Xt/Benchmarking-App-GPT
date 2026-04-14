@@ -20,18 +20,11 @@ HEADERS = {
 BASE = "https://www.viega.de"
 DETAIL_SCOPE = "/de/produkte/Katalog/"
 CATALOG_SEEDS = [
+    f"{BASE}/de/produkte/entwaesserungstechnik/im-bad.html",
+    f"{BASE}/de/produkte/entwaesserungstechnik/im-bad/duschwannengarnituren.html",
     f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen.html",
-    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Cleviva-Duschrinnen.html",
-    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Duschablaeufe.html",
     f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Bodenablaeufe.html",
-    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Eckablaeufe.html",
-    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Vario-Duschrinnen.html",
-    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Vario-Duschrinnen-Wand.html",
-    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik.html",
-    f"{BASE}/de/produkte/Katalog/Badewannen-und-Duschwannenablaeufe/Duschwannengarnituren.html",
-    f"{BASE}/de/produkte/Katalog/Badewannen-und-Duschwannenablaeufe/Tempoplex.html",
-    f"{BASE}/de/produkte/Katalog/Badewannen-und-Duschwannenablaeufe/Tempoplex-Plus.html",
-    f"{BASE}/de/produkte/Katalog/Badewannen-und-Duschwannenablaeufe/Tempoplex-60.html",
+    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen.html",
 ]
 DETAIL_SEEDS = [
     f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinne-4983-10.html",
@@ -159,9 +152,11 @@ def _in_scope(url: str) -> bool:
     try:
         p = urlparse(url)
         path = (p.path or "").lower()
-        if not (p.netloc.endswith("viega.de") and path.startswith(DETAIL_SCOPE)):
+        if not p.netloc.endswith("viega.de"):
             return False
-        return bool(re.search(r"entwaesserungstechnik|dusch|duschrinne|advantix|tempoplex|ablauf", path, re.IGNORECASE))
+        if not path.startswith("/de/produkte/"):
+            return False
+        return bool(re.search(r"entwaesserungstechnik|dusch|duschrinne|advantix|tempoplex|domoplex|duoplex|varioplex|ablauf", path, re.IGNORECASE))
     except Exception:
         return False
 
@@ -618,6 +613,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     sample_candidates_by_family: Dict[str, List[str]] = {}
     counts_by_category: Dict[str, int] = {}
     counts_by_role: Dict[str, int] = {}
+    dead_seed_urls: List[str] = []
 
     # Step 1: multiple seeds -> category links
     category_links: Set[str] = set(CATEGORY_SEEDS)
@@ -629,6 +625,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             links = _extract_category_links_from_sortiment(html, final)
             found = len(links)
             category_links.update(links)
+        else:
+            dead_seed_urls.append(seed)
         debug.append({"site": "viega", "seed_url": seed, "status_code": st, "final_url": final, "error": err, "candidates_found": found, "method": "seed_scope", "is_index": None, "discovery_seed_family": fam})
 
     # Step 2: category crawl -> detail links
@@ -736,6 +734,11 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "counts_by_drain_category": json.dumps(counts_by_category, ensure_ascii=False),
         "counts_by_system_role": json.dumps(counts_by_role, ensure_ascii=False),
         "sample_candidates_by_family": json.dumps(sample_candidates_by_family, ensure_ascii=False),
+        "canonical_seed_urls": json.dumps(CATALOG_SEEDS, ensure_ascii=False),
+        "discovered_category_links": json.dumps(sorted(category_links)[:40], ensure_ascii=False),
+        "discovered_detail_links": json.dumps(sorted(detail_links)[:40], ensure_ascii=False),
+        "dead_seed_urls": json.dumps(dead_seed_urls, ensure_ascii=False),
+        "accepted_product_links": json.dumps(product_urls[:40], ensure_ascii=False),
     })
     return list(dedup.values()), debug
 
