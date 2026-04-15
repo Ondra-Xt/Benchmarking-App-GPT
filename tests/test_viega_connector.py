@@ -286,6 +286,22 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
             )
         )
 
+    def test_verstellfussset_is_accessory_not_complete_drain(self):
+        c = viega._derive_taxonomy(
+            "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinnen-Verstellfussset-4982-90.html",
+            "Advantix-Duschrinnen-Verstellfußset 4982.90",
+            "Verstellfußset",
+        )
+        self.assertEqual(c[2], "accessory")
+        self.assertEqual(c[0], "component")
+        self.assertTrue(
+            viega._is_mounting_accessory_like(
+                "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinnen-Verstellfussset-4982-90.html",
+                "Advantix-Duschrinnen-Verstellfußset 4982.90",
+                "Verstellfußset",
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

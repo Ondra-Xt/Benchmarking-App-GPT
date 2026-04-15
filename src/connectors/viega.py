@@ -75,6 +75,10 @@ SPARE_TOKEN_RE = re.compile(
     r"dichtung|o-ring|glocke|stopfen|tauchrohr|siebeinsatz|schraubenset|sicherungsverschluss|sicherungsschraubenset|ersatzteilset|montageset|abdeckhaube|rosette|rohrf[üu]hrung|rohreinf[üu]hrung|verlaengerung|verlängerung|einsatz|klappe|handbetaetigung|akku|anschlussset|ersatzteil",
     re.IGNORECASE,
 )
+MOUNTING_ACCESSORY_RE = re.compile(
+    r"verstellfu[ßs]set|fu[ßs]set|montageset|montagehilfe|befestigungssatz|halterung|traggestell|einbauhilfe",
+    re.IGNORECASE,
+)
 MEANINGFUL_ENTITY_RE = re.compile(
     r"duschrinne|bodenablauf|eckablauf|wandablauf|\bablauf\b|grundk[öo]rper|rost|profil|abdeckung",
     re.IGNORECASE,
@@ -236,6 +240,8 @@ def _derive_taxonomy(url: str, title: str, flat: str = "", breadcrumb: str = "",
     is_tempoplex = bool(re.search(r"tempoplex|domoplex|duoplex|varioplex", txt))
     if re.search(r"zubeh[öo]r|werkzeug|rahmen|einleger|ersatzteil|montageset|sicherungsverschluss|dichtung|o-ring|glocke|stopfen|schraubenset|siebeinsatz|rohrf[üu]hrung|rohreinf[üu]hrung|akku|klappe|handbet[äa]tigung", txt):
         system_role = "accessory"
+    elif MOUNTING_ACCESSORY_RE.search(txt):
+        system_role = "accessory"
     elif re.search(r"rost|abdeckung", txt):
         system_role = "cover"
     elif re.search(r"profil", txt):
@@ -294,6 +300,10 @@ def _is_spare_part_like(url: str, title: str, flat: str, system_role: str) -> bo
     if system_role == "accessory" and re.search(r"ersatzteil|ersatzteile|set\b", txt, re.IGNORECASE):
         return True
     return False
+
+
+def _is_mounting_accessory_like(url: str, title: str, flat: str) -> bool:
+    return bool(MOUNTING_ACCESSORY_RE.search(f"{url} {title} {flat}"))
 
 
 def _belongs_to_target_families(url: str, title: str, breadcrumb: str, drain_category: str) -> bool:
@@ -700,6 +710,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     counts_by_role: Dict[str, int] = {}
     dead_seed_urls: List[str] = []
     rejected_spare_parts: List[str] = []
+    rejected_mounting_accessories: List[str] = []
     rejected_unrelated: List[str] = []
     rejected_overfiltered: List[str] = []
     sample_relevant_kept: List[str] = []
@@ -788,11 +799,12 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
         unrelated = _is_unrelated_branch(url, title)
         spare_like = _is_spare_part_like(url, title, flat, system_role)
+        mounting_like = _is_mounting_accessory_like(url, title, flat)
         accepted_roles = {"complete_drain", "base_set", "cover", "profile"}
         in_target_families = _belongs_to_target_families(url, title, breadcrumb, drain_category)
         meaningful_entity = _is_meaningful_system_entity(url, title, flat, system_role)
         role_ok = system_role in accepted_roles
-        is_accepted = role_ok and meaningful_entity and in_target_families and (not unrelated) and (not spare_like)
+        is_accepted = role_ok and meaningful_entity and in_target_families and (not unrelated) and (not spare_like) and (not mounting_like)
 
         if is_accepted:
             out.append(candidate_row)
@@ -816,6 +828,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                 rejected_unrelated.append(url)
             elif spare_like:
                 rejected_spare_parts.append(url)
+            elif mounting_like:
+                rejected_mounting_accessories.append(url)
             else:
                 rejected_overfiltered.append(url)
                 if (role_ok or meaningful_entity) and len(sample_relevant_rejected) < 20:
@@ -890,11 +904,13 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "accepted_benchmark_candidates_count": len(dedup),
         "accepted_candidates_count": len(dedup),
         "rejected_spare_parts_count": len(rejected_spare_parts),
+        "rejected_mounting_accessories_count": len(rejected_mounting_accessories),
         "rejected_unrelated_branch_count": len(rejected_unrelated),
         "rejected_overfiltered_count": len(rejected_overfiltered),
         "sample_relevant_kept": json.dumps(sample_relevant_kept[:20], ensure_ascii=False),
         "sample_relevant_rejected": json.dumps(sample_relevant_rejected[:20], ensure_ascii=False),
         "sample_rejected_spare_parts": json.dumps(rejected_spare_parts[:20], ensure_ascii=False),
+        "sample_rejected_mounting_accessories": json.dumps(rejected_mounting_accessories[:20], ensure_ascii=False),
         "sample_rejected_unrelated": json.dumps(rejected_unrelated[:20], ensure_ascii=False),
     })
     return list(dedup.values()), debug
