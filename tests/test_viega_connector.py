@@ -302,6 +302,31 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
             )
         )
 
+    def test_category_link_filter_keeps_shower_families_and_drops_noise(self):
+        html = """
+        <html><body>
+          <a href="/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen.html">line</a>
+          <a href="/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Bodenablaeufe.html">floor</a>
+          <a href="/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex.html">tempoplex</a>
+          <a href="/de/produkte/Katalog/Entwaesserungstechnik/Badewannengarnituren/Multiplex.html">multiplex</a>
+          <a href="/de/produkte/Katalog/Entwaesserungstechnik/Rotaplex.html">rotaplex</a>
+          <a href="/de/produkte/entwaesserungstechnik/im-bad/highlight.html">highlight</a>
+          <a href="/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen.html#anchor">anchor</a>
+          <a href="/de/downloads/viega-zertifikat.pdf">pdf</a>
+        </body></html>
+        """
+        links, stats, fam = viega._extract_category_links_from_sortiment(html, "https://www.viega.de")
+        joined = " ".join(sorted(links)).lower()
+        self.assertIn("advantix-duschrinnen", joined)
+        self.assertIn("advantix-bodenablaeufe", joined)
+        self.assertIn("tempoplex", joined)
+        self.assertNotIn("multiplex", joined)
+        self.assertNotIn("rotaplex", joined)
+        self.assertGreaterEqual(stats["dropped_bathtub"], 2)
+        self.assertGreaterEqual(stats["dropped_highlight"], 1)
+        self.assertGreaterEqual(stats["dropped_anchor"], 1)
+        self.assertIn("advantix_line", fam)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -87,6 +87,19 @@ RELEVANT_FAMILY_RE = re.compile(
     r"advantix-duschrinnen|advantix-cleviva|cleviva|advantix-vario|vario-wand|advantix-eckablaeufe|advantix-bodenablaeufe|tempoplex|tempoplex-plus|tempoplex-60|domoplex|duoplex|varioplex|duschwannengarnituren|ablaeufe-fuer-bade--und-duschwannen",
     re.IGNORECASE,
 )
+CATEGORY_POSITIVE_RE = re.compile(
+    r"advantix-duschrinnen|advantix-cleviva|advantix-vario|vario-wand|advantix-eckablaeufe|advantix-bodenablaeufe|tempoplex(?:-plus|-60)?|domoplex|duoplex|varioplex|duschwannengarnituren",
+    re.IGNORECASE,
+)
+CATEGORY_DROP_DOWNLOAD_RE = re.compile(
+    r"\.pdf(?:$|\?)|download|zertifikat|certificate|epd|submittal|ausschreibung|datenblatt",
+    re.IGNORECASE,
+)
+CATEGORY_DROP_BATHTUB_RE = re.compile(
+    r"multiplex|multiplex-trio|rotaplex|badewannengarnituren|badewanne",
+    re.IGNORECASE,
+)
+CATEGORY_DROP_HIGHLIGHT_RE = re.compile(r"highlight", re.IGNORECASE)
 
 # strict DN parsing; only literal DN and allowed outlet sizes
 DN_PAIR_RE = re.compile(r"\bDN\s*(\d{2,3})\s*/\s*(?:DN\s*)?(\d{2,3})\b", re.IGNORECASE)
@@ -320,9 +333,81 @@ def _is_meaningful_system_entity(url: str, title: str, flat: str, system_role: s
     return bool(MEANINGFUL_ENTITY_RE.search(txt))
 
 
-def _extract_category_links_from_sortiment(html: str, base_url: str) -> Set[str]:
+def _family_from_category_link(url: str) -> str:
+    txt = (url or "").lower()
+    if "advantix-bodenablaeufe" in txt:
+        return "advantix_floor"
+    if "advantix-eckablaeufe" in txt:
+        return "advantix_corner"
+    if "advantix-vario" in txt or "vario-wand" in txt:
+        return "advantix_vario"
+    if "advantix-cleviva" in txt:
+        return "advantix_cleviva"
+    if "advantix-duschrinnen" in txt:
+        return "advantix_line"
+    if "tempoplex" in txt:
+        return "tempoplex"
+    if "domoplex" in txt:
+        return "domoplex"
+    if "duoplex" in txt:
+        return "duoplex"
+    if "varioplex" in txt:
+        return "varioplex"
+    if "duschwannengarnituren" in txt:
+        return "duschwannengarnituren"
+    return "other"
+
+
+def _filter_category_link(url: str) -> Tuple[bool, str]:
+    txt = (url or "").lower()
+    if "#" in txt:
+        return False, "anchor"
+    if CATEGORY_DROP_HIGHLIGHT_RE.search(txt):
+        return False, "highlight"
+    if CATEGORY_DROP_DOWNLOAD_RE.search(txt):
+        return False, "download"
+    if CATEGORY_DROP_BATHTUB_RE.search(txt):
+        return False, "bathtub"
+    if not CATEGORY_POSITIVE_RE.search(txt):
+        return False, "non_target"
+    return True, "kept"
+
+
+def _extract_category_links_from_sortiment(html: str, base_url: str) -> Tuple[Set[str], Dict[str, int], Dict[str, int]]:
     soup = BeautifulSoup(html or "", "lxml")
     out: Set[str] = set()
+    stats = {
+        "raw": 0,
+        "kept": 0,
+        "dropped_anchor": 0,
+        "dropped_highlight": 0,
+        "dropped_bathtub": 0,
+        "dropped_download": 0,
+        "dropped_non_target": 0,
+    }
+    kept_by_family: Dict[str, int] = {}
+
+    def _consider(u: str) -> None:
+        if not _in_scope(u) or _is_detail_url(u):
+            return
+        stats["raw"] += 1
+        keep, why = _filter_category_link(u)
+        if not keep:
+            if why == "anchor":
+                stats["dropped_anchor"] += 1
+            elif why == "highlight":
+                stats["dropped_highlight"] += 1
+            elif why == "bathtub":
+                stats["dropped_bathtub"] += 1
+            elif why == "download":
+                stats["dropped_download"] += 1
+            else:
+                stats["dropped_non_target"] += 1
+            return
+        stats["kept"] += 1
+        out.add(u)
+        fam = _family_from_category_link(u)
+        kept_by_family[fam] = kept_by_family.get(fam, 0) + 1
 
     # try explicit Sortiment section first
     sort_headers = soup.find_all(string=re.compile(r"sortiment", re.IGNORECASE))
@@ -334,18 +419,16 @@ def _extract_category_links_from_sortiment(html: str, base_url: str) -> Set[str]
                 break
             for a in container.select("a[href]"):
                 u = _abs(a.get("href") or "", base_url)
-                if _in_scope(u) and not _is_detail_url(u):
-                    out.add(u)
+                _consider(u)
             container = container.parent
 
     # fallback: all in-scope non-detail links from seed
     if not out:
         for a in soup.select("a[href]"):
             u = _abs(a.get("href") or "", base_url)
-            if _in_scope(u) and not _is_detail_url(u):
-                out.add(u)
+            _consider(u)
 
-    return out
+    return out, stats, kept_by_family
 
 
 def _crawl_category_pages(start_pages: Set[str], max_pages: int = 2000) -> Dict[str, Dict[str, Any]]:
@@ -715,6 +798,13 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     rejected_overfiltered: List[str] = []
     sample_relevant_kept: List[str] = []
     sample_relevant_rejected: List[str] = []
+    category_links_raw_count = 0
+    category_links_kept_count = 0
+    dropped_anchor_links_count = 0
+    dropped_highlight_links_count = 0
+    dropped_bathtub_branch_links_count = 0
+    dropped_download_links_count = 0
+    kept_category_links_by_family: Dict[str, int] = {}
 
     # Step 1: multiple seeds -> category links
     category_links: Set[str] = set(CATEGORY_SEEDS)
@@ -723,9 +813,17 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         found = 0
         fam = _infer_family(seed, "")
         if st == 200 and html:
-            links = _extract_category_links_from_sortiment(html, final)
+            links, link_stats, kept_fam_stats = _extract_category_links_from_sortiment(html, final)
             found = len(links)
             category_links.update(links)
+            category_links_raw_count += int(link_stats.get("raw", 0))
+            category_links_kept_count += int(link_stats.get("kept", 0))
+            dropped_anchor_links_count += int(link_stats.get("dropped_anchor", 0))
+            dropped_highlight_links_count += int(link_stats.get("dropped_highlight", 0))
+            dropped_bathtub_branch_links_count += int(link_stats.get("dropped_bathtub", 0))
+            dropped_download_links_count += int(link_stats.get("dropped_download", 0))
+            for k, v in kept_fam_stats.items():
+                kept_category_links_by_family[k] = kept_category_links_by_family.get(k, 0) + int(v)
         else:
             dead_seed_urls.append(seed)
         debug.append({"site": "viega", "seed_url": seed, "status_code": st, "final_url": final, "error": err, "candidates_found": found, "method": "seed_scope", "is_index": None, "discovery_seed_family": fam})
@@ -895,6 +993,13 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "counts_by_system_role": json.dumps(counts_by_role, ensure_ascii=False),
         "counts_by_family": json.dumps(counts_by_family, ensure_ascii=False),
         "sample_candidates_by_family": json.dumps(sample_candidates_by_family, ensure_ascii=False),
+        "discovered_category_links_raw_count": category_links_raw_count,
+        "discovered_category_links_kept_count": category_links_kept_count,
+        "dropped_anchor_links_count": dropped_anchor_links_count,
+        "dropped_highlight_links_count": dropped_highlight_links_count,
+        "dropped_bathtub_branch_links_count": dropped_bathtub_branch_links_count,
+        "dropped_download_links_count": dropped_download_links_count,
+        "kept_category_links_by_family": json.dumps(kept_category_links_by_family, ensure_ascii=False),
         "canonical_seed_urls": json.dumps(CATALOG_SEEDS, ensure_ascii=False),
         "discovered_category_links": json.dumps(sorted(category_links)[:40], ensure_ascii=False),
         "discovered_detail_links": json.dumps(sorted(detail_links)[:40], ensure_ascii=False),
