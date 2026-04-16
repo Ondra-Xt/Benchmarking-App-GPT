@@ -76,6 +76,54 @@ def _select_connector_keys(selected_connectors: Optional[Iterable[str]]) -> Set[
     out = picked & valid
     return out if out else valid
 
+
+def _viega_family_hint(row: Dict[str, Any]) -> str:
+    for key in ("family", "discovery_seed_family", "product_family"):
+        v = str(row.get(key) or "").strip().lower()
+        if v:
+            return v
+    txt = f"{row.get('product_url','')} {row.get('product_name','')}".lower()
+    if "tempoplex" in txt:
+        return "tempoplex"
+    if "domoplex" in txt:
+        return "domoplex"
+    if "duoplex" in txt:
+        return "duoplex"
+    if "varioplex" in txt:
+        return "varioplex"
+    if "bodenablauf" in txt:
+        return "advantix_floor"
+    if "advantix" in txt:
+        return "advantix_line"
+    return "unknown"
+
+
+def _viega_model_block(row: Dict[str, Any]) -> str:
+    txt = f"{row.get('product_id','')} {row.get('product_url','')} {row.get('product_name','')}"
+    m = re.search(r"(\d{4,5})[-\.]?(\d{2})", txt)
+    if m:
+        return m.group(1)
+    m2 = re.search(r"(\d{4,5})", txt)
+    return m2.group(1) if m2 else _slug(str(row.get("product_name") or "unknown"))
+
+
+def _infer_viega_role(row: Dict[str, Any]) -> str:
+    sr = str(row.get("system_role") or "").strip().lower()
+    if sr:
+        return sr
+    txt = f"{row.get('product_name','')} {row.get('product_url','')}".lower()
+    if any(k in txt for k in ("verstellfu", "dichtung", "o-ring", "glocke", "stopfen", "montageset", "schraubenset", "sicherungsverschluss", "siebeinsatz")):
+        return "accessory"
+    if any(k in txt for k in ("rost", "abdeckung", "verschlussplatte")):
+        return "cover"
+    if "profil" in txt:
+        return "profile"
+    if any(k in txt for k in ("grundkörper", "grundkoerper", "rinnenkörper", "rinnenkoerper", "ablaufkörper", "ablaufkoerper", "geruchverschluss")):
+        return "base_set"
+    if any(k in txt for k in ("duschrinne", "bodenablauf", "ablauf")):
+        return "complete_drain"
+    return "accessory"
+
 # --- API pro app.py ------------------------------------------------------
 
 def run_discovery(
@@ -191,6 +239,28 @@ def run_update(
     excluded_rows: List[Dict[str, Any]] = []
     evidence_rows: List[Dict[str, Any]] = []
     bom_rows: List[Dict[str, Any]] = []
+    viega_groups: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    viega_debug = {
+        "complete_assembly_candidates_count": 0,
+        "promoted_products_count": 0,
+        "incomplete_assemblies_count": 0,
+        "sample_promoted_products": [],
+        "sample_incomplete_assemblies": [],
+        "missing_required_parts_counts": {},
+        "promotion_reason_counts": {},
+    }
+
+    if "manufacturer" in registry_df.columns:
+        for _, rv in registry_df[registry_df["manufacturer"] == "viega"].iterrows():
+            rr = rv.to_dict()
+            fam = _viega_family_hint(rr)
+            block = _viega_model_block(rr)
+            key = (fam, block)
+            grp = viega_groups.setdefault(key, {"roles": set(), "product_ids": [], "urls": []})
+            role = _infer_viega_role(rr)
+            grp["roles"].add(role)
+            grp["product_ids"].append(str(rr.get("product_id") or ""))
+            grp["urls"].append(str(rr.get("product_url") or ""))
 
     for _, r in registry_df.iterrows():
         manufacturer = _normalize_manufacturer(r.get("manufacturer", ""))
@@ -226,33 +296,6 @@ def run_update(
             continue
 
         params = connector.extract_parameters(url) or {}
-
-        # Viega cleanup: drains without mandatory parameters must not stay in Products
-        if manufacturer == "viega" and candidate_type == "drain":
-            if _is_accessory_like(f"{url} {r.get('product_name', '')}"):
-                candidate_type = "component"
-            elif params.get("flow_rate_lps") in (None, ""):
-                excluded_rows.append({
-                    "manufacturer": manufacturer,
-                    "product_id": product_id,
-                    "product_name": r.get("product_name"),
-                    "product_url": url,
-                    "candidate_type": candidate_type,
-                    "complete_system": complete_system,
-                    "excluded_reason": "missing_flow_after_html_pdf",
-                })
-                continue
-            elif params.get("outlet_dn") in (None, ""):
-                excluded_rows.append({
-                    "manufacturer": manufacturer,
-                    "product_id": product_id,
-                    "product_name": r.get("product_name"),
-                    "product_url": url,
-                    "candidate_type": candidate_type,
-                    "complete_system": complete_system,
-                    "excluded_reason": "missing_outlet_dn_after_html_pdf",
-                })
-                continue
 
         # ACO cleanup: drains without flow should be excluded
         if manufacturer == "aco" and candidate_type == "drain" and params.get("flow_rate_lps") in (None, ""):
@@ -294,6 +337,61 @@ def run_update(
                 "source": str(source),
             })
 
+        # Viega promotion-by-assembly: promote only complete assemblies with required parts
+        promote_to_product = True
+        promotion_reason = "default"
+        missing_required_parts: List[str] = []
+        matched_component_ids: List[str] = []
+        if manufacturer == "viega":
+            rowd = r.to_dict() if hasattr(r, "to_dict") else dict(r)
+            fam = _viega_family_hint(rowd)
+            block = _viega_model_block(rowd)
+            role = _infer_viega_role(rowd)
+            g = viega_groups.get((fam, block), {"roles": set(), "product_ids": []})
+            roles = set(g.get("roles") or set())
+            txt = f"{rowd.get('product_name','')} {url}".lower()
+            non_promotable = role == "accessory" or any(k in txt for k in ("verstellfu", "dichtung", "o-ring", "glocke", "stopfen", "montageset", "schraubenset", "sicherungsverschluss", "siebeinsatz"))
+            is_tray = fam in {"tempoplex", "tempoplex_plus", "tempoplex_60", "domoplex", "duoplex", "varioplex"}
+            has_body = any(x in roles for x in {"complete_drain", "base_set"})
+            has_top = any(x in roles for x in {"cover", "profile"}) or role == "complete_drain"
+            missing_required_parts: List[str] = []
+            if not has_body:
+                missing_required_parts.append("body_or_base")
+            if not is_tray and not has_top:
+                missing_required_parts.append("top_element")
+            if params.get("flow_rate_lps") in (None, ""):
+                missing_required_parts.append("flow_rate_lps")
+            if params.get("outlet_dn") in (None, "") and not is_tray:
+                missing_required_parts.append("outlet_dn")
+
+            promote = (role in {"complete_drain", "base_set"}) and (not non_promotable) and len(missing_required_parts) == 0
+            reason = "promoted_complete_assembly" if promote else ("non_promotable_accessory" if non_promotable else "incomplete_assembly")
+            promote_to_product = promote
+            promotion_reason = reason
+            matched_component_ids = list(g.get("product_ids") or [])
+            viega_debug["promotion_reason_counts"][reason] = viega_debug["promotion_reason_counts"].get(reason, 0) + 1
+            if promote:
+                viega_debug["complete_assembly_candidates_count"] += 1
+                viega_debug["promoted_products_count"] += 1
+                if len(viega_debug["sample_promoted_products"]) < 20:
+                    viega_debug["sample_promoted_products"].append(url)
+                candidate_type = "drain"
+            else:
+                viega_debug["incomplete_assemblies_count"] += 1
+                if len(viega_debug["sample_incomplete_assemblies"]) < 20:
+                    viega_debug["sample_incomplete_assemblies"].append(f"{url} missing={','.join(missing_required_parts) or reason}")
+                for p in missing_required_parts:
+                    viega_debug["missing_required_parts_counts"][p] = viega_debug["missing_required_parts_counts"].get(p, 0) + 1
+                # keep in Components by not adding to products/comparison
+                evidence_rows.append({
+                    "manufacturer": manufacturer,
+                    "product_id": product_id,
+                    "label": "Viega promotion",
+                    "snippet": f"promote_to_product=no reason={reason} missing_required_parts={missing_required_parts} matched_component_ids={g.get('product_ids')}",
+                    "source": url,
+                })
+                continue
+
         # scoring
         param_score, param_detail = compute_parameter_score(params, cfg)
         equiv_score = compute_equivalence_score({"candidate_type": candidate_type, **params}, cfg)
@@ -306,6 +404,10 @@ def run_update(
             "product_name": r.get("product_name"),
             "product_url": url,
             "candidate_type": candidate_type,
+            "promote_to_product": "yes" if promote_to_product else "no",
+            "promotion_reason": promotion_reason,
+            "missing_required_parts": ",".join(missing_required_parts),
+            "matched_component_ids": ",".join(str(x) for x in matched_component_ids),
 
             # vytažené parametry:
             **{k: v for k, v in params.items() if k != "evidence"},
@@ -338,6 +440,57 @@ def run_update(
                 "snippet": str(v),
                 "source": url,
             })
+
+    if any(str(x).strip().lower() == "viega" for x in registry_df.get("manufacturer", pd.Series(dtype=str)).tolist()):
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "viega_complete_assembly_candidates_count",
+            "snippet": str(viega_debug["complete_assembly_candidates_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "viega_promoted_products_count",
+            "snippet": str(viega_debug["promoted_products_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "viega_incomplete_assemblies_count",
+            "snippet": str(viega_debug["incomplete_assemblies_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_promoted_products",
+            "snippet": str(viega_debug["sample_promoted_products"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_incomplete_assemblies",
+            "snippet": str(viega_debug["sample_incomplete_assemblies"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "missing_required_parts_counts",
+            "snippet": str(viega_debug["missing_required_parts_counts"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "promotion_reason_counts",
+            "snippet": str(viega_debug["promotion_reason_counts"]),
+            "source": "promotion_stage",
+        })
 
     products_df = pd.DataFrame(products_rows)
     comparison_df = pd.DataFrame(comparison_rows)
