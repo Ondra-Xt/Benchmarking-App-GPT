@@ -72,7 +72,7 @@ UNRELATED_BRANCH_RE = re.compile(
     re.IGNORECASE,
 )
 SPARE_TOKEN_RE = re.compile(
-    r"dichtung|o-ring|glocke|stopfen|tauchrohr|siebeinsatz|schraubenset|sicherungsverschluss|sicherungsschraubenset|ersatzteilset|montageset|abdeckhaube|rosette|rohrf[üu]hrung|rohreinf[üu]hrung|verlaengerung|verlängerung|einsatz|klappe|handbetaetigung|akku|anschlussset|ersatzteil",
+    r"\b(?:dichtung|o-ring|glocke|stopfen|tauchrohr|siebeinsatz|schraubenset|sicherungsverschluss|sicherungsschraubenset|ersatzteilset|montageset|abdeckhaube|rosette|rohrf[üu]hrung|rohreinf[üu]hrung|verlaengerung|verlängerung|einsatz|klappe|handbetaetigung|akku|anschlussset|ersatzteil)\b",
     re.IGNORECASE,
 )
 MOUNTING_ACCESSORY_RE = re.compile(
@@ -372,6 +372,51 @@ def _is_meaningful_system_entity(url: str, title: str, flat: str, system_role: s
         return False
     txt = f"{url} {title} {flat}"
     return bool(MEANINGFUL_ENTITY_RE.search(txt))
+
+
+def _is_accepted_system_entity(family: str, system_role: str, url: str, title: str, breadcrumb: str, drain_category: str, flat: str) -> bool:
+    accepted_roles = {"complete_drain", "base_set", "cover", "profile"}
+    role_ok = system_role in accepted_roles
+    in_target = family != "unrelated" and _belongs_to_target_families(url, title, breadcrumb, drain_category)
+    meaningful = _is_meaningful_system_entity(url, title, flat, system_role)
+    spare_like = _is_spare_part_like(url, title, flat, system_role)
+    mounting_like = _is_mounting_accessory_like(url, title, flat)
+    unrelated = _is_unrelated_branch(url, title)
+    return role_ok and in_target and meaningful and (not spare_like) and (not mounting_like) and (not unrelated)
+
+
+def validate_golden_set() -> List[Dict[str, Any]]:
+    results: List[Dict[str, Any]] = []
+    for item in VIEGA_GOLDEN_SET:
+        url = str(item.get("url") or "")
+        st, final, html, err = _safe_get_text(url, timeout=35)
+        title = url.rstrip("/").split("/")[-1].replace("-", " ")
+        flat = ""
+        breadcrumb = ""
+        if st == 200 and html:
+            title = _extract_title(html, final)
+            flat = _main_flat_text(html)
+            breadcrumb = _extract_breadcrumb_text(html)
+        family = _classify_family(url, title, breadcrumb, "")
+        system_role = _classify_entity_type(url, title, flat, family)
+        drain_category = _drain_category_from_family_and_text(family, f"{url} {title} {flat} {breadcrumb}", system_role)
+        accepted = _is_accepted_system_entity(family, system_role, url, title, breadcrumb, drain_category, flat)
+        params = extract_parameters(url) if st == 200 else {}
+        flow_found = bool(params.get("flow_rate_lps") is not None)
+        dn_found = bool(params.get("outlet_dn"))
+        results.append({
+            "url": url,
+            "title": title,
+            "family_detected": family,
+            "drain_category_detected": drain_category,
+            "system_role_detected": system_role,
+            "accepted_or_not": accepted,
+            "flow_found_or_not": flow_found,
+            "outlet_dn_found_or_not": dn_found,
+            "http_status": st,
+            "error": err,
+        })
+    return results
 
 
 def _family_from_category_link(url: str) -> str:
@@ -959,7 +1004,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         in_target_families = _belongs_to_target_families(url, title, breadcrumb, drain_category)
         meaningful_entity = _is_meaningful_system_entity(url, title, flat, system_role)
         role_ok = system_role in accepted_roles
-        is_accepted = role_ok and meaningful_entity and in_target_families and (not unrelated) and (not spare_like) and (not mounting_like)
+        is_accepted = _is_accepted_system_entity(fam, system_role, url, title, breadcrumb, drain_category, flat)
 
         if is_accepted:
             preaccepted.append(candidate_row)
@@ -1060,6 +1105,19 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         if len(urlparse(str(r.get("product_url") or "")).path) > len(urlparse(str(prev.get("product_url") or "")).path):
             dedup[pid] = r
 
+    golden_rows = {str(r.get("product_url") or ""): r for r in dedup.values()}
+    golden_set_results: List[Dict[str, Any]] = []
+    for item in VIEGA_GOLDEN_SET:
+        u = str(item.get("url") or "")
+        r = golden_rows.get(u, {})
+        golden_set_results.append({
+            "url": u,
+            "family_detected": r.get("discovery_seed_family"),
+            "drain_category_detected": r.get("drain_category"),
+            "system_role_detected": r.get("system_role"),
+            "accepted_or_not": bool(r),
+        })
+
     debug.append({
         "site": "viega",
         "seed_url": CATALOG_SEEDS[0],
@@ -1118,6 +1176,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "sample_rejected_spare_parts": json.dumps(rejected_spare_parts[:20], ensure_ascii=False),
         "sample_rejected_mounting_accessories": json.dumps(rejected_mounting_accessories[:20], ensure_ascii=False),
         "sample_rejected_unrelated": json.dumps(rejected_unrelated[:20], ensure_ascii=False),
+        "golden_set_results": json.dumps(golden_set_results, ensure_ascii=False),
     })
     return list(dedup.values()), debug
 
@@ -1284,3 +1343,42 @@ ROLE_PRIORITY = {
     "cover": 4,
     "accessory": 5,
 }
+
+VIEGA_GOLDEN_SET: List[Dict[str, Any]] = [
+    {
+        "url": "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinnen/Advantix-Duschrinnen-Einbauhoehe-ab-95/Advantix-Duschrinne-4983-10.html",
+        "family": "advantix_line",
+        "drain_category": {"line_channel"},
+        "system_role": {"complete_drain", "base_set"},
+        "should_be_accepted": True,
+        "expected_flow_presence": True,
+        "expected_outlet_dn_presence": True,
+    },
+    {
+        "url": "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Bodenablaeufe/Verbundabdichtung/Einbauhoehe-ab-85-mm/Advantix-Top-Bad-Bodenablauf-4914-2.html",
+        "family": "advantix_floor",
+        "drain_category": {"point_drain", "floor_drain"},
+        "system_role": {"complete_drain", "base_set"},
+        "should_be_accepted": True,
+        "expected_flow_presence": True,
+        "expected_outlet_dn_presence": True,
+    },
+    {
+        "url": "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Bodenablaeufe/Abdichtung-konventionell/Brandschutz-R120/Advantix-Bodenablauf-4951-20.html",
+        "family": "advantix_floor",
+        "drain_category": {"point_drain", "floor_drain"},
+        "system_role": {"complete_drain", "base_set"},
+        "should_be_accepted": True,
+        "expected_flow_presence": True,
+        "expected_outlet_dn_presence": True,
+    },
+    {
+        "url": "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Ablauf-6963-1.html",
+        "family": "tempoplex",
+        "drain_category": {"shower_tray_drain"},
+        "system_role": {"complete_drain", "base_set"},
+        "should_be_accepted": True,
+        "expected_flow_presence": True,
+        "expected_outlet_dn_presence": True,
+    },
+]
