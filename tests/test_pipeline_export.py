@@ -33,6 +33,16 @@ class _FakeDiscoverB:
         return ([{"manufacturer": "hansgrohe", "product_id": "h-1", "product_name": "B", "product_url": "https://b.example/p"}], [])
 
 
+class _FakeViegaConnector:
+    @staticmethod
+    def extract_parameters(url):
+        return {"flow_rate_lps": 0.7, "outlet_dn": "DN50", "material_detail": "Edelstahl 1.4301", "evidence": []}
+
+    @staticmethod
+    def get_bom_options(url, params=None):
+        return []
+
+
 class PipelineExportTests(unittest.TestCase):
     def _make_template(self, path: Path):
         wb = openpyxl.Workbook()
@@ -155,6 +165,40 @@ class PipelineExportTests(unittest.TestCase):
         self.assertEqual(comparison["manufacturer"].tolist(), ["hansgrohe"])
         self.assertTrue(excluded.empty)
         self.assertTrue((evidence["manufacturer"] == "hansgrohe").all())
+        self.assertTrue(bom.empty)
+
+    def test_viega_lone_entities_remain_components_not_products(self):
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "viega", "product_id": "v-498210", "product_name": "Advantix-Duschrinnen-Grundkörper 4982.10", "product_url": "https://v.example/4982-10.html", "candidate_type": "component", "complete_system": "yes", "system_role": "base_set", "discovery_seed_family": "advantix_line"},
+                {"manufacturer": "viega", "product_id": "v-498294", "product_name": "Advantix-Duschrinnen-Geruchverschluss 4982.94", "product_url": "https://v.example/4982-94.html", "candidate_type": "component", "complete_system": "yes", "system_role": "base_set", "discovery_seed_family": "advantix_line"},
+                {"manufacturer": "viega", "product_id": "v-493361", "product_name": "Advantix-Rost 4933.61", "product_url": "https://v.example/4933-61.html", "candidate_type": "component", "complete_system": "yes", "system_role": "cover", "discovery_seed_family": "advantix_line"},
+                {"manufacturer": "viega", "product_id": "v-498291", "product_name": "Advantix-Verstellfußset 4982.91", "product_url": "https://v.example/4982-91.html", "candidate_type": "component", "complete_system": "yes", "system_role": "accessory", "discovery_seed_family": "advantix_line"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"viega": _FakeViegaConnector()}, clear=True):
+            products, comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
+        self.assertTrue(products.empty)
+        self.assertTrue(comparison.empty)
+        self.assertTrue(excluded.empty)
+        self.assertIn("Viega promotion", evidence["label"].tolist())
+        self.assertTrue(bom.empty)
+
+    def test_viega_complete_assembly_promotes_body_to_product(self):
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "viega", "product_id": "v-498210", "product_name": "Advantix-Duschrinnen-Grundkörper 4982.10", "product_url": "https://v.example/4982-10.html", "candidate_type": "component", "complete_system": "yes", "system_role": "base_set", "discovery_seed_family": "advantix_line"},
+                {"manufacturer": "viega", "product_id": "v-498211", "product_name": "Advantix-Duschrinne 4982.11", "product_url": "https://v.example/4982-11.html", "candidate_type": "drain", "complete_system": "yes", "system_role": "complete_drain", "discovery_seed_family": "advantix_line"},
+                {"manufacturer": "viega", "product_id": "v-493361", "product_name": "Advantix-Rost 4933.61", "product_url": "https://v.example/4982-61.html", "candidate_type": "component", "complete_system": "yes", "system_role": "cover", "discovery_seed_family": "advantix_line"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"viega": _FakeViegaConnector()}, clear=True):
+            products, comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
+        self.assertGreaterEqual(len(products), 1)
+        self.assertTrue((products["manufacturer"] == "viega").all())
+        self.assertIn("yes", set(products["promote_to_product"].tolist()))
+        self.assertTrue(all("rost" not in str(x).lower() for x in products["product_name"].tolist()))
+        self.assertTrue(excluded.empty)
         self.assertTrue(bom.empty)
 
 
