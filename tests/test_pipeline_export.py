@@ -178,8 +178,10 @@ class PipelineExportTests(unittest.TestCase):
         )
         with patch.dict(pipeline.CONNECTORS, {"viega": _FakeViegaConnector()}, clear=True):
             products, comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
-        self.assertTrue(products.empty)
-        self.assertTrue(comparison.empty)
+        self.assertFalse(products.empty)
+        self.assertTrue((products["candidate_type"] == "component").all())
+        self.assertTrue((products["promote_to_product"] == "no").all())
+        self.assertFalse(comparison.empty)
         self.assertTrue(excluded.empty)
         self.assertIn("Viega promotion", evidence["label"].tolist())
         self.assertTrue(bom.empty)
@@ -197,7 +199,8 @@ class PipelineExportTests(unittest.TestCase):
         self.assertGreaterEqual(len(products), 1)
         self.assertTrue((products["manufacturer"] == "viega").all())
         self.assertIn("yes", set(products["promote_to_product"].tolist()))
-        self.assertTrue(all("rost" not in str(x).lower() for x in products["product_name"].tolist()))
+        promoted = products[products["promote_to_product"] == "yes"]
+        self.assertTrue(all("rost" not in str(x).lower() for x in promoted["product_name"].tolist()))
         self.assertTrue(excluded.empty)
         self.assertTrue(bom.empty)
 

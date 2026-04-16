@@ -1105,18 +1105,10 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         if len(urlparse(str(r.get("product_url") or "")).path) > len(urlparse(str(prev.get("product_url") or "")).path):
             dedup[pid] = r
 
-    golden_rows = {str(r.get("product_url") or ""): r for r in dedup.values()}
-    golden_set_results: List[Dict[str, Any]] = []
-    for item in VIEGA_GOLDEN_SET:
-        u = str(item.get("url") or "")
-        r = golden_rows.get(u, {})
-        golden_set_results.append({
-            "url": u,
-            "family_detected": r.get("discovery_seed_family"),
-            "drain_category_detected": r.get("drain_category"),
-            "system_role_detected": r.get("system_role"),
-            "accepted_or_not": bool(r),
-        })
+    try:
+        golden_set_results = validate_golden_set()
+    except Exception as e:
+        golden_set_results = [{"error": f"golden_set_validation_failed: {type(e).__name__}: {e}"}]
 
     debug.append({
         "site": "viega",

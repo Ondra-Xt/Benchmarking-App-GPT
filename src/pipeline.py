@@ -248,6 +248,12 @@ def run_update(
         "sample_incomplete_assemblies": [],
         "missing_required_parts_counts": {},
         "promotion_reason_counts": {},
+        "rows_emitted_to_components_count": 0,
+        "rows_emitted_to_products_count": 0,
+        "rows_emitted_to_excluded_count": 0,
+        "sample_emitted_components": [],
+        "sample_emitted_products": [],
+        "sample_emitted_excluded": [],
     }
 
     if "manufacturer" in registry_df.columns:
@@ -271,6 +277,10 @@ def run_update(
         excluded_reason = str(r.get("excluded_reason") or r.get("reason") or "").strip()
 
         if complete_system == "no":
+            if manufacturer == "viega":
+                viega_debug["rows_emitted_to_excluded_count"] += 1
+                if len(viega_debug["sample_emitted_excluded"]) < 20:
+                    viega_debug["sample_emitted_excluded"].append(url)
             excluded_rows.append({
                 "manufacturer": manufacturer,
                 "product_id": product_id,
@@ -284,6 +294,10 @@ def run_update(
 
         connector = _pick_connector(manufacturer, url)
         if connector is None:
+            if manufacturer == "viega":
+                viega_debug["rows_emitted_to_excluded_count"] += 1
+                if len(viega_debug["sample_emitted_excluded"]) < 20:
+                    viega_debug["sample_emitted_excluded"].append(url)
             excluded_rows.append({
                 "manufacturer": manufacturer,
                 "product_id": product_id,
@@ -376,6 +390,8 @@ def run_update(
                 if len(viega_debug["sample_promoted_products"]) < 20:
                     viega_debug["sample_promoted_products"].append(url)
                 candidate_type = "drain"
+                if len(viega_debug["sample_emitted_products"]) < 20:
+                    viega_debug["sample_emitted_products"].append(url)
             else:
                 viega_debug["incomplete_assemblies_count"] += 1
                 if len(viega_debug["sample_incomplete_assemblies"]) < 20:
@@ -390,7 +406,9 @@ def run_update(
                     "snippet": f"promote_to_product=no reason={reason} missing_required_parts={missing_required_parts} matched_component_ids={g.get('product_ids')}",
                     "source": url,
                 })
-                continue
+                candidate_type = "component"
+                if len(viega_debug["sample_emitted_components"]) < 20:
+                    viega_debug["sample_emitted_components"].append(url)
 
         # scoring
         param_score, param_detail = compute_parameter_score(params, cfg)
@@ -419,6 +437,11 @@ def run_update(
             "final_score": final_score,
         }
         products_rows.append(prod_row)
+        if manufacturer == "viega":
+            if candidate_type == "drain":
+                viega_debug["rows_emitted_to_products_count"] += 1
+            else:
+                viega_debug["rows_emitted_to_components_count"] += 1
 
         comparison_rows.append({
             "manufacturer": manufacturer,
@@ -489,6 +512,48 @@ def run_update(
             "product_id": "__summary__",
             "label": "promotion_reason_counts",
             "snippet": str(viega_debug["promotion_reason_counts"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "viega_rows_emitted_to_components_count",
+            "snippet": str(viega_debug["rows_emitted_to_components_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "viega_rows_emitted_to_products_count",
+            "snippet": str(viega_debug["rows_emitted_to_products_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "viega_rows_emitted_to_excluded_count",
+            "snippet": str(viega_debug["rows_emitted_to_excluded_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_emitted_components",
+            "snippet": str(viega_debug["sample_emitted_components"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_emitted_products",
+            "snippet": str(viega_debug["sample_emitted_products"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_emitted_excluded",
+            "snippet": str(viega_debug["sample_emitted_excluded"][:10]),
             "source": "promotion_stage",
         })
 
