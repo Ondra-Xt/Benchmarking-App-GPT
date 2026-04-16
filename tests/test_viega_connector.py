@@ -348,6 +348,35 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
             role = viega._classify_entity_type(url, title, "", fam)
             self.assertEqual(role, expected_role, msg=f"{url} classified as {role}, expected {expected_role}")
 
+    def test_cover_is_suppressed_when_base_or_drain_exists_in_same_family(self):
+        drain = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinne-4983-10.html"
+        base = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinnen-Grundkoerper-4982-10.html"
+        cover = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Rost-4933-61.html"
+
+        def fake_get(url, timeout=35):
+            if url == drain:
+                return 200, url, "<html><body><main><h1>Advantix-Duschrinne 4983.10</h1></main></body></html>", ""
+            if url == base:
+                return 200, url, "<html><body><main><h1>Advantix-Duschrinnen-Grundkörper 4982.10</h1></main></body></html>", ""
+            if url == cover:
+                return 200, url, "<html><body><main><h1>Advantix-Rost 4933.61</h1></main></body></html>", ""
+            return 200, url, "<html><body>seed</body></html>", ""
+
+        crawl_map = {
+            u: {"raw_discovered_href": u, "normalized_detail_url": u, "href_source_page": "seed", "was_synthetic_url": False}
+            for u in [drain, base, cover]
+        }
+        with patch.object(viega, "_safe_get_text", side_effect=fake_get), patch.object(
+            viega, "_crawl_category_pages", return_value=crawl_map
+        ), patch.object(viega, "DETAIL_SEEDS", []):
+            rows, dbg = viega.discover_candidates(1200, 100)
+
+        urls = {r["product_url"] for r in rows}
+        self.assertIn(drain, urls)
+        self.assertIn(base, urls)
+        self.assertNotIn(cover, urls)
+        self.assertEqual(dbg[-1]["accepted_cover_count"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

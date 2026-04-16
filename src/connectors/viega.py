@@ -825,6 +825,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     accepted_urls: List[str] = []
     component_urls: List[str] = []
     product_urls: List[str] = []
+    preaccepted: List[Dict[str, Any]] = []
     unknown_length_count = 0
     min_len = max(0, want - int(tolerance_mm))
     max_len = want + int(tolerance_mm)
@@ -843,6 +844,9 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     sample_entity_type_classification: List[str] = []
     sample_rejected_accessories: List[str] = []
     sample_kept_system_entities: List[str] = []
+    sample_cover_kept: List[str] = []
+    sample_cover_suppressed: List[str] = []
+    sample_base_or_drain_rescued: List[str] = []
     category_links_raw_count = 0
     category_links_kept_count = 0
     dropped_anchor_links_count = 0
@@ -958,24 +962,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         is_accepted = role_ok and meaningful_entity and in_target_families and (not unrelated) and (not spare_like) and (not mounting_like)
 
         if is_accepted:
-            out.append(candidate_row)
-            accepted_urls.append(url)
-            if len(sample_relevant_kept) < 20:
-                sample_relevant_kept.append(url)
-            if len(sample_kept_system_entities) < 20:
-                sample_kept_system_entities.append(f"{url} => {system_role}")
-            counts_by_family[fam] = counts_by_family.get(fam, 0) + 1
-            counts_by_category[drain_category] = counts_by_category.get(drain_category, 0) + 1
-            counts_by_role[system_role] = counts_by_role.get(system_role, 0) + 1
-            sample_candidates_by_family.setdefault(fam, [])
-            if len(sample_candidates_by_family[fam]) < 5:
-                sample_candidates_by_family[fam].append(url)
-            if cand_type == "component":
-                component_urls.append(url)
-            else:
-                product_urls.append(url)
-            if length is None:
-                unknown_length_count += 1
+            preaccepted.append(candidate_row)
         else:
             if unrelated:
                 rejected_unrelated.append(url)
@@ -1004,6 +991,51 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             "href_source_page": link_meta.get("href_source_page"),
             "was_synthetic_url": bool(link_meta.get("was_synthetic_url")),
         })
+
+    # cover-only suppression: if family has drain/base/profile, suppress covers in that family
+    by_family: Dict[str, List[Dict[str, Any]]] = {}
+    for r in preaccepted:
+        fam = str(r.get("discovery_seed_family") or "other")
+        by_family.setdefault(fam, []).append(r)
+
+    for fam, rows in by_family.items():
+        non_cover = [r for r in rows if str(r.get("system_role") or "") in {"complete_drain", "base_set", "profile"}]
+        covers = [r for r in rows if str(r.get("system_role") or "") == "cover"]
+        kept_rows: List[Dict[str, Any]] = []
+        if non_cover:
+            kept_rows.extend(sorted(non_cover, key=lambda r: ROLE_PRIORITY.get(str(r.get("system_role") or ""), 99)))
+            if len(sample_base_or_drain_rescued) < 20:
+                sample_base_or_drain_rescued.extend([str(r.get("product_url")) for r in kept_rows[: max(0, 20 - len(sample_base_or_drain_rescued))]])
+            if covers and len(sample_cover_suppressed) < 20:
+                sample_cover_suppressed.extend([str(r.get("product_url")) for r in covers[: max(0, 20 - len(sample_cover_suppressed))]])
+        else:
+            kept_rows.extend(covers)
+            if covers and len(sample_cover_kept) < 20:
+                sample_cover_kept.extend([str(r.get("product_url")) for r in covers[: max(0, 20 - len(sample_cover_kept))]])
+        out.extend(kept_rows)
+
+    for r in out:
+        url = str(r.get("product_url") or "")
+        fam = str(r.get("discovery_seed_family") or "other")
+        role = str(r.get("system_role") or "")
+        cat = str(r.get("drain_category") or "unknown")
+        accepted_urls.append(url)
+        if len(sample_relevant_kept) < 20:
+            sample_relevant_kept.append(url)
+        if len(sample_kept_system_entities) < 20:
+            sample_kept_system_entities.append(f"{url} => {role}")
+        counts_by_family[fam] = counts_by_family.get(fam, 0) + 1
+        counts_by_category[cat] = counts_by_category.get(cat, 0) + 1
+        counts_by_role[role] = counts_by_role.get(role, 0) + 1
+        sample_candidates_by_family.setdefault(fam, [])
+        if len(sample_candidates_by_family[fam]) < 5:
+            sample_candidates_by_family[fam].append(url)
+        if str(r.get("candidate_type") or "") == "component":
+            component_urls.append(url)
+        else:
+            product_urls.append(url)
+        if str(r.get("length_mode") or "") == "unknown":
+            unknown_length_count += 1
 
     # keep unique product_id to avoid duplicate IDs in exported Products/Components
     dedup: Dict[str, Dict[str, Any]] = {}
@@ -1065,12 +1097,20 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "discovered_catalog_candidates_count": len(discovered_rows),
         "accepted_benchmark_candidates_count": len(dedup),
         "accepted_candidates_count": len(dedup),
+        "accepted_non_cover_count": sum(1 for r in dedup.values() if str(r.get("system_role","")) != "cover"),
+        "accepted_cover_count": sum(1 for r in dedup.values() if str(r.get("system_role","")) == "cover"),
+        "accepted_base_set_count": sum(1 for r in dedup.values() if str(r.get("system_role","")) == "base_set"),
+        "accepted_complete_drain_count": sum(1 for r in dedup.values() if str(r.get("system_role","")) == "complete_drain"),
+        "accepted_profile_count": sum(1 for r in dedup.values() if str(r.get("system_role","")) == "profile"),
         "rejected_spare_parts_count": len(rejected_spare_parts),
         "rejected_mounting_accessories_count": len(rejected_mounting_accessories),
         "rejected_unrelated_branch_count": len(rejected_unrelated),
         "rejected_overfiltered_count": len(rejected_overfiltered),
         "sample_relevant_kept": json.dumps(sample_relevant_kept[:20], ensure_ascii=False),
         "sample_relevant_rejected": json.dumps(sample_relevant_rejected[:20], ensure_ascii=False),
+        "sample_cover_kept": json.dumps(sample_cover_kept[:20], ensure_ascii=False),
+        "sample_cover_suppressed": json.dumps(sample_cover_suppressed[:20], ensure_ascii=False),
+        "sample_base_or_drain_rescued": json.dumps(sample_base_or_drain_rescued[:20], ensure_ascii=False),
         "sample_family_classification": json.dumps(sample_family_classification[:20], ensure_ascii=False),
         "sample_entity_type_classification": json.dumps(sample_entity_type_classification[:20], ensure_ascii=False),
         "sample_rejected_accessories": json.dumps(sample_rejected_accessories[:20], ensure_ascii=False),
@@ -1237,3 +1277,10 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
 
 def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     return []
+ROLE_PRIORITY = {
+    "complete_drain": 1,
+    "base_set": 2,
+    "profile": 3,
+    "cover": 4,
+    "accessory": 5,
+}
