@@ -6,6 +6,21 @@ from src.connectors import viega
 
 
 class ViegaExtractionRegressionTests(unittest.TestCase):
+    # golden classification samples (family-first + entity-type)
+    GOLDEN_CLASSIFICATION = [
+        # positive keep
+        ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinne-4983-10.html", "Advantix-Duschrinne 4983.10", "complete_drain"),
+        ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Bodenablaeufe/Advantix-Bodenablauf-1234-10.html", "Advantix-Bodenablauf 1234.10", "complete_drain"),
+        ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Ablauf-6963-1.html", "Tempoplex-Ablauf 6963.1", "complete_drain"),
+        ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Domoplex/Domoplex-Ablauf-1111-11.html", "Domoplex-Ablauf 1111.11", "complete_drain"),
+        ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Rost-4933-61.html", "Advantix-Rost 4933.61", "cover"),
+        # negative reject
+        ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Dichtung-1111-11.html", "Tempoplex-Dichtung", "accessory"),
+        ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Montageset-1111-11.html", "Tempoplex-Montageset", "accessory"),
+        ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-O-Ring-1111-11.html", "Advantix-O-Ring", "accessory"),
+        ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Glocke-1111-11.html", "Advantix-Glocke", "accessory"),
+        ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Verstellfussset-1111-11.html", "Advantix-Verstellfußset", "accessory"),
+    ]
     def _run_extract(self, slug: str, html_main: str):
         url = f"https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/{slug}.html"
         html = f"<html><body><main>{html_main}</main></body></html>"
@@ -326,6 +341,12 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         self.assertGreaterEqual(stats["dropped_highlight"], 1)
         self.assertGreaterEqual(stats["dropped_anchor"], 1)
         self.assertIn("advantix_line", fam)
+
+    def test_golden_family_first_entity_classification_samples(self):
+        for url, title, expected_role in self.GOLDEN_CLASSIFICATION:
+            fam = viega._classify_family(url, title, "", "")
+            role = viega._classify_entity_type(url, title, "", fam)
+            self.assertEqual(role, expected_role, msg=f"{url} classified as {role}, expected {expected_role}")
 
 
 if __name__ == "__main__":

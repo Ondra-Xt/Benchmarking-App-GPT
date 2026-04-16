@@ -96,7 +96,7 @@ CATEGORY_DROP_DOWNLOAD_RE = re.compile(
     re.IGNORECASE,
 )
 CATEGORY_DROP_BATHTUB_RE = re.compile(
-    r"multiplex|multiplex-trio|rotaplex|badewannengarnituren|badewanne",
+    r"multiplex|multiplex-trio|rotaplex|badewannengarnituren",
     re.IGNORECASE,
 )
 CATEGORY_DROP_HIGHLIGHT_RE = re.compile(r"highlight", re.IGNORECASE)
@@ -246,46 +246,10 @@ def _extract_breadcrumb_text(html: str) -> str:
 
 
 def _derive_taxonomy(url: str, title: str, flat: str = "", breadcrumb: str = "", article_text: str = "") -> Tuple[str, str, str, str]:
-    txt = f"{url} {title} {flat} {breadcrumb} {article_text}".lower()
-    system_role = "complete_drain"
-    drain_category = "unknown"
-
-    is_tempoplex = bool(re.search(r"tempoplex|domoplex|duoplex|varioplex", txt))
-    if re.search(r"zubeh[öo]r|werkzeug|rahmen|einleger|ersatzteil|montageset|sicherungsverschluss|dichtung|o-ring|glocke|stopfen|schraubenset|siebeinsatz|rohrf[üu]hrung|rohreinf[üu]hrung|akku|klappe|handbet[äa]tigung", txt):
-        system_role = "accessory"
-    elif MOUNTING_ACCESSORY_RE.search(txt):
-        system_role = "accessory"
-    elif re.search(r"rost|abdeckung", txt):
-        system_role = "cover"
-    elif re.search(r"profil", txt):
-        system_role = "profile"
-    elif re.search(r"duschrinne|bodenablauf|eckablauf|wandablauf", txt):
-        system_role = "complete_drain"
-    elif is_tempoplex and re.search(r"\bablauf\b", txt):
-        system_role = "complete_drain"
-    elif re.search(r"grundk[öo]rper|geruchverschluss|ablaufk[öo]rper|ablaufgeh[äa]use", txt):
-        system_role = "base_set"
-    elif re.search(r"ablauf(?!leistung)", txt) and not is_tempoplex:
-        system_role = "base_set"
-
-    if system_role == "accessory":
-        drain_category = "accessory"
-    elif re.search(r"tempoplex|domoplex|duoplex|varioplex|duschwanne", txt):
-        drain_category = "shower_tray_drain"
-    elif re.search(r"wandablauf|wandrinne|wandprofil|wand", txt):
-        drain_category = "wall_channel"
-    elif re.search(r"eckablauf", txt):
-        drain_category = "corner_drain"
-    elif re.search(r"bodenablauf", txt):
-        drain_category = "floor_drain"
-    elif re.search(r"punktablauf", txt):
-        drain_category = "point_drain"
-    elif re.search(r"duschrinne|advantix|cleviva|vario", txt):
-        drain_category = "line_channel"
-    elif re.search(r"\bablauf\b", txt) and re.search(r"advantix|entwaesserungstechnik|boden", txt):
-        drain_category = "point_drain"
-
-    cand_type = "drain" if (system_role == "complete_drain" and drain_category != "accessory") else "component"
+    family = _classify_family(url, title, breadcrumb, "")
+    system_role = _classify_entity_type(url, title, flat, family)
+    drain_category = _drain_category_from_family_and_text(family, f"{url} {title} {flat} {breadcrumb} {article_text}", system_role)
+    cand_type = "drain" if (system_role == "complete_drain" and drain_category != "accessory" and family != "unrelated") else "component"
     complete_system = "yes" if cand_type == "drain" else "component"
     return cand_type, drain_category, system_role, complete_system
 
@@ -298,6 +262,81 @@ def _infer_family(url: str, title: str = "") -> str:
     if "advantix" in txt:
         return "advantix_other"
     return "other"
+
+
+def _classify_family(url: str, title: str = "", breadcrumb: str = "", parent_category: str = "") -> str:
+    txt = f"{url} {title} {breadcrumb} {parent_category}".lower()
+    if re.search(r"multiplex|rotaplex|badewannengarnituren|kueche|waschtisch|wc|urinal|spuelen|ausguesse|rueckstauverschluesse|ersatzteile-fuer-advantix-systeme", txt):
+        return "unrelated"
+    if "advantix-bodenablaeufe" in txt:
+        return "advantix_floor"
+    if "advantix-eckablaeufe" in txt:
+        return "advantix_line"
+    if "advantix-vario" in txt or "vario-wand" in txt:
+        return "advantix_line"
+    if "advantix-cleviva" in txt:
+        return "advantix_line"
+    if "advantix-duschrinnen" in txt:
+        return "advantix_line"
+    if "tempoplex-plus" in txt:
+        return "tempoplex_plus"
+    if "tempoplex-60" in txt:
+        return "tempoplex_60"
+    if "tempoplex" in txt:
+        return "tempoplex"
+    if "domoplex" in txt:
+        return "domoplex"
+    if "duoplex" in txt:
+        return "duoplex"
+    if "varioplex" in txt:
+        return "varioplex"
+    if "duschwannengarnituren" in txt:
+        return "other_relevant_shower_drain"
+    if re.search(r"advantix|entwaesserungstechnik|dusch", txt):
+        return "other_relevant_shower_drain"
+    return "unrelated"
+
+
+def _classify_entity_type(url: str, title: str, flat: str, family: str) -> str:
+    txt = f"{url} {title} {flat}".lower()
+    if family == "unrelated":
+        return "accessory"
+    if SPARE_TOKEN_RE.search(txt) or MOUNTING_ACCESSORY_RE.search(txt):
+        return "accessory"
+    if re.search(r"zubeh[öo]r|werkzeug|ersatzteil|wartung", txt):
+        return "accessory"
+    if re.search(r"rost|abdeckung|verschlussplatte", txt):
+        return "cover"
+    if re.search(r"profil", txt):
+        return "profile"
+    if re.search(r"grundk[öo]rper|ablaufk[öo]rper|ablaufgeh[äa]use|geruchverschluss", txt):
+        return "base_set"
+    if re.search(r"duschrinne|bodenablauf|eckablauf|wandablauf|\bablauf\b", txt):
+        return "complete_drain"
+    return "accessory"
+
+
+def _drain_category_from_family_and_text(family: str, txt: str, system_role: str) -> str:
+    t = (txt or "").lower()
+    if system_role == "accessory":
+        return "accessory"
+    if family in {"tempoplex", "tempoplex_plus", "tempoplex_60", "domoplex", "duoplex", "varioplex"}:
+        return "shower_tray_drain"
+    if family == "advantix_floor":
+        if "bodenablauf" in t:
+            return "floor_drain"
+        return "point_drain"
+    if "eckablauf" in t:
+        return "corner_drain"
+    if "wandablauf" in t or "wandrinne" in t:
+        return "wall_channel"
+    if "bodenablauf" in t:
+        return "floor_drain"
+    if "punktablauf" in t:
+        return "point_drain"
+    if family in {"advantix_line", "other_relevant_shower_drain"} and re.search(r"duschrinne|cleviva|vario|advantix", t):
+        return "line_channel"
+    return "unknown"
 
 
 def _is_unrelated_branch(url: str, title: str = "") -> bool:
@@ -320,10 +359,12 @@ def _is_mounting_accessory_like(url: str, title: str, flat: str) -> bool:
 
 
 def _belongs_to_target_families(url: str, title: str, breadcrumb: str, drain_category: str) -> bool:
-    txt = f"{url} {title} {breadcrumb}".lower()
+    family = _classify_family(url, title, breadcrumb, "")
+    if family == "unrelated":
+        return False
     if drain_category in {"line_channel", "point_drain", "floor_drain", "corner_drain", "shower_tray_drain", "wall_channel"}:
         return True
-    return bool(RELEVANT_FAMILY_RE.search(txt))
+    return family in {"advantix_line", "advantix_floor", "tempoplex", "tempoplex_plus", "tempoplex_60", "domoplex", "duoplex", "varioplex", "other_relevant_shower_drain"}
 
 
 def _is_meaningful_system_entity(url: str, title: str, flat: str, system_role: str) -> bool:
@@ -798,6 +839,10 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     rejected_overfiltered: List[str] = []
     sample_relevant_kept: List[str] = []
     sample_relevant_rejected: List[str] = []
+    sample_family_classification: List[str] = []
+    sample_entity_type_classification: List[str] = []
+    sample_rejected_accessories: List[str] = []
+    sample_kept_system_entities: List[str] = []
     category_links_raw_count = 0
     category_links_kept_count = 0
     dropped_anchor_links_count = 0
@@ -854,8 +899,16 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             breadcrumb = ""
             article_text = ""
 
-        cand_type, drain_category, system_role, complete_system = _derive_taxonomy(url, title, flat, breadcrumb=breadcrumb, article_text=article_text)
-        fam = _infer_family(url, title)
+        parent_category = str(link_meta.get("href_source_page") or "")
+        fam = _classify_family(url, title, breadcrumb, parent_category)
+        system_role = _classify_entity_type(url, title, flat, fam)
+        drain_category = _drain_category_from_family_and_text(fam, f"{url} {title} {flat} {breadcrumb} {article_text}", system_role)
+        cand_type = "drain" if (system_role == "complete_drain" and drain_category != "accessory" and fam != "unrelated") else "component"
+        complete_system = "yes" if cand_type == "drain" else "component"
+        if len(sample_family_classification) < 20:
+            sample_family_classification.append(f"{url} => {fam}")
+        if len(sample_entity_type_classification) < 20:
+            sample_entity_type_classification.append(f"{url} => {system_role}/{drain_category}")
 
         # safeguard: /Zubehoer/ should never become products
         if ("/zubehoer/" in url.lower() or "/zubehör/" in url.lower()) and cand_type == "drain":
@@ -909,6 +962,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             accepted_urls.append(url)
             if len(sample_relevant_kept) < 20:
                 sample_relevant_kept.append(url)
+            if len(sample_kept_system_entities) < 20:
+                sample_kept_system_entities.append(f"{url} => {system_role}")
             counts_by_family[fam] = counts_by_family.get(fam, 0) + 1
             counts_by_category[drain_category] = counts_by_category.get(drain_category, 0) + 1
             counts_by_role[system_role] = counts_by_role.get(system_role, 0) + 1
@@ -928,6 +983,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                 rejected_spare_parts.append(url)
             elif mounting_like:
                 rejected_mounting_accessories.append(url)
+                if len(sample_rejected_accessories) < 20:
+                    sample_rejected_accessories.append(url)
             else:
                 rejected_overfiltered.append(url)
                 if (role_ok or meaningful_entity) and len(sample_relevant_rejected) < 20:
@@ -1014,6 +1071,10 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "rejected_overfiltered_count": len(rejected_overfiltered),
         "sample_relevant_kept": json.dumps(sample_relevant_kept[:20], ensure_ascii=False),
         "sample_relevant_rejected": json.dumps(sample_relevant_rejected[:20], ensure_ascii=False),
+        "sample_family_classification": json.dumps(sample_family_classification[:20], ensure_ascii=False),
+        "sample_entity_type_classification": json.dumps(sample_entity_type_classification[:20], ensure_ascii=False),
+        "sample_rejected_accessories": json.dumps(sample_rejected_accessories[:20], ensure_ascii=False),
+        "sample_kept_system_entities": json.dumps(sample_kept_system_entities[:20], ensure_ascii=False),
         "sample_rejected_spare_parts": json.dumps(rejected_spare_parts[:20], ensure_ascii=False),
         "sample_rejected_mounting_accessories": json.dumps(rejected_mounting_accessories[:20], ensure_ascii=False),
         "sample_rejected_unrelated": json.dumps(rejected_unrelated[:20], ensure_ascii=False),
