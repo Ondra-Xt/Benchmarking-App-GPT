@@ -438,6 +438,13 @@ def validate_golden_set() -> List[Dict[str, Any]]:
         params = extract_parameters(url) if st == 200 else {}
         flow_found = bool(params.get("flow_rate_lps") is not None)
         dn_found = bool(params.get("outlet_dn"))
+        if not flow_found and flat:
+            fopts, _span, _has_kw = _extract_flow_from_ablaufleistung(flat)
+            f10, f20 = _extract_flow_10_20(flat)
+            flow_found = bool(fopts or f10 is not None or f20 is not None)
+        if not dn_found and flat:
+            dns, _sp = _extract_dns_from_text(flat)
+            dn_found = bool(dns)
         results.append({
             "url": url,
             "title": title,
