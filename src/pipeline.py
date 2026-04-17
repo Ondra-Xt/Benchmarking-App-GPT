@@ -254,6 +254,8 @@ def run_update(
         "sample_emitted_components": [],
         "sample_emitted_products": [],
         "sample_emitted_excluded": [],
+        "false_positive_promotion_count": 0,
+        "sample_demoted_to_components": [],
     }
 
     if "manufacturer" in registry_df.columns:
@@ -365,6 +367,24 @@ def run_update(
             roles = set(g.get("roles") or set())
             txt = f"{rowd.get('product_name','')} {url}".lower()
             non_promotable = role == "accessory" or any(k in txt for k in ("verstellfu", "dichtung", "o-ring", "glocke", "stopfen", "montageset", "schraubenset", "sicherungsverschluss", "siebeinsatz"))
+            standalone_subpart = any(
+                k in txt
+                for k in (
+                    "geruchverschluss",
+                    "grundkörper",
+                    "grundkoerper",
+                    "rinnenkörper",
+                    "rinnenkoerper",
+                    "ablaufkörper",
+                    "ablaufkoerper",
+                    "profil",
+                    "rost",
+                    "abdeckung",
+                    "verschlussplatte",
+                    "reduktion",
+                    "adapter",
+                )
+            )
             is_tray = fam in {"tempoplex", "tempoplex_plus", "tempoplex_60", "domoplex", "duoplex", "varioplex"}
             has_body = any(x in roles for x in {"complete_drain", "base_set"})
             has_top = any(x in roles for x in {"cover", "profile"}) or role == "complete_drain"
@@ -377,9 +397,18 @@ def run_update(
                 missing_required_parts.append("flow_rate_lps")
             if params.get("outlet_dn") in (None, "") and not is_tray:
                 missing_required_parts.append("outlet_dn")
+            if standalone_subpart:
+                missing_required_parts.append("standalone_subpart_not_complete_product")
 
-            promote = (role in {"complete_drain", "base_set"}) and (not non_promotable) and len(missing_required_parts) == 0
-            reason = "promoted_complete_assembly" if promote else ("non_promotable_accessory" if non_promotable else "incomplete_assembly")
+            promote = (role in {"complete_drain"}) and (not non_promotable) and len(missing_required_parts) == 0
+            if promote:
+                reason = "promoted_complete_assembly"
+            elif non_promotable:
+                reason = "non_promotable_accessory"
+            elif standalone_subpart:
+                reason = "demoted_standalone_subpart"
+            else:
+                reason = "incomplete_assembly"
             promote_to_product = promote
             promotion_reason = reason
             matched_component_ids = list(g.get("product_ids") or [])
@@ -394,6 +423,10 @@ def run_update(
                     viega_debug["sample_emitted_products"].append(url)
             else:
                 viega_debug["incomplete_assemblies_count"] += 1
+                if standalone_subpart:
+                    viega_debug["false_positive_promotion_count"] += 1
+                    if len(viega_debug["sample_demoted_to_components"]) < 20:
+                        viega_debug["sample_demoted_to_components"].append(url)
                 if len(viega_debug["sample_incomplete_assemblies"]) < 20:
                     viega_debug["sample_incomplete_assemblies"].append(f"{url} missing={','.join(missing_required_parts) or reason}")
                 for p in missing_required_parts:
@@ -426,6 +459,7 @@ def run_update(
             "promotion_reason": promotion_reason,
             "missing_required_parts": ",".join(missing_required_parts),
             "matched_component_ids": ",".join(str(x) for x in matched_component_ids),
+            "why_not_product_reason": "" if promote_to_product else promotion_reason,
 
             # vytažené parametry:
             **{k: v for k, v in params.items() if k != "evidence"},
@@ -512,6 +546,20 @@ def run_update(
             "product_id": "__summary__",
             "label": "promotion_reason_counts",
             "snippet": str(viega_debug["promotion_reason_counts"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "viega_false_positive_promotion_count",
+            "snippet": str(viega_debug["false_positive_promotion_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_demoted_to_components",
+            "snippet": str(viega_debug["sample_demoted_to_components"][:10]),
             "source": "promotion_stage",
         })
         evidence_rows.append({
