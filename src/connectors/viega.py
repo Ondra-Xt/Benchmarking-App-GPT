@@ -76,7 +76,7 @@ SPARE_TOKEN_RE = re.compile(
     re.IGNORECASE,
 )
 MOUNTING_ACCESSORY_RE = re.compile(
-    r"verstellfu[ßs]set|fu[ßs]set|montageset|montagehilfe|befestigungssatz|halterung|traggestell|einbauhilfe",
+    r"verstellfu(?:ß|ss)set|fu(?:ß|ss)set|montageset|montagehilfe|befestigungssatz|halterung|traggestell|einbauhilfe",
     re.IGNORECASE,
 )
 MEANINGFUL_ENTITY_RE = re.compile(
@@ -100,6 +100,14 @@ CATEGORY_DROP_BATHTUB_RE = re.compile(
     re.IGNORECASE,
 )
 CATEGORY_DROP_HIGHLIGHT_RE = re.compile(r"highlight", re.IGNORECASE)
+POSITIVE_DRAIN_ENTITY_RE = re.compile(
+    r"duschrinne|bodenablauf|duschwannenablauf|\bablauf\b|grundk[öo]rper|geruchverschluss|rinnenk[öo]rper|ablaufk[öo]rper",
+    re.IGNORECASE,
+)
+STRONG_NEGATIVE_ACCESSORY_RE = re.compile(
+    r"\b(?:dichtung|o-ring|glocke|stopfen|tauchrohr|montageset|schraubenset|sicherungsverschluss|verstellfu(?:ß|ss)set|siebeinsatz|ersatzteilset)\b",
+    re.IGNORECASE,
+)
 
 # strict DN parsing; only literal DN and allowed outlet sizes
 DN_PAIR_RE = re.compile(r"\bDN\s*(\d{2,3})\s*/\s*(?:DN\s*)?(\d{2,3})\b", re.IGNORECASE)
@@ -247,7 +255,7 @@ def _extract_breadcrumb_text(html: str) -> str:
 
 def _derive_taxonomy(url: str, title: str, flat: str = "", breadcrumb: str = "", article_text: str = "") -> Tuple[str, str, str, str]:
     family = _classify_family(url, title, breadcrumb, "")
-    system_role = _classify_entity_type(url, title, flat, family)
+    system_role, _, _, _ = _classify_entity_type_with_reason(url, title, flat, family)
     drain_category = _drain_category_from_family_and_text(family, f"{url} {title} {flat} {breadcrumb} {article_text}", system_role)
     cand_type = "drain" if (system_role == "complete_drain" and drain_category != "accessory" and family != "unrelated") else "component"
     complete_system = "yes" if cand_type == "drain" else "component"
@@ -298,22 +306,48 @@ def _classify_family(url: str, title: str = "", breadcrumb: str = "", parent_cat
 
 
 def _classify_entity_type(url: str, title: str, flat: str, family: str) -> str:
+    role, _, _, _ = _classify_entity_type_with_reason(url, title, flat, family)
+    return role
+
+
+def _classify_entity_type_with_reason(url: str, title: str, flat: str, family: str) -> Tuple[str, str, Optional[str], Optional[str]]:
     txt = f"{url} {title} {flat}".lower()
+    focus_txt = f"{url} {title}".lower()
+    title_txt = f"{title} {flat}".lower()
+    neg = STRONG_NEGATIVE_ACCESSORY_RE.search(txt) or MOUNTING_ACCESSORY_RE.search(txt)
+    accessory_ctx = re.search(r"/zubehoer/|/zubehör/|zubeh[öo]r|werkzeug|ersatzteil|wartung", txt)
+    positive_core = re.search(r"grundk[öo]rper|geruchverschluss|rinnenk[öo]rper|ablaufk[öo]rper|bodenablauf|duschwannenablauf", title_txt, re.IGNORECASE)
+    pos = POSITIVE_DRAIN_ENTITY_RE.search(txt)
+    relevant_family = family in {"advantix_line", "advantix_floor", "tempoplex", "tempoplex_plus", "tempoplex_60", "domoplex", "duoplex", "varioplex", "other_relevant_shower_drain"}
+
     if family == "unrelated":
-        return "accessory"
-    if SPARE_TOKEN_RE.search(txt) or MOUNTING_ACCESSORY_RE.search(txt):
-        return "accessory"
-    if re.search(r"zubeh[öo]r|werkzeug|ersatzteil|wartung", txt):
-        return "accessory"
+        return "accessory", "family_unrelated", (pos.group(0) if pos else None), (neg.group(0) if neg else None)
+
+    if (neg or accessory_ctx) and not positive_core:
+        neg_token = neg.group(0) if neg else (accessory_ctx.group(0) if accessory_ctx else None)
+        return "accessory", "strong_negative_accessory_match", (pos.group(0) if pos else None), neg_token
+
+    if relevant_family and pos:
+        tok = pos.group(0).lower()
+        if re.search(r"grundk[öo]rper|geruchverschluss|rinnenk[öo]rper|ablaufk[öo]rper", tok, re.IGNORECASE):
+            return "base_set", "positive_hydraulic_body_signal", tok, (neg.group(0) if neg else None)
+        if re.search(r"rost|abdeckung|verschlussplatte", txt, re.IGNORECASE):
+            return "cover", "positive_cover_signal", tok, (neg.group(0) if neg else None)
+        if re.search(r"profil", txt, re.IGNORECASE):
+            return "profile", "positive_profile_signal", tok, (neg.group(0) if neg else None)
+        return "complete_drain", "positive_drain_signal", tok, (neg.group(0) if neg else None)
+
     if re.search(r"rost|abdeckung|verschlussplatte", txt):
-        return "cover"
+        return "cover", "fallback_cover_signal", (pos.group(0) if pos else None), (neg.group(0) if neg else None)
     if re.search(r"profil", txt):
-        return "profile"
+        return "profile", "fallback_profile_signal", (pos.group(0) if pos else None), (neg.group(0) if neg else None)
     if re.search(r"grundk[öo]rper|ablaufk[öo]rper|ablaufgeh[äa]use|geruchverschluss", txt):
-        return "base_set"
+        return "base_set", "fallback_base_signal", (pos.group(0) if pos else None), (neg.group(0) if neg else None)
     if re.search(r"duschrinne|bodenablauf|eckablauf|wandablauf|\bablauf\b", txt):
-        return "complete_drain"
-    return "accessory"
+        return "complete_drain", "fallback_drain_signal", (pos.group(0) if pos else None), (neg.group(0) if neg else None)
+    if re.search(r"zubeh[öo]r|werkzeug|ersatzteil|wartung", txt):
+        return "accessory", "generic_accessory_fallback", (pos.group(0) if pos else None), (neg.group(0) if neg else None)
+    return "accessory", "default_accessory", (pos.group(0) if pos else None), (neg.group(0) if neg else None)
 
 
 def _drain_category_from_family_and_text(family: str, txt: str, system_role: str) -> str:
@@ -398,7 +432,7 @@ def validate_golden_set() -> List[Dict[str, Any]]:
             flat = _main_flat_text(html)
             breadcrumb = _extract_breadcrumb_text(html)
         family = _classify_family(url, title, breadcrumb, "")
-        system_role = _classify_entity_type(url, title, flat, family)
+        system_role, classification_reason, pos_match, neg_match = _classify_entity_type_with_reason(url, title, flat, family)
         drain_category = _drain_category_from_family_and_text(family, f"{url} {title} {flat} {breadcrumb}", system_role)
         accepted = _is_accepted_system_entity(family, system_role, url, title, breadcrumb, drain_category, flat)
         params = extract_parameters(url) if st == 200 else {}
@@ -411,6 +445,9 @@ def validate_golden_set() -> List[Dict[str, Any]]:
             "drain_category_detected": drain_category,
             "system_role_detected": system_role,
             "accepted_or_not": accepted,
+            "classification_reason": classification_reason,
+            "positive_drain_match": pos_match,
+            "negative_accessory_match": neg_match,
             "flow_found_or_not": flow_found,
             "outlet_dn_found_or_not": dn_found,
             "http_status": st,
@@ -889,6 +926,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     sample_entity_type_classification: List[str] = []
     sample_rejected_accessories: List[str] = []
     sample_kept_system_entities: List[str] = []
+    sample_positive_drain_matches: List[str] = []
+    sample_negative_accessory_matches: List[str] = []
     sample_cover_kept: List[str] = []
     sample_cover_suppressed: List[str] = []
     sample_base_or_drain_rescued: List[str] = []
@@ -950,14 +989,18 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
         parent_category = str(link_meta.get("href_source_page") or "")
         fam = _classify_family(url, title, breadcrumb, parent_category)
-        system_role = _classify_entity_type(url, title, flat, fam)
+        system_role, classification_reason, pos_match, neg_match = _classify_entity_type_with_reason(url, title, flat, fam)
         drain_category = _drain_category_from_family_and_text(fam, f"{url} {title} {flat} {breadcrumb} {article_text}", system_role)
         cand_type = "drain" if (system_role == "complete_drain" and drain_category != "accessory" and fam != "unrelated") else "component"
         complete_system = "yes" if cand_type == "drain" else "component"
         if len(sample_family_classification) < 20:
             sample_family_classification.append(f"{url} => {fam}")
         if len(sample_entity_type_classification) < 20:
-            sample_entity_type_classification.append(f"{url} => {system_role}/{drain_category}")
+            sample_entity_type_classification.append(f"{url} => {system_role}/{drain_category} ({classification_reason})")
+        if pos_match and len(sample_positive_drain_matches) < 20:
+            sample_positive_drain_matches.append(f"{url} => {pos_match}")
+        if neg_match and len(sample_negative_accessory_matches) < 20:
+            sample_negative_accessory_matches.append(f"{url} => {neg_match}")
 
         # safeguard: /Zubehoer/ should never become products
         if ("/zubehoer/" in url.lower() or "/zubehör/" in url.lower()) and cand_type == "drain":
@@ -1163,6 +1206,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "sample_base_or_drain_rescued": json.dumps(sample_base_or_drain_rescued[:20], ensure_ascii=False),
         "sample_family_classification": json.dumps(sample_family_classification[:20], ensure_ascii=False),
         "sample_entity_type_classification": json.dumps(sample_entity_type_classification[:20], ensure_ascii=False),
+        "sample_positive_drain_matches": json.dumps(sample_positive_drain_matches[:20], ensure_ascii=False),
+        "sample_negative_accessory_matches": json.dumps(sample_negative_accessory_matches[:20], ensure_ascii=False),
         "sample_rejected_accessories": json.dumps(sample_rejected_accessories[:20], ensure_ascii=False),
         "sample_kept_system_entities": json.dumps(sample_kept_system_entities[:20], ensure_ascii=False),
         "sample_rejected_spare_parts": json.dumps(rejected_spare_parts[:20], ensure_ascii=False),
