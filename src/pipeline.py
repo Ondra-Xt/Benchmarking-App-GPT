@@ -135,6 +135,8 @@ def _infer_viega_role(row: Dict[str, Any]) -> str:
         for k in (
             "badablauf",
             "top-badablauf",
+            "top badablauf",
+            "topbadablauf",
             "bodenablauf",
             "duschwannenablauf",
             "grundkörper",

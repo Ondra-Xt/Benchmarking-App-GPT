@@ -101,7 +101,7 @@ CATEGORY_DROP_BATHTUB_RE = re.compile(
 )
 CATEGORY_DROP_HIGHLIGHT_RE = re.compile(r"highlight", re.IGNORECASE)
 POSITIVE_DRAIN_ENTITY_RE = re.compile(
-    r"duschrinne|badablauf|top-badablauf|bodenablauf|duschwannenablauf|\bablauf\b|grundk[öo]rper|geruchverschluss|rinnenk[öo]rper|ablaufk[öo]rper",
+    r"duschrinne|badablauf|top[-\s]?badablauf|bodenablauf|duschwannenablauf|\bablauf\b|grundk[öo]rper|geruchverschluss|rinnenk[öo]rper|ablaufk[öo]rper",
     re.IGNORECASE,
 )
 STRONG_NEGATIVE_ACCESSORY_RE = re.compile(

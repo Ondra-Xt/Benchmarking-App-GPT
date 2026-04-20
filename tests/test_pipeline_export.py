@@ -207,6 +207,7 @@ class PipelineExportTests(unittest.TestCase):
     def test_viega_badablauf_pages_are_drain_body_not_accessory(self):
         for name in [
             "Advantix Top-Badablauf 4914-20",
+            "Advantix Top Badablauf 4914-20",
             "Advantix-Badablauf 4980-60",
             "Advantix-Badablauf 4980-61",
             "Advantix-Badablauf 4980-63",
