@@ -101,11 +101,11 @@ CATEGORY_DROP_BATHTUB_RE = re.compile(
 )
 CATEGORY_DROP_HIGHLIGHT_RE = re.compile(r"highlight", re.IGNORECASE)
 POSITIVE_DRAIN_ENTITY_RE = re.compile(
-    r"duschrinne|bodenablauf|duschwannenablauf|\bablauf\b|grundk[öo]rper|geruchverschluss|rinnenk[öo]rper|ablaufk[öo]rper",
+    r"duschrinne|badablauf|top-badablauf|bodenablauf|duschwannenablauf|\bablauf\b|grundk[öo]rper|geruchverschluss|rinnenk[öo]rper|ablaufk[öo]rper",
     re.IGNORECASE,
 )
 STRONG_NEGATIVE_ACCESSORY_RE = re.compile(
-    r"\b(?:dichtung|o-ring|glocke|stopfen|tauchrohr|montageset|schraubenset|sicherungsverschluss|verstellfu(?:ß|ss)set|siebeinsatz|ersatzteilset)\b",
+    r"\b(?:dichtung|o-ring|glocke|stopfen|tauchrohr(?:set)?|montageset|schraubenset|sicherungsverschluss|verstellfu(?:ß|ss)set|siebeinsatz|ersatzteilset|reinigungshilfe|reduzierst[üu]ck|verbindungsst[üu]ck)\b",
     re.IGNORECASE,
 )
 
@@ -316,7 +316,7 @@ def _classify_entity_type_with_reason(url: str, title: str, flat: str, family: s
     title_txt = f"{title} {flat}".lower()
     neg = STRONG_NEGATIVE_ACCESSORY_RE.search(txt) or MOUNTING_ACCESSORY_RE.search(txt)
     accessory_ctx = re.search(r"/zubehoer/|/zubehör/|zubeh[öo]r|werkzeug|ersatzteil|wartung", txt)
-    positive_core = re.search(r"grundk[öo]rper|geruchverschluss|rinnenk[öo]rper|ablaufk[öo]rper|bodenablauf|duschwannenablauf", title_txt, re.IGNORECASE)
+    positive_core = re.search(r"grundk[öo]rper|geruchverschluss|rinnenk[öo]rper|ablaufk[öo]rper|badablauf|top-badablauf|bodenablauf|duschwannenablauf", title_txt, re.IGNORECASE)
     pos = POSITIVE_DRAIN_ENTITY_RE.search(txt)
     relevant_family = family in {"advantix_line", "advantix_floor", "tempoplex", "tempoplex_plus", "tempoplex_60", "domoplex", "duoplex", "varioplex", "other_relevant_shower_drain"}
 

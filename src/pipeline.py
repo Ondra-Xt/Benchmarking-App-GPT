@@ -109,19 +109,57 @@ def _viega_model_block(row: Dict[str, Any]) -> str:
 
 def _infer_viega_role(row: Dict[str, Any]) -> str:
     sr = str(row.get("system_role") or "").strip().lower()
-    if sr:
-        return sr
     txt = f"{row.get('product_name','')} {row.get('product_url','')}".lower()
-    if any(k in txt for k in ("verstellfu", "dichtung", "o-ring", "glocke", "stopfen", "montageset", "schraubenset", "sicherungsverschluss", "siebeinsatz")):
+    has_negative_accessory = any(
+        k in txt
+        for k in (
+            "verstellfu",
+            "dichtung",
+            "o-ring",
+            "glocke",
+            "stopfen",
+            "montageset",
+            "schraubenset",
+            "sicherungsverschluss",
+            "siebeinsatz",
+            "reinigungshilfe",
+            "reduzierstück",
+            "reduzierstueck",
+            "verbindungsstück",
+            "verbindungsstueck",
+            "tauchrohr",
+        )
+    )
+    has_drain_body = any(
+        k in txt
+        for k in (
+            "badablauf",
+            "top-badablauf",
+            "bodenablauf",
+            "duschwannenablauf",
+            "grundkörper",
+            "grundkoerper",
+            "rinnenkörper",
+            "rinnenkoerper",
+            "ablaufkörper",
+            "ablaufkoerper",
+            "geruchverschluss",
+        )
+    )
+    if sr and sr != "accessory":
+        return sr
+    if has_negative_accessory and not has_drain_body:
         return "accessory"
+    if has_drain_body:
+        return "base_set"
     if any(k in txt for k in ("rost", "abdeckung", "verschlussplatte")):
         return "cover"
     if "profil" in txt:
         return "profile"
-    if any(k in txt for k in ("grundkörper", "grundkoerper", "rinnenkörper", "rinnenkoerper", "ablaufkörper", "ablaufkoerper", "geruchverschluss")):
-        return "base_set"
     if any(k in txt for k in ("duschrinne", "bodenablauf", "ablauf")):
         return "complete_drain"
+    if sr:
+        return sr
     return "accessory"
 
 # --- API pro app.py ------------------------------------------------------
@@ -256,6 +294,9 @@ def run_update(
         "sample_emitted_excluded": [],
         "false_positive_promotion_count": 0,
         "sample_demoted_to_components": [],
+        "sample_drain_body_matches": [],
+        "sample_accessory_matches": [],
+        "sample_non_promotable_accessory": [],
     }
 
     if "manufacturer" in registry_df.columns:
@@ -363,10 +404,17 @@ def run_update(
             fam = _viega_family_hint(rowd)
             block = _viega_model_block(rowd)
             role = _infer_viega_role(rowd)
+            if role == "base_set" and len(viega_debug["sample_drain_body_matches"]) < 20:
+                viega_debug["sample_drain_body_matches"].append(url)
+            if role == "accessory" and len(viega_debug["sample_accessory_matches"]) < 20:
+                viega_debug["sample_accessory_matches"].append(url)
             g = viega_groups.get((fam, block), {"roles": set(), "product_ids": []})
             roles = set(g.get("roles") or set())
             txt = f"{rowd.get('product_name','')} {url}".lower()
             non_promotable = role == "accessory" or any(k in txt for k in ("verstellfu", "dichtung", "o-ring", "glocke", "stopfen", "montageset", "schraubenset", "sicherungsverschluss", "siebeinsatz"))
+            non_promotable = non_promotable or any(k in txt for k in ("reinigungshilfe", "reduzierstück", "reduzierstueck", "verbindungsstück", "verbindungsstueck", "tauchrohr"))
+            if non_promotable and len(viega_debug["sample_non_promotable_accessory"]) < 20:
+                viega_debug["sample_non_promotable_accessory"].append(url)
             standalone_subpart = any(
                 k in txt
                 for k in (
@@ -382,7 +430,10 @@ def run_update(
                     "abdeckung",
                     "verschlussplatte",
                     "reduktion",
-                    "adapter",
+                    "reduzierstück",
+                    "reduzierstueck",
+                    "verbindungsstück",
+                    "verbindungsstueck",
                 )
             )
             is_tray = fam in {"tempoplex", "tempoplex_plus", "tempoplex_60", "domoplex", "duoplex", "varioplex"}
@@ -560,6 +611,34 @@ def run_update(
             "product_id": "__summary__",
             "label": "sample_demoted_to_components",
             "snippet": str(viega_debug["sample_demoted_to_components"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_demoted_standalone_subpart",
+            "snippet": str(viega_debug["sample_demoted_to_components"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_drain_body_matches",
+            "snippet": str(viega_debug["sample_drain_body_matches"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_accessory_matches",
+            "snippet": str(viega_debug["sample_accessory_matches"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_non_promotable_accessory",
+            "snippet": str(viega_debug["sample_non_promotable_accessory"][:10]),
             "source": "promotion_stage",
         })
         evidence_rows.append({

@@ -204,6 +204,16 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue(excluded.empty)
         self.assertTrue(bom.empty)
 
+    def test_viega_badablauf_pages_are_drain_body_not_accessory(self):
+        for name in [
+            "Advantix Top-Badablauf 4914-20",
+            "Advantix-Badablauf 4980-60",
+            "Advantix-Badablauf 4980-61",
+            "Advantix-Badablauf 4980-63",
+        ]:
+            role = pipeline._infer_viega_role({"system_role": "accessory", "product_name": name, "product_url": f"https://v.example/{name.replace(' ', '-')}.html"})
+            self.assertEqual(role, "base_set")
+
 
 if __name__ == "__main__":
     unittest.main()
