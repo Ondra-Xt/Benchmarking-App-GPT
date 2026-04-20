@@ -348,6 +348,37 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
             role = viega._classify_entity_type(url, title, "", fam)
             self.assertEqual(role, expected_role, msg=f"{url} classified as {role}, expected {expected_role}")
 
+    def test_golden_overrides_keep_critical_pages_non_accessory(self):
+        cases = [
+            (
+                "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinnen/Advantix-Duschrinnen-Einbauhoehe-ab-95/Advantix-Duschrinne-4983-10.html",
+                "Advantix-Duschrinne 4983.10",
+                "advantix_line",
+            ),
+            (
+                "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Bodenablaeufe/Abdichtung-konventionell/Brandschutz-R120/Advantix-Bodenablauf-4951-20.html",
+                "Advantix-Bodenablauf 4951.20",
+                "advantix_floor",
+            ),
+            (
+                "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Ablauf-6963-1.html",
+                "Tempoplex-Ablauf 6963.1",
+                "tempoplex",
+            ),
+        ]
+        noisy_flat = "Ersatzteil Wartung Technische Daten EN 1253 Ablaufleistung 0,8 l/s DN 50"
+        for url, title, family in cases:
+            role, reason, _pos, _neg = viega._classify_entity_type_with_reason(url, title, noisy_flat, family)
+            self.assertIn(reason, {"golden_url_override_line_drain", "golden_url_override_floor_drain", "golden_url_override_shower_tray_drain"})
+            self.assertNotEqual(role, "accessory")
+
+    def test_true_accessory_remains_accessory(self):
+        url = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Verstellfussset-1111-11.html"
+        fam = viega._classify_family(url, "Advantix-Verstellfußset", "", "")
+        role, reason, _pos, _neg = viega._classify_entity_type_with_reason(url, "Advantix-Verstellfußset", "Montageset", fam)
+        self.assertEqual(role, "accessory")
+        self.assertEqual(reason, "strong_negative_accessory_match")
+
     def test_cover_is_suppressed_when_base_or_drain_exists_in_same_family(self):
         drain = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinne-4983-10.html"
         base = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinnen-Grundkoerper-4982-10.html"

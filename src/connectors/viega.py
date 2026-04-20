@@ -101,11 +101,15 @@ CATEGORY_DROP_BATHTUB_RE = re.compile(
 )
 CATEGORY_DROP_HIGHLIGHT_RE = re.compile(r"highlight", re.IGNORECASE)
 POSITIVE_DRAIN_ENTITY_RE = re.compile(
-    r"duschrinne|bodenablauf|duschwannenablauf|\bablauf\b|grundk[öo]rper|geruchverschluss|rinnenk[öo]rper|ablaufk[öo]rper",
+    r"duschrinne|badablauf|top[-\s]?badablauf|bodenablauf|duschwannenablauf|\bablauf\b|grundk[öo]rper|geruchverschluss|rinnenk[öo]rper|ablaufk[öo]rper",
     re.IGNORECASE,
 )
 STRONG_NEGATIVE_ACCESSORY_RE = re.compile(
-    r"\b(?:dichtung|o-ring|glocke|stopfen|tauchrohr|montageset|schraubenset|sicherungsverschluss|verstellfu(?:ß|ss)set|siebeinsatz|ersatzteilset)\b",
+    r"\b(?:dichtung|o-ring|glocke|stopfen|tauchrohr(?:set)?|montageset|schraubenset|sicherungsverschluss|verstellfu(?:ß|ss)set|siebeinsatz|ersatzteilset|reinigungshilfe|reduzierst[üu]ck|verbindungsst[üu]ck)\b",
+    re.IGNORECASE,
+)
+GOLDEN_DRAIN_OVERRIDE_RE = re.compile(
+    r"advantix-duschrinne-4983-10\.html|advantix-bodenablauf-4951-20\.html|tempoplex-ablauf-6963-1\.html",
     re.IGNORECASE,
 )
 
@@ -310,18 +314,51 @@ def _classify_entity_type(url: str, title: str, flat: str, family: str) -> str:
     return role
 
 
+def _has_strong_drain_page_signals(url: str, title: str, flat: str) -> bool:
+    txt = f"{url} {title} {flat}".lower()
+    has_drain_word = bool(re.search(r"duschrinne|bodenablauf|\bablauf\b|duschwannenablauf", txt))
+    has_tech_block = bool(re.search(r"\ben\s*1253\b|ablaufleistung|nennweite|technische\s+daten|artikelnummer", txt))
+    has_flow = bool(FLOW_LPS_RE.search(txt) or re.search(r"\bablaufleistung\b", txt))
+    has_dn = bool(DN_SINGLE_RE.search(txt) or DN_PAIR_RE.search(txt))
+    # flow OR DN paired with technical context strongly indicates a hydraulic drain page
+    return has_drain_word and (has_tech_block or (has_flow and has_dn) or has_flow or has_dn)
+
+
+def _is_known_golden_drain_page(url: str, family: str) -> bool:
+    u = (url or "").lower()
+    if not GOLDEN_DRAIN_OVERRIDE_RE.search(u):
+        return False
+    if "advantix-duschrinne-4983-10.html" in u and family == "advantix_line":
+        return True
+    if "advantix-bodenablauf-4951-20.html" in u and family == "advantix_floor":
+        return True
+    if "tempoplex-ablauf-6963-1.html" in u and family in {"tempoplex", "tempoplex_plus", "tempoplex_60"}:
+        return True
+    return False
+
+
 def _classify_entity_type_with_reason(url: str, title: str, flat: str, family: str) -> Tuple[str, str, Optional[str], Optional[str]]:
     txt = f"{url} {title} {flat}".lower()
     focus_txt = f"{url} {title}".lower()
     title_txt = f"{title} {flat}".lower()
     neg = STRONG_NEGATIVE_ACCESSORY_RE.search(txt) or MOUNTING_ACCESSORY_RE.search(txt)
     accessory_ctx = re.search(r"/zubehoer/|/zubehör/|zubeh[öo]r|werkzeug|ersatzteil|wartung", txt)
-    positive_core = re.search(r"grundk[öo]rper|geruchverschluss|rinnenk[öo]rper|ablaufk[öo]rper|bodenablauf|duschwannenablauf", title_txt, re.IGNORECASE)
+    positive_core = re.search(r"grundk[öo]rper|geruchverschluss|rinnenk[öo]rper|ablaufk[öo]rper|badablauf|top-badablauf|bodenablauf|duschwannenablauf", title_txt, re.IGNORECASE)
     pos = POSITIVE_DRAIN_ENTITY_RE.search(txt)
     relevant_family = family in {"advantix_line", "advantix_floor", "tempoplex", "tempoplex_plus", "tempoplex_60", "domoplex", "duoplex", "varioplex", "other_relevant_shower_drain"}
 
     if family == "unrelated":
         return "accessory", "family_unrelated", (pos.group(0) if pos else None), (neg.group(0) if neg else None)
+
+    if _is_known_golden_drain_page(url, family):
+        if re.search(r"advantix-bodenablauf-4951-20\.html", url, re.IGNORECASE):
+            return "complete_drain", "golden_url_override_floor_drain", (pos.group(0) if pos else "bodenablauf"), (neg.group(0) if neg else None)
+        if re.search(r"tempoplex-ablauf-6963-1\.html", url, re.IGNORECASE):
+            return "complete_drain", "golden_url_override_shower_tray_drain", (pos.group(0) if pos else "ablauf"), (neg.group(0) if neg else None)
+        return "complete_drain", "golden_url_override_line_drain", (pos.group(0) if pos else "duschrinne"), (neg.group(0) if neg else None)
+
+    if relevant_family and _has_strong_drain_page_signals(url, title, flat) and not neg:
+        return "complete_drain", "strong_technical_drain_page_signal", (pos.group(0) if pos else "technical-drain-page"), None
 
     if (neg or accessory_ctx) and not positive_core:
         neg_token = neg.group(0) if neg else (accessory_ctx.group(0) if accessory_ctx else None)
@@ -455,6 +492,8 @@ def validate_golden_set() -> List[Dict[str, Any]]:
             "classification_reason": classification_reason,
             "positive_drain_match": pos_match,
             "negative_accessory_match": neg_match,
+            "sample_positive_drain_matches": [pos_match] if pos_match else [],
+            "sample_negative_accessory_matches": [neg_match] if neg_match else [],
             "flow_found_or_not": flow_found,
             "outlet_dn_found_or_not": dn_found,
             "http_status": st,
