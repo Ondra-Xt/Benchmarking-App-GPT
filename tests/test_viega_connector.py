@@ -245,7 +245,7 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         self.assertNotIn(bad_spare, urls)
         self.assertNotIn(bad_unrel, urls)
         summary = dbg[-1]
-        self.assertGreaterEqual(summary["rejected_spare_parts_count"], 1)
+        self.assertGreaterEqual(summary["rejected_spare_parts_count"] + summary["rejected_accessory_gate_count"], 1)
         self.assertGreaterEqual(summary["rejected_unrelated_branch_count"], 1)
 
     def test_expected_classification_examples_and_spare_rejections(self):
@@ -378,6 +378,20 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         role, reason, _pos, _neg = viega._classify_entity_type_with_reason(url, "Advantix-Verstellfußset", "Montageset", fam)
         self.assertEqual(role, "accessory")
         self.assertEqual(reason, "strong_negative_accessory_match")
+
+    def test_accessory_gate_blocks_obvious_service_parts(self):
+        for title in [
+            "Advantix-Abdichtungsmanschette",
+            "Advantix-Tauchrohrset",
+            "Advantix-Montagekleber",
+            "Advantix-Reduzierstück",
+            "Advantix-Einleger",
+        ]:
+            url = f"https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/{title.replace(' ', '-')}-1111-11.html"
+            fam = viega._classify_family(url, title, "", "")
+            role, _reason, _pos, _neg = viega._classify_entity_type_with_reason(url, title, "Technische Daten", fam)
+            cat = viega._drain_category_from_family_and_text(fam, f"{url} {title}", role)
+            self.assertTrue(viega._is_strict_accessory_gate_hit(url, title, "", role, cat))
 
     def test_cover_is_suppressed_when_base_or_drain_exists_in_same_family(self):
         drain = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinne-4983-10.html"

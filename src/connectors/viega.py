@@ -108,6 +108,14 @@ STRONG_NEGATIVE_ACCESSORY_RE = re.compile(
     r"\b(?:dichtung|o-ring|glocke|stopfen|tauchrohr(?:set)?|montageset|schraubenset|sicherungsverschluss|verstellfu(?:ß|ss)set|siebeinsatz|ersatzteilset|reinigungshilfe|reduzierst[üu]ck|verbindungsst[üu]ck)\b",
     re.IGNORECASE,
 )
+STRICT_ACCESSORY_GATE_RE = re.compile(
+    r"\b(?:abdichtungsmanschette|tauchrohr(?:set)?|montagekleber|reduzierst[üu]ck|reinigungshilfe|verbindungsst[üu]ck|dichtung|o-ring|glocke|stopfen|montageset|schraubenset|sicherungsverschluss|verstellfu(?:ß|ss)set|ersatzteil(?:e|set)?|wartung(?:steil)?)\b",
+    re.IGNORECASE,
+)
+COVER_ONLY_GATE_RE = re.compile(
+    r"\b(?:rost|stegrost|einleger|profil|abdeckung|verschlussplatte)\b",
+    re.IGNORECASE,
+)
 GOLDEN_DRAIN_OVERRIDE_RE = re.compile(
     r"advantix-duschrinne-4983-10\.html|advantix-bodenablauf-4951-20\.html|tempoplex-ablauf-6963-1\.html",
     re.IGNORECASE,
@@ -328,11 +336,11 @@ def _is_known_golden_drain_page(url: str, family: str) -> bool:
     u = (url or "").lower()
     if not GOLDEN_DRAIN_OVERRIDE_RE.search(u):
         return False
-    if "advantix-duschrinne-4983-10.html" in u and family == "advantix_line":
+    if re.search(r"(?:advantix-)?duschrinne-4983-10\.html", u) and family == "advantix_line":
         return True
-    if "advantix-bodenablauf-4951-20.html" in u and family == "advantix_floor":
+    if re.search(r"(?:advantix-)?bodenablauf-4951-20\.html", u) and family == "advantix_floor":
         return True
-    if "tempoplex-ablauf-6963-1.html" in u and family in {"tempoplex", "tempoplex_plus", "tempoplex_60"}:
+    if re.search(r"tempoplex-ablauf-6963-1\.html", u) and family in {"tempoplex", "tempoplex_plus", "tempoplex_60"}:
         return True
     return False
 
@@ -415,10 +423,13 @@ def _is_unrelated_branch(url: str, title: str = "") -> bool:
 
 
 def _is_spare_part_like(url: str, title: str, flat: str, system_role: str) -> bool:
-    txt = f"{url} {title} {flat}"
+    focus_txt = f"{url} {title}"
+    txt = f"{focus_txt} {flat}"
     if _is_unrelated_branch(url, title):
         return True
-    if SPARE_TOKEN_RE.search(txt):
+    if SPARE_TOKEN_RE.search(focus_txt):
+        return True
+    if system_role == "accessory" and SPARE_TOKEN_RE.search(txt):
         return True
     if system_role == "accessory" and re.search(r"ersatzteil|ersatzteile|set\b", txt, re.IGNORECASE):
         return True
@@ -426,7 +437,28 @@ def _is_spare_part_like(url: str, title: str, flat: str, system_role: str) -> bo
 
 
 def _is_mounting_accessory_like(url: str, title: str, flat: str) -> bool:
-    return bool(MOUNTING_ACCESSORY_RE.search(f"{url} {title} {flat}"))
+    focus_txt = f"{url} {title}"
+    if MOUNTING_ACCESSORY_RE.search(focus_txt):
+        return True
+    return False
+
+
+def _is_strict_accessory_gate_hit(url: str, title: str, flat: str, system_role: str, drain_category: str) -> bool:
+    focus_txt = f"{url} {title}"
+    txt = f"{focus_txt} {flat}"
+    if STRICT_ACCESSORY_GATE_RE.search(focus_txt):
+        return True
+    if COVER_ONLY_GATE_RE.search(focus_txt):
+        return True
+    if system_role == "accessory":
+        return True
+    if drain_category == "accessory":
+        return True
+    # extra guard: if role is already cover/profile and title/url is cover-like,
+    # keep it as component context but do not let it become an accepted drain candidate.
+    if system_role in {"cover", "profile"} and COVER_ONLY_GATE_RE.search(txt):
+        return True
+    return False
 
 
 def _belongs_to_target_families(url: str, title: str, breadcrumb: str, drain_category: str) -> bool:
@@ -450,10 +482,11 @@ def _is_accepted_system_entity(family: str, system_role: str, url: str, title: s
     role_ok = system_role in accepted_roles
     in_target = family != "unrelated" and _belongs_to_target_families(url, title, breadcrumb, drain_category)
     meaningful = _is_meaningful_system_entity(url, title, flat, system_role)
+    accessory_gate = _is_strict_accessory_gate_hit(url, title, flat, system_role, drain_category)
     spare_like = _is_spare_part_like(url, title, flat, system_role)
     mounting_like = _is_mounting_accessory_like(url, title, flat)
     unrelated = _is_unrelated_branch(url, title)
-    return role_ok and in_target and meaningful and (not spare_like) and (not mounting_like) and (not unrelated)
+    return role_ok and in_target and meaningful and (not accessory_gate) and (not spare_like) and (not mounting_like) and (not unrelated)
 
 
 def validate_golden_set() -> List[Dict[str, Any]]:
@@ -974,6 +1007,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     sample_kept_system_entities: List[str] = []
     sample_positive_drain_matches: List[str] = []
     sample_negative_accessory_matches: List[str] = []
+    sample_rejected_accessory_gate: List[str] = []
+    rejected_accessory_gate_count = 0
     sample_cover_kept: List[str] = []
     sample_cover_suppressed: List[str] = []
     sample_base_or_drain_rescued: List[str] = []
@@ -1093,6 +1128,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         in_target_families = _belongs_to_target_families(url, title, breadcrumb, drain_category)
         meaningful_entity = _is_meaningful_system_entity(url, title, flat, system_role)
         role_ok = system_role in accepted_roles
+        accessory_gate_hit = _is_strict_accessory_gate_hit(url, title, flat, system_role, drain_category)
         is_accepted = _is_accepted_system_entity(fam, system_role, url, title, breadcrumb, drain_category, flat)
 
         if is_accepted:
@@ -1100,6 +1136,11 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         else:
             if unrelated:
                 rejected_unrelated.append(url)
+            elif accessory_gate_hit:
+                rejected_accessory_gate_count += 1
+                rejected_mounting_accessories.append(url)
+                if len(sample_rejected_accessory_gate) < 20:
+                    sample_rejected_accessory_gate.append(f"{url} => {system_role}/{drain_category}")
             elif spare_like:
                 rejected_spare_parts.append(url)
             elif mounting_like:
@@ -1243,6 +1284,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "accepted_profile_count": sum(1 for r in dedup.values() if str(r.get("system_role","")) == "profile"),
         "rejected_spare_parts_count": len(rejected_spare_parts),
         "rejected_mounting_accessories_count": len(rejected_mounting_accessories),
+        "rejected_accessory_gate_count": rejected_accessory_gate_count,
         "rejected_unrelated_branch_count": len(rejected_unrelated),
         "rejected_overfiltered_count": len(rejected_overfiltered),
         "sample_relevant_kept": json.dumps(sample_relevant_kept[:20], ensure_ascii=False),
@@ -1254,6 +1296,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "sample_entity_type_classification": json.dumps(sample_entity_type_classification[:20], ensure_ascii=False),
         "sample_positive_drain_matches": json.dumps(sample_positive_drain_matches[:20], ensure_ascii=False),
         "sample_negative_accessory_matches": json.dumps(sample_negative_accessory_matches[:20], ensure_ascii=False),
+        "sample_rejected_accessory_gate": json.dumps(sample_rejected_accessory_gate[:20], ensure_ascii=False),
         "sample_rejected_accessories": json.dumps(sample_rejected_accessories[:20], ensure_ascii=False),
         "sample_kept_system_entities": json.dumps(sample_kept_system_entities[:20], ensure_ascii=False),
         "sample_rejected_spare_parts": json.dumps(rejected_spare_parts[:20], ensure_ascii=False),
