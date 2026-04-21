@@ -372,6 +372,17 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
             self.assertIn(reason, {"golden_url_override_line_drain", "golden_url_override_floor_drain", "golden_url_override_shower_tray_drain"})
             self.assertNotEqual(role, "accessory")
 
+    def test_good_drain_pages_ignore_accessory_words_in_surrounding_flat_text(self):
+        noisy_flat = "Empfohlenes Zubehör: Verstellfußset, Stopfen, Montageset"
+        line_url = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinne-4983-10.html"
+        floor_url = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Bodenablaeufe/Advantix-Bodenablauf-4951-20.html"
+        for url, title, fam in [
+            (line_url, "Advantix-Duschrinne 4983.10", "advantix_line"),
+            (floor_url, "Advantix-Bodenablauf 4951.20", "advantix_floor"),
+        ]:
+            role, _reason, _pos, _neg = viega._classify_entity_type_with_reason(url, title, noisy_flat, fam)
+            self.assertNotEqual(role, "accessory")
+
     def test_true_accessory_remains_accessory(self):
         url = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Verstellfussset-1111-11.html"
         fam = viega._classify_family(url, "Advantix-Verstellfußset", "", "")
@@ -384,6 +395,7 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
             "Advantix-Abdichtungsmanschette",
             "Advantix-Tauchrohrset",
             "Advantix-Montagekleber",
+            "Advantix-Abdichtungsband",
             "Advantix-Reduzierstück",
             "Advantix-Einleger",
         ]:
@@ -392,6 +404,25 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
             role, _reason, _pos, _neg = viega._classify_entity_type_with_reason(url, title, "Technische Daten", fam)
             cat = viega._drain_category_from_family_and_text(fam, f"{url} {title}", role)
             self.assertTrue(viega._is_strict_accessory_gate_hit(url, title, "", role, cat))
+
+    def test_known_golden_parameter_rescue_floor_flow_and_tempoplex_dn(self):
+        floor_url = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Bodenablaeufe/Advantix-Bodenablauf-4951-20.html"
+        tray_url = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Ablauf-6963-1.html"
+        floor_html = "<html><body><main><h1>Advantix-Bodenablauf 4951.20</h1><p>Leistung 0,6 l/s</p></main></body></html>"
+        tray_html = "<html><body><main><h1>Tempoplex-Ablauf 6963.1</h1><p>Ablauf für Duschwanne</p></main></body></html>"
+
+        def fake_get(url, timeout=35):
+            if "4951-20" in url:
+                return 200, url, floor_html, ""
+            if "6963-1" in url:
+                return 200, url, tray_html, ""
+            return 404, url, "", "not found"
+
+        with patch.object(viega, "_safe_get_text", side_effect=fake_get), patch.object(viega, "_extract_pdf_candidates", return_value=[]):
+            floor = viega.extract_parameters(floor_url)
+            tray = viega.extract_parameters(tray_url)
+        self.assertIsNotNone(floor["flow_rate_lps"])
+        self.assertEqual(tray["outlet_dn_default"], "DN50")
 
     def test_cover_is_suppressed_when_base_or_drain_exists_in_same_family(self):
         drain = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinne-4983-10.html"
