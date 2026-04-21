@@ -10,7 +10,7 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
     GOLDEN_CLASSIFICATION = [
         # positive keep
         ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinne-4983-10.html", "Advantix-Duschrinne 4983.10", "complete_drain"),
-        ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Bodenablaeufe/Advantix-Bodenablauf-1234-10.html", "Advantix-Bodenablauf 1234.10", "complete_drain"),
+        ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Bodenablaeufe/Advantix-Bodenablauf-1234-10.html", "Advantix-Bodenablauf 1234.10", "base_set"),
         ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Ablauf-6963-1.html", "Tempoplex-Ablauf 6963.1", "complete_drain"),
         ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Domoplex/Domoplex-Ablauf-1111-11.html", "Domoplex-Ablauf 1111.11", "complete_drain"),
         ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Rost-4933-61.html", "Advantix-Rost 4933.61", "cover"),
@@ -369,7 +369,7 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         noisy_flat = "Ersatzteil Wartung Technische Daten EN 1253 Ablaufleistung 0,8 l/s DN 50"
         for url, title, family in cases:
             role, reason, _pos, _neg = viega._classify_entity_type_with_reason(url, title, noisy_flat, family)
-            self.assertIn(reason, {"golden_url_override_line_drain", "golden_url_override_floor_drain", "golden_url_override_shower_tray_drain"})
+            self.assertIn(reason, {"golden_url_override_line_drain", "golden_url_override_floor_drain", "golden_url_override_base_set", "golden_url_override_shower_tray_drain"})
             self.assertNotEqual(role, "accessory")
 
     def test_good_drain_pages_ignore_accessory_words_in_surrounding_flat_text(self):

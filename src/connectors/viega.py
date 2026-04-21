@@ -80,7 +80,7 @@ MOUNTING_ACCESSORY_RE = re.compile(
     re.IGNORECASE,
 )
 MEANINGFUL_ENTITY_RE = re.compile(
-    r"duschrinne|bodenablauf|eckablauf|wandablauf|\bablauf\b|grundk[öo]rper|rost|profil|abdeckung",
+    r"duschrinne|badablauf|top[-\s]?badablauf|bodenablauf|eckablauf|wandablauf|duschwannenablauf|\bablauf\b|grundk[öo]rper|rost|profil|abdeckung",
     re.IGNORECASE,
 )
 RELEVANT_FAMILY_RE = re.compile(
@@ -332,6 +332,20 @@ def _has_strong_drain_page_signals(url: str, title: str, flat: str) -> bool:
     return has_drain_word and (has_tech_block or (has_flow and has_dn) or has_flow or has_dn)
 
 
+def _prefers_base_set_role(url: str, title: str, family: str) -> bool:
+    focus = f"{url} {title}".lower()
+    if family not in {"advantix_floor", "advantix_line", "other_relevant_shower_drain"}:
+        return False
+    if re.search(r"geruchverschluss|grundk[öo]rper|ablaufk[öo]rper|rinnenk[öo]rper", focus, re.IGNORECASE):
+        return True
+    # floor/body semantics should default to base_set unless explicit complete finished drain semantics are present
+    if re.search(r"badablauf|top[-\s]?badablauf|top[-\s]?bodenablauf|bodenablauf", focus, re.IGNORECASE):
+        if re.search(r"duschrinne|set\b|komplett", focus, re.IGNORECASE):
+            return False
+        return True
+    return False
+
+
 def _is_known_golden_drain_page(url: str, family: str) -> bool:
     u = (url or "").lower()
     if not GOLDEN_DRAIN_OVERRIDE_RE.search(u):
@@ -361,6 +375,8 @@ def _classify_entity_type_with_reason(url: str, title: str, flat: str, family: s
         return "accessory", "family_unrelated", (pos.group(0) if pos else None), (neg.group(0) if neg else None)
 
     if _is_known_golden_drain_page(url, family):
+        if _prefers_base_set_role(url, title, family):
+            return "base_set", "golden_url_override_base_set", (pos.group(0) if pos else "drain-body"), (neg.group(0) if neg else None)
         if re.search(r"advantix-bodenablauf-4951-20\.html", url, re.IGNORECASE):
             return "complete_drain", "golden_url_override_floor_drain", (pos.group(0) if pos else "bodenablauf"), (neg.group(0) if neg else None)
         if re.search(r"tempoplex-ablauf-6963-1\.html", url, re.IGNORECASE):
@@ -368,6 +384,8 @@ def _classify_entity_type_with_reason(url: str, title: str, flat: str, family: s
         return "complete_drain", "golden_url_override_line_drain", (pos.group(0) if pos else "duschrinne"), (neg.group(0) if neg else None)
 
     if relevant_family and _has_strong_drain_page_signals(url, title, flat) and not neg:
+        if _prefers_base_set_role(url, title, family):
+            return "base_set", "strong_technical_drain_body_signal", (pos.group(0) if pos else "technical-drain-body"), None
         return "complete_drain", "strong_technical_drain_page_signal", (pos.group(0) if pos else "technical-drain-page"), None
 
     if (neg or accessory_ctx) and not positive_core:
@@ -376,7 +394,7 @@ def _classify_entity_type_with_reason(url: str, title: str, flat: str, family: s
 
     if relevant_family and pos:
         tok = pos.group(0).lower()
-        if re.search(r"grundk[öo]rper|geruchverschluss|rinnenk[öo]rper|ablaufk[öo]rper", tok, re.IGNORECASE):
+        if re.search(r"grundk[öo]rper|geruchverschluss|rinnenk[öo]rper|ablaufk[öo]rper|badablauf|bodenablauf", tok, re.IGNORECASE) or _prefers_base_set_role(url, title, family):
             return "base_set", "positive_hydraulic_body_signal", tok, (neg.group(0) if neg else None)
         if re.search(r"rost|abdeckung|verschlussplatte", txt, re.IGNORECASE):
             return "cover", "positive_cover_signal", tok, (neg.group(0) if neg else None)
@@ -1040,7 +1058,11 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     sample_kept_system_entities: List[str] = []
     sample_positive_drain_matches: List[str] = []
     sample_negative_accessory_matches: List[str] = []
+    sample_drain_body_matches: List[str] = []
+    sample_accessory_matches: List[str] = []
     sample_rejected_accessory_gate: List[str] = []
+    sample_non_promotable_accessory: List[str] = []
+    sample_reclassified_base_sets: List[str] = []
     rejected_accessory_gate_count = 0
     sample_cover_kept: List[str] = []
     sample_cover_suppressed: List[str] = []
@@ -1115,6 +1137,12 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             sample_positive_drain_matches.append(f"{url} => {pos_match}")
         if neg_match and len(sample_negative_accessory_matches) < 20:
             sample_negative_accessory_matches.append(f"{url} => {neg_match}")
+            if len(sample_accessory_matches) < 20:
+                sample_accessory_matches.append(f"{url} => {neg_match}")
+        if system_role == "base_set" and len(sample_drain_body_matches) < 20:
+            sample_drain_body_matches.append(f"{url} => {classification_reason}")
+        if system_role == "base_set" and "drain_body" in classification_reason and len(sample_reclassified_base_sets) < 20:
+            sample_reclassified_base_sets.append(url)
 
         # safeguard: /Zubehoer/ should never become products
         if ("/zubehoer/" in url.lower() or "/zubehör/" in url.lower()) and cand_type == "drain":
@@ -1174,12 +1202,18 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                 rejected_mounting_accessories.append(url)
                 if len(sample_rejected_accessory_gate) < 20:
                     sample_rejected_accessory_gate.append(f"{url} => {system_role}/{drain_category}")
+                if len(sample_non_promotable_accessory) < 20:
+                    sample_non_promotable_accessory.append(url)
             elif spare_like:
                 rejected_spare_parts.append(url)
+                if len(sample_non_promotable_accessory) < 20:
+                    sample_non_promotable_accessory.append(url)
             elif mounting_like:
                 rejected_mounting_accessories.append(url)
                 if len(sample_rejected_accessories) < 20:
                     sample_rejected_accessories.append(url)
+                if len(sample_non_promotable_accessory) < 20:
+                    sample_non_promotable_accessory.append(url)
             else:
                 rejected_overfiltered.append(url)
                 if (role_ok or meaningful_entity) and len(sample_relevant_rejected) < 20:
@@ -1329,6 +1363,10 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "sample_entity_type_classification": json.dumps(sample_entity_type_classification[:20], ensure_ascii=False),
         "sample_positive_drain_matches": json.dumps(sample_positive_drain_matches[:20], ensure_ascii=False),
         "sample_negative_accessory_matches": json.dumps(sample_negative_accessory_matches[:20], ensure_ascii=False),
+        "sample_drain_body_matches": json.dumps(sample_drain_body_matches[:20], ensure_ascii=False),
+        "sample_accessory_matches": json.dumps(sample_accessory_matches[:20], ensure_ascii=False),
+        "sample_non_promotable_accessory": json.dumps(sample_non_promotable_accessory[:20], ensure_ascii=False),
+        "sample_reclassified_base_sets": json.dumps(sample_reclassified_base_sets[:20], ensure_ascii=False),
         "sample_rejected_accessory_gate": json.dumps(sample_rejected_accessory_gate[:20], ensure_ascii=False),
         "sample_rejected_accessories": json.dumps(sample_rejected_accessories[:20], ensure_ascii=False),
         "sample_kept_system_entities": json.dumps(sample_kept_system_entities[:20], ensure_ascii=False),
