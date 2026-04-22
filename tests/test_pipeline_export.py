@@ -211,9 +211,30 @@ class PipelineExportTests(unittest.TestCase):
             "Advantix-Badablauf 4980-60",
             "Advantix-Badablauf 4980-61",
             "Advantix-Badablauf 4980-63",
+            "Advantix Top-Bodenablauf 4914-11",
+            "Advantix Top-Bodenablauf 4914-21",
+            "Advantix-Bodenablauf-Grundkörper 4951-15",
+            "Advantix-Bodenablauf-Grundkörper 4955-15",
+            "Advantix-Bodenablauf-Grundkörper 4955-25",
         ]:
             role = pipeline._infer_viega_role({"system_role": "accessory", "product_name": name, "product_url": f"https://v.example/{name.replace(' ', '-')}.html"})
             self.assertEqual(role, "base_set")
+
+    def test_viega_drain_body_pages_use_incomplete_assembly_not_non_promotable_accessory(self):
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "viega", "product_id": "v-491420", "product_name": "Advantix Top-Badablauf 4914-20", "product_url": "https://v.example/4914-20.html", "candidate_type": "component", "complete_system": "yes", "system_role": "accessory", "discovery_seed_family": "advantix_floor"},
+                {"manufacturer": "viega", "product_id": "v-498060", "product_name": "Advantix-Badablauf 4980-60", "product_url": "https://v.example/4980-60.html", "candidate_type": "component", "complete_system": "yes", "system_role": "accessory", "discovery_seed_family": "advantix_floor"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"viega": _FakeViegaConnector()}, clear=True):
+            products, comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
+        self.assertFalse(products.empty)
+        self.assertTrue((products["promote_to_product"] == "no").all())
+        self.assertTrue((products["why_not_product_reason"] == "incomplete_assembly").all())
+        self.assertNotIn("non_promotable_accessory", set(products["why_not_product_reason"].tolist()))
+        self.assertTrue(excluded.empty)
+        self.assertTrue(bom.empty)
 
 
 if __name__ == "__main__":
