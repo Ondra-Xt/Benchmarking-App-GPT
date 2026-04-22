@@ -429,8 +429,11 @@ def run_update(
             g = viega_groups.get((fam, block), {"roles": set(), "product_ids": []})
             roles = set(g.get("roles") or set())
             txt = f"{rowd.get('product_name','')} {url}".lower()
-            non_promotable = role == "accessory" or any(k in txt for k in ("verstellfu", "dichtung", "o-ring", "glocke", "stopfen", "montageset", "schraubenset", "sicherungsverschluss", "siebeinsatz"))
-            non_promotable = non_promotable or any(k in txt for k in ("reinigungshilfe", "reduzierstück", "reduzierstueck", "verbindungsstück", "verbindungsstueck", "tauchrohr"))
+            strong_accessory_item = role == "accessory" or any(k in txt for k in ("verstellfu", "dichtung", "o-ring", "glocke", "stopfen", "montageset", "schraubenset", "sicherungsverschluss", "siebeinsatz"))
+            strong_accessory_item = strong_accessory_item or any(k in txt for k in ("reinigungshilfe", "reduzierstück", "reduzierstueck", "verbindungsstück", "verbindungsstueck", "tauchrohr", "montagekleber", "abdichtungsband"))
+            # meaningful hydraulic bodies (base_set) are non-promoted due incomplete system context,
+            # not because they are accessories.
+            non_promotable = strong_accessory_item
             if non_promotable and len(viega_debug["sample_non_promotable_accessory"]) < 20:
                 viega_debug["sample_non_promotable_accessory"].append(url)
             standalone_subpart = any(
@@ -472,6 +475,8 @@ def run_update(
             promote = (role in {"complete_drain"}) and (not non_promotable) and len(missing_required_parts) == 0
             if promote:
                 reason = "promoted_complete_assembly"
+            elif role == "base_set" and not strong_accessory_item:
+                reason = "incomplete_assembly"
             elif non_promotable:
                 reason = "non_promotable_accessory"
             elif standalone_subpart:
