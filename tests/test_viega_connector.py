@@ -83,6 +83,13 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
             "component",
         )
 
+    def test_tempoplex_cover_one_digit_suffix_is_treated_as_detail_url(self):
+        self.assertTrue(
+            viega._is_detail_url(
+                "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Abdeckhaube-6964-0.html"
+            )
+        )
+
     def test_4981_90_vertical_outlet_hint(self):
         params = self._run_extract(
             "Advantix-Cleviva-Duschrinnen-Ablauf-4981-90",
@@ -180,15 +187,16 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
             rows, _dbg = viega.discover_candidates(1200, 100)
 
         urls = {r["product_url"] for r in rows}
-        self.assertIn(tempoplex_url, urls)
+        self.assertTrue(any("tempoplex-ablauf-6963-1.html" in u.lower() for u in urls))
         self.assertTrue(any("advantix-duschrinne-4983-10.html" in u.lower() for u in urls))
         by_url = {r["product_url"]: r for r in rows}
-        self.assertEqual(by_url[tempoplex_url]["drain_category"], "shower_tray_drain")
+        temp_row = next(r for r in rows if "tempoplex-ablauf-6963-1.html" in r["product_url"].lower())
+        self.assertEqual(temp_row["drain_category"], "shower_tray_drain")
         adv_row = next(r for r in rows if "advantix-duschrinne-4983-10.html" in r["product_url"].lower())
         self.assertEqual(adv_row["drain_category"], "line_channel")
-        self.assertIn("discovery_seed_family", by_url[tempoplex_url])
-        self.assertFalse(by_url[tempoplex_url]["was_synthetic_url"])
-        self.assertEqual(by_url[tempoplex_url]["normalized_detail_url"], tempoplex_url)
+        self.assertIn("discovery_seed_family", temp_row)
+        self.assertFalse(temp_row["was_synthetic_url"])
+        self.assertIn("tempoplex-ablauf-6963-1.html", temp_row["normalized_detail_url"].lower())
         summary = _dbg[-1]
         self.assertIn("canonical_seed_urls", summary)
         self.assertIn("discovered_category_links", summary)

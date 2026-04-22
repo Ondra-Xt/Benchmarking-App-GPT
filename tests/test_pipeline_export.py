@@ -319,6 +319,21 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue(excluded.empty)
         self.assertTrue(bom.empty)
 
+    def test_tray_pairing_rejects_ersatz_cover_candidates(self):
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "viega", "product_id": "viega-69631", "product_name": "Tempoplex-Ablauf 6963.1", "product_url": "https://v.example/Tempoplex-Ablauf-6963-1.html", "candidate_type": "component", "complete_system": "yes", "system_role": "base_set", "discovery_seed_family": "tempoplex"},
+                {"manufacturer": "viega", "product_id": "viega-69640-r", "product_name": "Tempoplex-Abdeckhaube 6964.0 Ersatzteil", "product_url": "https://v.example/Ersatzteile/Tempoplex-Abdeckhaube-6964-0.html", "candidate_type": "component", "complete_system": "yes", "system_role": "cover", "discovery_seed_family": "tempoplex"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"viega": _FakeViegaConnector()}, clear=True):
+            products, _comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
+        self.assertFalse((products["promotion_reason"] == "tray_base_with_cover_pairing").any())
+        summary = evidence[evidence["label"] == "rejected_ersatzteile_cover_count"]["snippet"].tolist()
+        self.assertTrue(summary and int(summary[0]) >= 1)
+        self.assertTrue(excluded.empty)
+        self.assertTrue(bom.empty)
+
 
 if __name__ == "__main__":
     unittest.main()

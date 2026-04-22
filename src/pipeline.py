@@ -35,6 +35,7 @@ VIEGA_TRAY_KNOWN_INCOMPLETE_BASE_MODELS = {
     "tempoplex": {"6963.1"},
     "domoplex": {"6928.21"},
 }
+VIEGA_ERSATZ_OR_SERVICE_RE = re.compile(r"ersatzteil|ersatzteile|wartung|service|dichtung|o-ring|montageset|schraubenset", re.IGNORECASE)
 
 
 def _slug(s: str) -> str:
@@ -244,6 +245,11 @@ def _is_tray_cover_compatible(base_row: Dict[str, Any], cover_row: Dict[str, Any
     return False
 
 
+def _is_rejected_ersatz_cover(row: Dict[str, Any]) -> bool:
+    txt = f"{row.get('product_name','')} {row.get('product_url','')}".lower()
+    return bool(VIEGA_ERSATZ_OR_SERVICE_RE.search(txt))
+
+
 def _is_known_or_signaled_incomplete_tray_base(row: Dict[str, Any]) -> bool:
     fam = _viega_family_hint(row)
     if fam not in VIEGA_TRAY_FAMILIES:
@@ -403,6 +409,8 @@ def run_update(
         "sample_tray_pairings": [],
         "sample_unpaired_tray_base_sets": [],
         "sample_unpaired_tray_covers": [],
+        "rejected_wrong_family_cover_count": 0,
+        "rejected_ersatzteile_cover_count": 0,
     }
     tray_pairings_by_base_id: Dict[str, List[Dict[str, Any]]] = {}
     tray_pairing_reason_by_base_id: Dict[str, str] = {}
@@ -438,6 +446,12 @@ def run_update(
             for c in tray_cover_rows:
                 cpid = str(c.get("product_id") or "")
                 if not cpid or cpid == bpid:
+                    continue
+                if _is_rejected_ersatz_cover(c):
+                    viega_debug["rejected_ersatzteile_cover_count"] += 1
+                    continue
+                if _viega_family_hint(b) != _viega_family_hint(c):
+                    viega_debug["rejected_wrong_family_cover_count"] += 1
                     continue
                 if _is_tray_cover_compatible(b, c):
                     matches.append(c)
@@ -978,6 +992,20 @@ def run_update(
             "product_id": "__summary__",
             "label": "sample_unpaired_tray_covers",
             "snippet": str(viega_debug["sample_unpaired_tray_covers"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "rejected_wrong_family_cover_count",
+            "snippet": str(viega_debug["rejected_wrong_family_cover_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "rejected_ersatzteile_cover_count",
+            "snippet": str(viega_debug["rejected_ersatzteile_cover_count"]),
             "source": "promotion_stage",
         })
 

@@ -30,6 +30,7 @@ DETAIL_SEEDS = [
     f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Cleviva-Duschrinnen/Einbauhoehe-ab-95-mm/Advantix-Cleviva-Duschrinne-4981-10.html",
     f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinnen/Advantix-Duschrinnen-Einbauhoehe-ab-95/Advantix-Duschrinne-4983-10.html",
     f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Ablauf-6963-1.html",
+    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Abdeckhaube-6964-0.html",
 ]
 CATEGORY_SEEDS = [
     *CATALOG_SEEDS,
@@ -47,8 +48,8 @@ SEED_FAMILY_HINTS: Dict[str, str] = {
     "varioplex": "shower_tray",
 }
 
-DETAIL_URL_RE = re.compile(r"-\d{4,5}-\d{2}\.html$", re.IGNORECASE)
-ARTICLE_FROM_URL_RE = re.compile(r"-(\d{4,5}-\d{2})\.html(?:$|[?#])", re.IGNORECASE)
+DETAIL_URL_RE = re.compile(r"-\d{4,5}-\d{1,2}\.html$", re.IGNORECASE)
+ARTICLE_FROM_URL_RE = re.compile(r"-(\d{4,5}-\d{1,2})\.html(?:$|[?#])", re.IGNORECASE)
 LENGTH_RE_LIST = [
     re.compile(r"\bl(?:ä|ae)nge\s*(\d{3,4})\s*mm\b", re.IGNORECASE),
     re.compile(r"\bl(?:ä|ae)nge\s*(\d{3,4})\b", re.IGNORECASE),
