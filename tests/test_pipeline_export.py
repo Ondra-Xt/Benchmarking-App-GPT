@@ -236,6 +236,42 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue(excluded.empty)
         self.assertTrue(bom.empty)
 
+    def test_viega_explicit_override_ids_force_base_set_incomplete_assembly(self):
+        rows = []
+        for pid, name in [
+            ("viega-491420", "Advantix Top-Badablauf 4914-20"),
+            ("viega-498060", "Advantix-Badablauf 4980-60"),
+            ("viega-498061", "Advantix-Badablauf 4980-61"),
+            ("viega-498063", "Advantix-Badablauf 4980-63"),
+            ("viega-495120", "Advantix-Bodenablauf 4951-20"),
+            ("viega-495115", "Advantix-Bodenablauf-Grundkörper 4951-15"),
+            ("viega-495515", "Advantix-Bodenablauf-Grundkörper 4955-15"),
+            ("viega-495525", "Advantix-Bodenablauf-Grundkörper 4955-25"),
+            ("viega-491411", "Advantix Top-Bodenablauf 4914-11"),
+            ("viega-491421", "Advantix Top-Bodenablauf 4914-21"),
+        ]:
+            rows.append(
+                {
+                    "manufacturer": "viega",
+                    "product_id": pid,
+                    "product_name": name,
+                    "product_url": f"https://v.example/{pid}.html",
+                    "candidate_type": "component",
+                    "complete_system": "yes",
+                    "system_role": "accessory",
+                    "discovery_seed_family": "advantix_floor",
+                }
+            )
+        registry = pd.DataFrame(rows)
+        with patch.dict(pipeline.CONNECTORS, {"viega": _FakeViegaConnector()}, clear=True):
+            products, comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
+        self.assertEqual(len(products), 10)
+        self.assertTrue((products["promote_to_product"] == "no").all())
+        self.assertTrue((products["why_not_product_reason"] == "incomplete_assembly").all())
+        self.assertNotIn("non_promotable_accessory", set(products["why_not_product_reason"].tolist()))
+        self.assertTrue(excluded.empty)
+        self.assertTrue(bom.empty)
+
 
 if __name__ == "__main__":
     unittest.main()
