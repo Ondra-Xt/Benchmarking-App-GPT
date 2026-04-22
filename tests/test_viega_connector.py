@@ -12,7 +12,7 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinne-4983-10.html", "Advantix-Duschrinne 4983.10", "complete_drain"),
         ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Bodenablaeufe/Advantix-Bodenablauf-1234-10.html", "Advantix-Bodenablauf 1234.10", "base_set"),
         ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Ablauf-6963-1.html", "Tempoplex-Ablauf 6963.1", "base_set"),
-        ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Domoplex/Domoplex-Ablauf-1111-11.html", "Domoplex-Ablauf 1111.11", "base_set"),
+        ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Domoplex/Domoplex-Ablauf-1111-11.html", "Domoplex-Ablauf 1111.11", "complete_drain"),
         ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Rost-4933-61.html", "Advantix-Rost 4933.61", "cover"),
         # negative reject
         ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Dichtung-1111-11.html", "Tempoplex-Dichtung", "accessory"),
@@ -110,6 +110,16 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         self.assertEqual(cand_type, "component")
         self.assertEqual(drain_category, "shower_tray_drain")
         self.assertEqual(system_role, "base_set")
+        self.assertEqual(complete_system, "component")
+
+    def test_known_domoplex_6928_21_is_demoted_to_base_set(self):
+        cand_type, _cat, role, complete_system = viega._derive_taxonomy(
+            "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Domoplex/Domoplex-Ablauf-6928-21.html",
+            "Domoplex-Ablauf 6928.21",
+            "Ablauf",
+        )
+        self.assertEqual(role, "base_set")
+        self.assertEqual(cand_type, "component")
         self.assertEqual(complete_system, "component")
 
     def test_taxonomy_examples_for_floor_cover_accessory(self):
@@ -369,8 +379,24 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         noisy_flat = "Ersatzteil Wartung Technische Daten EN 1253 Ablaufleistung 0,8 l/s DN 50"
         for url, title, family in cases:
             role, reason, _pos, _neg = viega._classify_entity_type_with_reason(url, title, noisy_flat, family)
-            self.assertIn(reason, {"golden_url_override_line_drain", "golden_url_override_floor_drain", "golden_url_override_base_set", "golden_url_override_shower_tray_base_set", "tray_ablauf_base_unit_default"})
+            self.assertIn(reason, {"golden_url_override_line_drain", "golden_url_override_floor_drain", "golden_url_override_base_set", "golden_url_override_shower_tray_base_set", "tray_known_incomplete_base_model"})
             self.assertNotEqual(role, "accessory")
+
+    def test_varioplex_not_auto_demoted_without_incomplete_signal(self):
+        fam = viega._classify_family(
+            "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Varioplex/Varioplex-Ablauf-7777-11.html",
+            "Varioplex-Ablauf 7777.11",
+            "",
+            "",
+        )
+        role, reason, _pos, _neg = viega._classify_entity_type_with_reason(
+            "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Varioplex/Varioplex-Ablauf-7777-11.html",
+            "Varioplex-Ablauf 7777.11",
+            "Technische Daten Ablaufleistung",
+            fam,
+        )
+        self.assertEqual(role, "complete_drain")
+        self.assertNotEqual(reason, "tray_known_incomplete_base_model")
 
     def test_good_drain_pages_ignore_accessory_words_in_surrounding_flat_text(self):
         noisy_flat = "Empfohlenes Zubehör: Verstellfußset, Stopfen, Montageset"

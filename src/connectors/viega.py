@@ -116,6 +116,10 @@ TRAY_COVER_SIGNAL_RE = re.compile(
     r"abdeckhaube|abdeckung|abdeckplatte|deckel|abdeckelement|top\s*cover|cover\s*element",
     re.IGNORECASE,
 )
+TRAY_KNOWN_INCOMPLETE_BASE_RE = re.compile(
+    r"tempoplex-ablauf-6963-1\.html|domoplex-ablauf-6928-21\.html",
+    re.IGNORECASE,
+)
 STRICT_ACCESSORY_GATE_RE = re.compile(
     r"\b(?:abdichtungsmanschette|abdichtungsband|tauchrohr(?:set)?|montagekleber|reduzierst[üu]ck|reinigungshilfe|verbindungsst[üu]ck|dichtung|o-ring|glocke|stopfen|montageset|schraubenset|sicherungsverschluss|verstellfu(?:ß|ss)set|ersatzteil(?:e|set)?|wartung(?:steil)?)\b",
     re.IGNORECASE,
@@ -382,8 +386,8 @@ def _classify_entity_type_with_reason(url: str, title: str, flat: str, family: s
 
     if tray_family and re.search(r"\bablauf\b|\bfunktionseinheit\b", txt, re.IGNORECASE) and TRAY_INCOMPLETE_BASE_SIGNAL_RE.search(txt):
         return "base_set", "tray_incomplete_function_unit_signal", (pos.group(0) if pos else "funktionseinheit"), (neg.group(0) if neg else None)
-    if tray_family and re.search(r"\bablauf\b", title_txt, re.IGNORECASE) and not TRAY_COVER_SIGNAL_RE.search(title_txt):
-        return "base_set", "tray_ablauf_base_unit_default", (pos.group(0) if pos else "ablauf"), (neg.group(0) if neg else None)
+    if tray_family and TRAY_KNOWN_INCOMPLETE_BASE_RE.search(url):
+        return "base_set", "tray_known_incomplete_base_model", (pos.group(0) if pos else "ablauf"), (neg.group(0) if neg else None)
     if tray_family and TRAY_COVER_SIGNAL_RE.search(txt) and not re.search(r"\bablauf\b", title_txt, re.IGNORECASE):
         return "cover", "tray_top_cover_signal", (pos.group(0) if pos else "abdeckhaube"), (neg.group(0) if neg else None)
 

@@ -286,6 +286,7 @@ class PipelineExportTests(unittest.TestCase):
         paired = products[products["promotion_reason"] == "tray_base_with_cover_pairing"]
         self.assertEqual(len(paired), 1)
         self.assertEqual(paired.iloc[0]["promote_to_product"], "yes")
+        self.assertEqual(paired.iloc[0]["pairing_reason"], "compatible_cover_match")
         self.assertIn("tray_complete_systems_created_count", set(evidence["label"].tolist()))
         self.assertTrue(excluded.empty)
         self.assertTrue(bom.empty)
@@ -301,6 +302,20 @@ class PipelineExportTests(unittest.TestCase):
         self.assertEqual(len(products), 1)
         self.assertEqual(products.iloc[0]["promote_to_product"], "no")
         self.assertEqual(products.iloc[0]["promotion_reason"], "incomplete_assembly")
+        self.assertTrue(excluded.empty)
+        self.assertTrue(bom.empty)
+
+    def test_varioplex_complete_drain_can_still_promote_when_not_incomplete_function_unit(self):
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "viega", "product_id": "viega-777711", "product_name": "Varioplex-Ablauf 7777.11", "product_url": "https://v.example/Varioplex-Ablauf-7777-11.html", "candidate_type": "drain", "complete_system": "yes", "system_role": "complete_drain", "discovery_seed_family": "varioplex"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"viega": _FakeViegaConnector()}, clear=True):
+            products, _comparison, excluded, _evidence, bom = pipeline.run_update(registry, default_config())
+        self.assertEqual(len(products), 1)
+        self.assertEqual(products.iloc[0]["promote_to_product"], "yes")
+        self.assertEqual(products.iloc[0]["promotion_reason"], "promoted_complete_assembly")
         self.assertTrue(excluded.empty)
         self.assertTrue(bom.empty)
 

@@ -31,6 +31,10 @@ VIEGA_TRAY_FAMILIES = {"tempoplex", "tempoplex_plus", "tempoplex_60", "domoplex"
 VIEGA_TRAY_KNOWN_BASE_TO_COVER_BLOCKS = {
     "tempoplex": {"6963": {"6964"}},
 }
+VIEGA_TRAY_KNOWN_INCOMPLETE_BASE_MODELS = {
+    "tempoplex": {"6963.1"},
+    "domoplex": {"6928.21"},
+}
 
 
 def _slug(s: str) -> str:
@@ -239,6 +243,20 @@ def _is_tray_cover_compatible(base_row: Dict[str, Any], cover_row: Dict[str, Any
         return True
     return False
 
+
+def _is_known_or_signaled_incomplete_tray_base(row: Dict[str, Any]) -> bool:
+    fam = _viega_family_hint(row)
+    if fam not in VIEGA_TRAY_FAMILIES:
+        return False
+    txt = f"{row.get('product_name','')} {row.get('product_url','')}".lower()
+    model = _extract_model_token(txt)
+    known_models = VIEGA_TRAY_KNOWN_INCOMPLETE_BASE_MODELS.get(fam, set())
+    if model and model in known_models:
+        return True
+    if any(sig in txt for sig in ("funktionseinheit", "ohne abdeckhaube", "requires top cover", "requires cover")):
+        return True
+    return False
+
 # --- API pro app.py ------------------------------------------------------
 
 def run_discovery(
@@ -387,6 +405,7 @@ def run_update(
         "sample_unpaired_tray_covers": [],
     }
     tray_pairings_by_base_id: Dict[str, List[Dict[str, Any]]] = {}
+    tray_pairing_reason_by_base_id: Dict[str, str] = {}
     tray_paired_cover_ids: Set[str] = set()
 
     if "manufacturer" in registry_df.columns:
@@ -424,6 +443,7 @@ def run_update(
                     matches.append(c)
             if matches:
                 tray_pairings_by_base_id[bpid] = matches
+                tray_pairing_reason_by_base_id[bpid] = "compatible_cover_match"
                 viega_debug["tray_pair_candidates_count"] += len(matches)
                 for m in matches:
                     tray_paired_cover_ids.add(str(m.get("product_id") or ""))
@@ -586,7 +606,7 @@ def run_update(
             missing_required_parts: List[str] = []
             if not has_body:
                 missing_required_parts.append("body_or_base")
-            if not has_top:
+            if not has_top and (role in {"complete_drain", "base_set"}):
                 missing_required_parts.append("top_element")
             if params.get("flow_rate_lps") in (None, ""):
                 missing_required_parts.append("flow_rate_lps")
@@ -595,7 +615,7 @@ def run_update(
             if standalone_subpart:
                 missing_required_parts.append("standalone_subpart_not_complete_product")
 
-            tray_incomplete_signal = is_tray and role == "base_set" and not tray_matches
+            tray_incomplete_signal = is_tray and role == "base_set" and (_is_known_or_signaled_incomplete_tray_base(rowd) or not tray_matches)
             promote = (role in {"complete_drain"}) and (not non_promotable) and (not explicit_override) and len(missing_required_parts) == 0
             if is_tray:
                 promote = False
@@ -665,6 +685,7 @@ def run_update(
             "promotion_reason": promotion_reason,
             "missing_required_parts": ",".join(missing_required_parts),
             "matched_component_ids": ",".join(str(x) for x in matched_component_ids),
+            "pairing_reason": "",
             "why_not_product_reason": "" if promote_to_product else promotion_reason,
 
             # vytažené parametry:
@@ -730,6 +751,7 @@ def run_update(
                     "promotion_reason": "tray_base_with_cover_pairing",
                     "missing_required_parts": "",
                     "matched_component_ids": ",".join([base_id, cover_id]),
+                    "pairing_reason": tray_pairing_reason_by_base_id.get(base_id, "compatible_cover_match"),
                     "why_not_product_reason": "",
                     "drain_category": "shower_tray_drain",
                     "system_role": "complete_drain",
