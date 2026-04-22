@@ -11,7 +11,7 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         # positive keep
         ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinne-4983-10.html", "Advantix-Duschrinne 4983.10", "complete_drain"),
         ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Bodenablaeufe/Advantix-Bodenablauf-1234-10.html", "Advantix-Bodenablauf 1234.10", "base_set"),
-        ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Ablauf-6963-1.html", "Tempoplex-Ablauf 6963.1", "complete_drain"),
+        ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Ablauf-6963-1.html", "Tempoplex-Ablauf 6963.1", "base_set"),
         ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Domoplex/Domoplex-Ablauf-1111-11.html", "Domoplex-Ablauf 1111.11", "complete_drain"),
         ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Rost-4933-61.html", "Advantix-Rost 4933.61", "cover"),
         # negative reject
@@ -101,16 +101,26 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         self.assertEqual(params["flow_rate_lps"], 0.7)
         self.assertEqual(params["outlet_dn_default"], "DN50")
 
-    def test_tempoplex_is_classified_as_drain_taxonomy(self):
+    def test_tempoplex_is_classified_as_base_set_taxonomy(self):
         cand_type, drain_category, system_role, complete_system = viega._derive_taxonomy(
             "https://www.viega.de/de/produkte/Katalog/Badewannen-und-Duschwannenablaeufe/Tempoplex/Tempoplex-Ablauf-6963-1.html",
             "Tempoplex-Ablauf 6963.1",
             "Tempoplex Duschwannenablauf",
         )
-        self.assertEqual(cand_type, "drain")
+        self.assertEqual(cand_type, "component")
         self.assertEqual(drain_category, "shower_tray_drain")
-        self.assertEqual(system_role, "complete_drain")
-        self.assertEqual(complete_system, "yes")
+        self.assertEqual(system_role, "base_set")
+        self.assertEqual(complete_system, "component")
+
+    def test_known_domoplex_6928_21_is_demoted_to_base_set(self):
+        cand_type, _cat, role, complete_system = viega._derive_taxonomy(
+            "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Domoplex/Domoplex-Ablauf-6928-21.html",
+            "Domoplex-Ablauf 6928.21",
+            "Ablauf",
+        )
+        self.assertEqual(role, "base_set")
+        self.assertEqual(cand_type, "component")
+        self.assertEqual(complete_system, "component")
 
     def test_taxonomy_examples_for_floor_cover_accessory(self):
         c1 = viega._derive_taxonomy(
@@ -270,7 +280,7 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
             "Duschwannengarnituren",
         )
         self.assertEqual(tempoplex[1], "shower_tray_drain")
-        self.assertEqual(tempoplex[2], "complete_drain")
+        self.assertEqual(tempoplex[2], "base_set")
 
         floor = viega._derive_taxonomy(
             "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Bodenablaeufe/Advantix-Bodenablauf-1234-10.html",
@@ -369,8 +379,24 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         noisy_flat = "Ersatzteil Wartung Technische Daten EN 1253 Ablaufleistung 0,8 l/s DN 50"
         for url, title, family in cases:
             role, reason, _pos, _neg = viega._classify_entity_type_with_reason(url, title, noisy_flat, family)
-            self.assertIn(reason, {"golden_url_override_line_drain", "golden_url_override_floor_drain", "golden_url_override_base_set", "golden_url_override_shower_tray_drain"})
+            self.assertIn(reason, {"golden_url_override_line_drain", "golden_url_override_floor_drain", "golden_url_override_base_set", "golden_url_override_shower_tray_base_set", "tray_known_incomplete_base_model"})
             self.assertNotEqual(role, "accessory")
+
+    def test_varioplex_not_auto_demoted_without_incomplete_signal(self):
+        fam = viega._classify_family(
+            "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Varioplex/Varioplex-Ablauf-7777-11.html",
+            "Varioplex-Ablauf 7777.11",
+            "",
+            "",
+        )
+        role, reason, _pos, _neg = viega._classify_entity_type_with_reason(
+            "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Varioplex/Varioplex-Ablauf-7777-11.html",
+            "Varioplex-Ablauf 7777.11",
+            "Technische Daten Ablaufleistung",
+            fam,
+        )
+        self.assertEqual(role, "complete_drain")
+        self.assertNotEqual(reason, "tray_known_incomplete_base_model")
 
     def test_good_drain_pages_ignore_accessory_words_in_surrounding_flat_text(self):
         noisy_flat = "Empfohlenes Zubehör: Verstellfußset, Stopfen, Montageset"
@@ -452,6 +478,31 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         self.assertIn(base, urls)
         self.assertNotIn(cover, urls)
         self.assertEqual(dbg[-1]["accepted_cover_count"], 0)
+
+    def test_tray_family_keeps_cover_for_pairing(self):
+        base = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Ablauf-6963-1.html"
+        cover = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Abdeckhaube-6964-0.html"
+
+        def fake_get(url, timeout=35):
+            if url == base:
+                return 200, url, "<html><body><main><h1>Tempoplex-Ablauf 6963.1</h1><p>Funktionseinheit ohne Abdeckhaube</p></main></body></html>", ""
+            if url == cover:
+                return 200, url, "<html><body><main><h1>Tempoplex-Abdeckhaube 6964.0</h1></main></body></html>", ""
+            return 200, url, "<html><body>seed</body></html>", ""
+
+        crawl_map = {
+            u: {"raw_discovered_href": u, "normalized_detail_url": u, "href_source_page": "seed", "was_synthetic_url": False}
+            for u in [base, cover]
+        }
+        with patch.object(viega, "_safe_get_text", side_effect=fake_get), patch.object(
+            viega, "_crawl_category_pages", return_value=crawl_map
+        ), patch.object(viega, "DETAIL_SEEDS", []):
+            rows, dbg = viega.discover_candidates(1200, 100)
+
+        urls = {r["product_url"] for r in rows}
+        self.assertIn(base, urls)
+        self.assertIn(cover, urls)
+        self.assertGreaterEqual(dbg[-1]["accepted_cover_count"], 1)
 
 
 if __name__ == "__main__":
