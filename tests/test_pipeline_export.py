@@ -272,6 +272,38 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue(excluded.empty)
         self.assertTrue(bom.empty)
 
+    def test_viega_tray_tempoplex_pairing_promotes_only_synthetic_complete_system(self):
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "viega", "product_id": "viega-69631", "product_name": "Tempoplex-Ablauf 6963.1", "product_url": "https://v.example/Tempoplex-Ablauf-6963-1.html", "candidate_type": "component", "complete_system": "yes", "system_role": "base_set", "discovery_seed_family": "tempoplex"},
+                {"manufacturer": "viega", "product_id": "viega-69640", "product_name": "Tempoplex-Abdeckhaube 6964.0", "product_url": "https://v.example/Tempoplex-Abdeckhaube-6964-0.html", "candidate_type": "component", "complete_system": "yes", "system_role": "cover", "discovery_seed_family": "tempoplex"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"viega": _FakeViegaConnector()}, clear=True):
+            products, _comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
+        standalone = products[products["product_id"].isin(["viega-69631", "viega-69640"])]
+        self.assertTrue((standalone["promote_to_product"] == "no").all())
+        paired = products[products["promotion_reason"] == "tray_base_with_cover_pairing"]
+        self.assertEqual(len(paired), 1)
+        self.assertEqual(paired.iloc[0]["promote_to_product"], "yes")
+        self.assertIn("tray_complete_systems_created_count", set(evidence["label"].tolist()))
+        self.assertTrue(excluded.empty)
+        self.assertTrue(bom.empty)
+
+    def test_viega_tray_domoplex_base_without_cover_stays_incomplete(self):
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "viega", "product_id": "viega-692821", "product_name": "Domoplex-Ablauf 6928.21 Funktionseinheit ohne Abdeckhaube", "product_url": "https://v.example/Domoplex-Ablauf-6928-21.html", "candidate_type": "component", "complete_system": "yes", "system_role": "base_set", "discovery_seed_family": "domoplex"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"viega": _FakeViegaConnector()}, clear=True):
+            products, _comparison, excluded, _evidence, bom = pipeline.run_update(registry, default_config())
+        self.assertEqual(len(products), 1)
+        self.assertEqual(products.iloc[0]["promote_to_product"], "no")
+        self.assertEqual(products.iloc[0]["promotion_reason"], "incomplete_assembly")
+        self.assertTrue(excluded.empty)
+        self.assertTrue(bom.empty)
+
 
 if __name__ == "__main__":
     unittest.main()
