@@ -15,6 +15,19 @@ from .scoring import (
 )
 
 # --- helpers -------------------------------------------------------------
+VIEGA_EXPLICIT_DRAIN_BODY_OVERRIDE_IDS = {
+    "viega-491420",
+    "viega-498060",
+    "viega-498061",
+    "viega-498063",
+    "viega-495120",
+    "viega-495115",
+    "viega-495515",
+    "viega-495525",
+    "viega-491411",
+    "viega-491421",
+}
+
 
 def _slug(s: str) -> str:
     s = (s or "").strip().lower()
@@ -176,6 +189,15 @@ def _infer_viega_role(row: Dict[str, Any]) -> str:
         return sr
     return "accessory"
 
+
+def _is_explicit_viega_drain_body_override(product_id: str, row: Dict[str, Any]) -> bool:
+    pid = str(product_id or "").strip().lower()
+    if pid in VIEGA_EXPLICIT_DRAIN_BODY_OVERRIDE_IDS:
+        return True
+    txt = f"{row.get('product_name','')} {row.get('product_url','')}".lower().replace(".", "-")
+    model_tokens = ("4914-20", "4980-60", "4980-61", "4980-63", "4951-20", "4951-15", "4955-15", "4955-25", "4914-11", "4914-21")
+    return any(tok in txt for tok in model_tokens)
+
 # --- API pro app.py ------------------------------------------------------
 
 def run_discovery(
@@ -312,6 +334,9 @@ def run_update(
         "sample_accessory_matches": [],
         "sample_non_promotable_accessory": [],
         "sample_reclassified_base_sets": [],
+        "explicit_override_applied_count": 0,
+        "explicit_override_ids": [],
+        "sample_overridden_drain_bodies": [],
     }
 
     if "manufacturer" in registry_df.columns:
@@ -420,6 +445,14 @@ def run_update(
             block = _viega_model_block(rowd)
             raw_role = str(rowd.get("system_role") or "").strip().lower()
             role = _infer_viega_role(rowd)
+            explicit_override = _is_explicit_viega_drain_body_override(product_id, rowd)
+            if explicit_override:
+                role = "base_set"
+                viega_debug["explicit_override_applied_count"] += 1
+                if product_id not in viega_debug["explicit_override_ids"]:
+                    viega_debug["explicit_override_ids"].append(product_id)
+                if len(viega_debug["sample_overridden_drain_bodies"]) < 20:
+                    viega_debug["sample_overridden_drain_bodies"].append(url)
             if raw_role == "accessory" and role == "base_set" and len(viega_debug["sample_reclassified_base_sets"]) < 20:
                 viega_debug["sample_reclassified_base_sets"].append(url)
             if role == "base_set" and len(viega_debug["sample_drain_body_matches"]) < 20:
@@ -433,7 +466,7 @@ def run_update(
             strong_accessory_item = strong_accessory_item or any(k in txt for k in ("reinigungshilfe", "reduzierstück", "reduzierstueck", "verbindungsstück", "verbindungsstueck", "tauchrohr", "montagekleber", "abdichtungsband"))
             # meaningful hydraulic bodies (base_set) are non-promoted due incomplete system context,
             # not because they are accessories.
-            non_promotable = strong_accessory_item
+            non_promotable = strong_accessory_item and (not explicit_override)
             if non_promotable and len(viega_debug["sample_non_promotable_accessory"]) < 20:
                 viega_debug["sample_non_promotable_accessory"].append(url)
             standalone_subpart = any(
@@ -472,9 +505,11 @@ def run_update(
             if standalone_subpart:
                 missing_required_parts.append("standalone_subpart_not_complete_product")
 
-            promote = (role in {"complete_drain"}) and (not non_promotable) and len(missing_required_parts) == 0
+            promote = (role in {"complete_drain"}) and (not non_promotable) and (not explicit_override) and len(missing_required_parts) == 0
             if promote:
                 reason = "promoted_complete_assembly"
+            elif explicit_override:
+                reason = "incomplete_assembly"
             elif role == "base_set" and not strong_accessory_item:
                 reason = "incomplete_assembly"
             elif non_promotable:
@@ -620,6 +655,27 @@ def run_update(
             "product_id": "__summary__",
             "label": "promotion_reason_counts",
             "snippet": str(viega_debug["promotion_reason_counts"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "explicit_override_applied_count",
+            "snippet": str(viega_debug["explicit_override_applied_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "explicit_override_ids",
+            "snippet": str(viega_debug["explicit_override_ids"][:20]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_overridden_drain_bodies",
+            "snippet": str(viega_debug["sample_overridden_drain_bodies"][:10]),
             "source": "promotion_stage",
         })
         evidence_rows.append({
