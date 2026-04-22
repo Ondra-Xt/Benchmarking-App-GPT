@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple, Optional, Union, Iterable, Set
 import re
+import json
 import pandas as pd
 
 from .config import WeightConfig
@@ -27,6 +28,15 @@ VIEGA_EXPLICIT_DRAIN_BODY_OVERRIDE_IDS = {
     "viega-491411",
     "viega-491421",
 }
+VIEGA_TRAY_FAMILIES = {"tempoplex", "tempoplex_plus", "tempoplex_60", "domoplex", "duoplex", "varioplex"}
+VIEGA_TRAY_KNOWN_BASE_TO_COVER_BLOCKS = {
+    "tempoplex": {"6963": {"6964"}},
+}
+VIEGA_TRAY_KNOWN_INCOMPLETE_BASE_MODELS = {
+    "tempoplex": {"6963.1"},
+    "domoplex": {"6928.21"},
+}
+VIEGA_ERSATZ_OR_SERVICE_RE = re.compile(r"ersatzteil|ersatzteile|wartung|service|dichtung|o-ring|montageset|schraubenset", re.IGNORECASE)
 
 
 def _slug(s: str) -> str:
@@ -179,6 +189,8 @@ def _infer_viega_role(row: Dict[str, Any]) -> str:
         return "accessory"
     if has_drain_body:
         return "base_set"
+    if any(k in txt for k in ("abdeckhaube", "abdeckung", "abdeckelement", "deckel", "top cover", "cover element")):
+        return "cover"
     if any(k in txt for k in ("rost", "abdeckung", "verschlussplatte")):
         return "cover"
     if "profil" in txt:
@@ -197,6 +209,100 @@ def _is_explicit_viega_drain_body_override(product_id: str, row: Dict[str, Any])
     txt = f"{row.get('product_name','')} {row.get('product_url','')}".lower().replace(".", "-")
     model_tokens = ("4914-20", "4980-60", "4980-61", "4980-63", "4951-20", "4951-15", "4955-15", "4955-25", "4914-11", "4914-21")
     return any(tok in txt for tok in model_tokens)
+
+
+def _extract_model_token(text: str) -> str:
+    m = re.search(r"(\d{4,5})[.\-](\d{1,2})", text)
+    if m:
+        return f"{m.group(1)}.{m.group(2)}"
+    return ""
+
+
+def _is_tray_cover_compatible(base_row: Dict[str, Any], cover_row: Dict[str, Any]) -> bool:
+    base_family = _viega_family_hint(base_row)
+    cover_family = _viega_family_hint(cover_row)
+    if base_family != cover_family:
+        return False
+    if base_family not in VIEGA_TRAY_FAMILIES:
+        return False
+
+    base_txt = f"{base_row.get('product_name','')} {base_row.get('product_url','')}".lower()
+    cover_txt = f"{cover_row.get('product_name','')} {cover_row.get('product_url','')}".lower()
+    base_model = _extract_model_token(base_txt)
+    cover_model = _extract_model_token(cover_txt)
+    base_block = (base_model.split(".", 1)[0] if base_model else _viega_model_block(base_row))
+    cover_block = (cover_model.split(".", 1)[0] if cover_model else _viega_model_block(cover_row))
+    known_for_family = VIEGA_TRAY_KNOWN_BASE_TO_COVER_BLOCKS.get(base_family, {})
+    known_cover_blocks = known_for_family.get(base_block, set())
+    if known_cover_blocks and cover_block in known_cover_blocks:
+        return True
+
+    if base_model and base_model in cover_txt:
+        return True
+    if cover_model and cover_model in base_txt:
+        return True
+    if base_block and re.search(rf"\b{re.escape(base_block)}(?:[.\-]\d{{1,2}})?\b", cover_txt):
+        return True
+    return False
+
+
+def _is_rejected_ersatz_cover(row: Dict[str, Any]) -> bool:
+    txt = f"{row.get('product_name','')} {row.get('product_url','')}".lower()
+    return bool(VIEGA_ERSATZ_OR_SERVICE_RE.search(txt))
+
+
+def _is_cover_top_element_text(row: Dict[str, Any]) -> bool:
+    txt = f"{row.get('product_name','')} {row.get('product_url','')}".lower()
+    return any(tok in txt for tok in ("abdeckhaube", "abdeckung", "abdeckelement", "cover"))
+
+
+def _parse_cover_variants(params: Dict[str, Any], cover_row: Dict[str, Any]) -> List[Dict[str, Any]]:
+    raw = params.get("article_rows_json")
+    if not raw:
+        return []
+    try:
+        rows = json.loads(raw) if isinstance(raw, str) else list(raw)
+    except Exception:
+        return []
+    out: List[Dict[str, Any]] = []
+    family = _viega_family_hint(cover_row)
+    cover_model = _extract_model_token(f"{cover_row.get('product_name','')} {cover_row.get('product_url','')}".lower()) or _viega_model_block(cover_row)
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        article = str(r.get("article_no") or r.get("Artikel") or "").strip()
+        if not article:
+            continue
+        variant_raw = str(r.get("variant_label") or r.get("Ausführung") or r.get("_row_text") or "").strip()
+        colour = ""
+        mcol = re.search(r"(chrom|schwarz|weiß|weiss|edelstahl|gold|bronze|matt)", variant_raw, re.IGNORECASE)
+        if mcol:
+            colour = mcol.group(1)
+        out.append({
+            "cover_article_no": article,
+            "cover_finish_raw": variant_raw,
+            "cover_colour": colour,
+            "cover_variant_key": f"{cover_model}:{article}",
+            "cover_model": cover_model,
+            "parent_cover_model": cover_model,
+            "compatible_family": family,
+            "raw_variant_text": str(r.get("_row_text") or variant_raw),
+        })
+    return out
+
+
+def _is_known_or_signaled_incomplete_tray_base(row: Dict[str, Any]) -> bool:
+    fam = _viega_family_hint(row)
+    if fam not in VIEGA_TRAY_FAMILIES:
+        return False
+    txt = f"{row.get('product_name','')} {row.get('product_url','')}".lower()
+    model = _extract_model_token(txt)
+    known_models = VIEGA_TRAY_KNOWN_INCOMPLETE_BASE_MODELS.get(fam, set())
+    if model and model in known_models:
+        return True
+    if any(sig in txt for sig in ("funktionseinheit", "ohne abdeckhaube", "requires top cover", "requires cover")):
+        return True
+    return False
 
 # --- API pro app.py ------------------------------------------------------
 
@@ -337,7 +443,22 @@ def run_update(
         "explicit_override_applied_count": 0,
         "explicit_override_ids": [],
         "sample_overridden_drain_bodies": [],
+        "tray_base_set_count": 0,
+        "tray_cover_count": 0,
+        "tray_pair_candidates_count": 0,
+        "tray_complete_systems_created_count": 0,
+        "sample_tray_pairings": [],
+        "sample_unpaired_tray_base_sets": [],
+        "sample_unpaired_tray_covers": [],
+        "rejected_wrong_family_cover_count": 0,
+        "rejected_ersatzteile_cover_count": 0,
+        "tray_cover_variant_count": 0,
+        "cover_variant_rows_parsed_count": 0,
     }
+    tray_pairings_by_base_id: Dict[str, List[Dict[str, Any]]] = {}
+    tray_pairing_reason_by_base_id: Dict[str, str] = {}
+    tray_paired_cover_ids: Set[str] = set()
+    cover_variants_by_cover_id: Dict[str, List[Dict[str, Any]]] = {}
 
     if "manufacturer" in registry_df.columns:
         for _, rv in registry_df[registry_df["manufacturer"] == "viega"].iterrows():
@@ -350,6 +471,52 @@ def run_update(
             grp["roles"].add(role)
             grp["product_ids"].append(str(rr.get("product_id") or ""))
             grp["urls"].append(str(rr.get("product_url") or ""))
+        tray_rows = [rv.to_dict() for _, rv in registry_df[registry_df["manufacturer"] == "viega"].iterrows() if _viega_family_hint(rv.to_dict()) in VIEGA_TRAY_FAMILIES]
+        tray_base_rows = []
+        tray_cover_rows = []
+        for row in tray_rows:
+            role = _infer_viega_role(row)
+            txt = f"{row.get('product_name','')} {row.get('product_url','')}".lower()
+            if role == "base_set" and ("ablauf" in txt or "funktionseinheit" in txt):
+                tray_base_rows.append(row)
+            elif role == "cover":
+                tray_cover_rows.append(row)
+        viega_debug["tray_base_set_count"] = len(tray_base_rows)
+        viega_debug["tray_cover_count"] = len(tray_cover_rows)
+
+        for b in tray_base_rows:
+            bpid = str(b.get("product_id") or "")
+            matches: List[Dict[str, Any]] = []
+            for c in tray_cover_rows:
+                cpid = str(c.get("product_id") or "")
+                if not cpid or cpid == bpid:
+                    continue
+                is_ersatz = _is_rejected_ersatz_cover(c)
+                ersatz_exception = is_ersatz and _is_cover_top_element_text(c) and _is_tray_cover_compatible(b, c)
+                if is_ersatz and not ersatz_exception:
+                    viega_debug["rejected_ersatzteile_cover_count"] += 1
+                    continue
+                if _viega_family_hint(b) != _viega_family_hint(c):
+                    viega_debug["rejected_wrong_family_cover_count"] += 1
+                    continue
+                if _is_tray_cover_compatible(b, c):
+                    matches.append(c)
+            if matches:
+                tray_pairings_by_base_id[bpid] = matches
+                tray_pairing_reason_by_base_id[bpid] = "compatible_cover_match"
+                viega_debug["tray_pair_candidates_count"] += len(matches)
+                for m in matches:
+                    tray_paired_cover_ids.add(str(m.get("product_id") or ""))
+                    if len(viega_debug["sample_tray_pairings"]) < 20:
+                        viega_debug["sample_tray_pairings"].append(
+                            f"{b.get('product_url')} + {m.get('product_url')}"
+                        )
+            elif len(viega_debug["sample_unpaired_tray_base_sets"]) < 20:
+                viega_debug["sample_unpaired_tray_base_sets"].append(str(b.get("product_url") or ""))
+        for c in tray_cover_rows:
+            cpid = str(c.get("product_id") or "")
+            if cpid not in tray_paired_cover_ids and len(viega_debug["sample_unpaired_tray_covers"]) < 20:
+                viega_debug["sample_unpaired_tray_covers"].append(str(c.get("product_url") or ""))
 
     for _, r in registry_df.iterrows():
         manufacturer = _normalize_manufacturer(r.get("manufacturer", ""))
@@ -439,6 +606,8 @@ def run_update(
         promotion_reason = "default"
         missing_required_parts: List[str] = []
         matched_component_ids: List[str] = []
+        tray_cover_variants: List[Dict[str, Any]] = []
+        role = ""
         if manufacturer == "viega":
             rowd = r.to_dict() if hasattr(r, "to_dict") else dict(r)
             fam = _viega_family_hint(rowd)
@@ -491,12 +660,15 @@ def run_update(
                 )
             )
             is_tray = fam in {"tempoplex", "tempoplex_plus", "tempoplex_60", "domoplex", "duoplex", "varioplex"}
+            tray_matches = tray_pairings_by_base_id.get(product_id, [])
             has_body = any(x in roles for x in {"complete_drain", "base_set"})
             has_top = any(x in roles for x in {"cover", "profile"}) or role == "complete_drain"
+            if is_tray and role == "base_set":
+                has_top = has_top or bool(tray_matches)
             missing_required_parts: List[str] = []
             if not has_body:
                 missing_required_parts.append("body_or_base")
-            if not is_tray and not has_top:
+            if not has_top and (role in {"complete_drain", "base_set"}):
                 missing_required_parts.append("top_element")
             if params.get("flow_rate_lps") in (None, ""):
                 missing_required_parts.append("flow_rate_lps")
@@ -505,12 +677,17 @@ def run_update(
             if standalone_subpart:
                 missing_required_parts.append("standalone_subpart_not_complete_product")
 
+            tray_incomplete_signal = is_tray and role == "base_set" and (_is_known_or_signaled_incomplete_tray_base(rowd) or not tray_matches)
             promote = (role in {"complete_drain"}) and (not non_promotable) and (not explicit_override) and len(missing_required_parts) == 0
             if promote:
                 reason = "promoted_complete_assembly"
             elif explicit_override:
                 reason = "incomplete_assembly"
+            elif tray_incomplete_signal:
+                reason = "incomplete_assembly"
             elif role == "base_set" and not strong_accessory_item:
+                reason = "incomplete_assembly"
+            elif is_tray and role == "cover":
                 reason = "incomplete_assembly"
             elif non_promotable:
                 reason = "non_promotable_accessory"
@@ -521,6 +698,12 @@ def run_update(
             promote_to_product = promote
             promotion_reason = reason
             matched_component_ids = list(g.get("product_ids") or [])
+            if is_tray and role == "cover":
+                tray_cover_variants = _parse_cover_variants(params, rowd)
+                if tray_cover_variants:
+                    cover_variants_by_cover_id[product_id] = tray_cover_variants
+                    viega_debug["cover_variant_rows_parsed_count"] += len(tray_cover_variants)
+                    viega_debug["tray_cover_variant_count"] += len(tray_cover_variants)
             viega_debug["promotion_reason_counts"][reason] = viega_debug["promotion_reason_counts"].get(reason, 0) + 1
             if promote:
                 viega_debug["complete_assembly_candidates_count"] += 1
@@ -568,6 +751,7 @@ def run_update(
             "promotion_reason": promotion_reason,
             "missing_required_parts": ",".join(missing_required_parts),
             "matched_component_ids": ",".join(str(x) for x in matched_component_ids),
+            "pairing_reason": "",
             "why_not_product_reason": "" if promote_to_product else promotion_reason,
 
             # vytažené parametry:
@@ -606,6 +790,113 @@ def run_update(
                 "snippet": str(v),
                 "source": url,
             })
+
+        if manufacturer == "viega" and tray_cover_variants:
+            for idx, var in enumerate(tray_cover_variants, start=1):
+                var_id = f"{product_id}__var_{idx}"
+                var_name = f"{r.get('product_name')} [{var.get('cover_article_no')}]"
+                products_rows.append({
+                    "manufacturer": manufacturer,
+                    "product_id": var_id,
+                    "product_name": var_name,
+                    "product_url": url,
+                    "candidate_type": "component",
+                    "promote_to_product": "no",
+                    "promotion_reason": "cover_only_component",
+                    "missing_required_parts": "",
+                    "matched_component_ids": product_id,
+                    "pairing_reason": "",
+                    "why_not_product_reason": "cover_only_component",
+                    "system_role": "cover",
+                    "parent_cover_model": var.get("parent_cover_model"),
+                    "cover_model": var.get("cover_model"),
+                    "cover_article_no": var.get("cover_article_no"),
+                    "cover_finish_raw": var.get("cover_finish_raw"),
+                    "cover_colour": var.get("cover_colour"),
+                    "cover_variant_key": var.get("cover_variant_key"),
+                    "compatible_family": var.get("compatible_family"),
+                    "raw_variant_text": var.get("raw_variant_text"),
+                })
+
+    # synthetic tray complete-system products: base_set + compatible cover
+    if "manufacturer" in registry_df.columns:
+        registry_rows = [r.to_dict() for _, r in registry_df.iterrows()]
+        by_id = {str(r.get("product_id") or ""): r for r in registry_rows}
+        for base_id, cover_rows in tray_pairings_by_base_id.items():
+            base_row = by_id.get(base_id)
+            if not base_row:
+                continue
+            base_name = str(base_row.get("product_name") or "")
+            base_url = str(base_row.get("product_url") or "")
+            fam = _viega_family_hint(base_row)
+            for cover_row in cover_rows[:1]:
+                cover_id = str(cover_row.get("product_id") or "")
+                cover_name = str(cover_row.get("product_name") or "")
+                cover_variants = cover_variants_by_cover_id.get(cover_id, [])
+                if cover_variants:
+                    for var in cover_variants:
+                        var_key = str(var.get("cover_variant_key") or var.get("cover_article_no") or cover_id)
+                        full_id = f"{base_id}__{cover_id}__{var_key}"
+                        products_rows.append({
+                            "manufacturer": "viega",
+                            "product_id": full_id,
+                            "product_name": f"{base_name} + {cover_name} [{var.get('cover_article_no')}]",
+                            "product_url": base_url,
+                            "candidate_type": "drain",
+                            "promote_to_product": "yes",
+                            "promotion_reason": "tray_base_with_cover_pairing",
+                            "missing_required_parts": "",
+                            "matched_component_ids": ",".join([base_id, cover_id]),
+                            "pairing_reason": tray_pairing_reason_by_base_id.get(base_id, "compatible_cover_match"),
+                            "why_not_product_reason": "",
+                            "drain_category": "shower_tray_drain",
+                            "system_role": "complete_drain",
+                            "product_family": fam,
+                            "cover_article_no": var.get("cover_article_no"),
+                            "cover_finish_raw": var.get("cover_finish_raw"),
+                            "cover_colour": var.get("cover_colour"),
+                            "cover_variant_key": var.get("cover_variant_key"),
+                        })
+                        comparison_rows.append({
+                            "manufacturer": "viega",
+                            "product_id": full_id,
+                            "product_name": f"{base_name} + {cover_name} [{var.get('cover_article_no')}]",
+                            "product_url": base_url,
+                            "final_score": None,
+                            "param_score": None,
+                            "equiv_score": None,
+                            "system_score": None,
+                        })
+                        viega_debug["tray_complete_systems_created_count"] += 1
+                else:
+                    full_id = f"{base_id}__{cover_id}"
+                    products_rows.append({
+                        "manufacturer": "viega",
+                        "product_id": full_id,
+                        "product_name": f"{base_name} + {cover_name}",
+                        "product_url": base_url,
+                        "candidate_type": "drain",
+                        "promote_to_product": "yes",
+                        "promotion_reason": "tray_base_with_cover_pairing",
+                        "missing_required_parts": "",
+                        "matched_component_ids": ",".join([base_id, cover_id]),
+                        "pairing_reason": tray_pairing_reason_by_base_id.get(base_id, "compatible_cover_match"),
+                        "why_not_product_reason": "",
+                        "drain_category": "shower_tray_drain",
+                        "system_role": "complete_drain",
+                        "product_family": fam,
+                    })
+                    comparison_rows.append({
+                        "manufacturer": "viega",
+                        "product_id": full_id,
+                        "product_name": f"{base_name} + {cover_name}",
+                        "product_url": base_url,
+                        "final_score": None,
+                        "param_score": None,
+                        "equiv_score": None,
+                        "system_score": None,
+                    })
+                    viega_debug["tray_complete_systems_created_count"] += 1
 
     if any(str(x).strip().lower() == "viega" for x in registry_df.get("manufacturer", pd.Series(dtype=str)).tolist()):
         evidence_rows.append({
@@ -767,6 +1058,83 @@ def run_update(
             "product_id": "__summary__",
             "label": "sample_emitted_excluded",
             "snippet": str(viega_debug["sample_emitted_excluded"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "tray_base_set_count",
+            "snippet": str(viega_debug["tray_base_set_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "tray_cover_count",
+            "snippet": str(viega_debug["tray_cover_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "tray_cover_variant_count",
+            "snippet": str(viega_debug["tray_cover_variant_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "tray_pair_candidates_count",
+            "snippet": str(viega_debug["tray_pair_candidates_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "tray_complete_systems_created_count",
+            "snippet": str(viega_debug["tray_complete_systems_created_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_tray_pairings",
+            "snippet": str(viega_debug["sample_tray_pairings"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_unpaired_tray_base_sets",
+            "snippet": str(viega_debug["sample_unpaired_tray_base_sets"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_unpaired_tray_covers",
+            "snippet": str(viega_debug["sample_unpaired_tray_covers"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "rejected_wrong_family_cover_count",
+            "snippet": str(viega_debug["rejected_wrong_family_cover_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "rejected_ersatzteile_cover_count",
+            "snippet": str(viega_debug["rejected_ersatzteile_cover_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "cover_variant_rows_parsed_count",
+            "snippet": str(viega_debug["cover_variant_rows_parsed_count"]),
             "source": "promotion_stage",
         })
 

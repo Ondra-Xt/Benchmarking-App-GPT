@@ -30,6 +30,7 @@ DETAIL_SEEDS = [
     f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Cleviva-Duschrinnen/Einbauhoehe-ab-95-mm/Advantix-Cleviva-Duschrinne-4981-10.html",
     f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinnen/Advantix-Duschrinnen-Einbauhoehe-ab-95/Advantix-Duschrinne-4983-10.html",
     f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Ablauf-6963-1.html",
+    f"{BASE}/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Abdeckhaube-6964-0.html",
 ]
 CATEGORY_SEEDS = [
     *CATALOG_SEEDS,
@@ -47,8 +48,8 @@ SEED_FAMILY_HINTS: Dict[str, str] = {
     "varioplex": "shower_tray",
 }
 
-DETAIL_URL_RE = re.compile(r"-\d{4,5}-\d{2}\.html$", re.IGNORECASE)
-ARTICLE_FROM_URL_RE = re.compile(r"-(\d{4,5}-\d{2})\.html(?:$|[?#])", re.IGNORECASE)
+DETAIL_URL_RE = re.compile(r"-\d{4,5}-\d{1,2}\.html$", re.IGNORECASE)
+ARTICLE_FROM_URL_RE = re.compile(r"-(\d{4,5}-\d{1,2})\.html(?:$|[?#])", re.IGNORECASE)
 LENGTH_RE_LIST = [
     re.compile(r"\bl(?:ä|ae)nge\s*(\d{3,4})\s*mm\b", re.IGNORECASE),
     re.compile(r"\bl(?:ä|ae)nge\s*(\d{3,4})\b", re.IGNORECASE),
@@ -80,7 +81,7 @@ MOUNTING_ACCESSORY_RE = re.compile(
     re.IGNORECASE,
 )
 MEANINGFUL_ENTITY_RE = re.compile(
-    r"duschrinne|badablauf|top[-\s]?badablauf|bodenablauf|eckablauf|wandablauf|duschwannenablauf|\bablauf\b|grundk[öo]rper|rost|profil|abdeckung",
+    r"duschrinne|badablauf|top[-\s]?badablauf|bodenablauf|eckablauf|wandablauf|duschwannenablauf|\bablauf\b|grundk[öo]rper|rost|profil|abdeckung|abdeckhaube|abdeckelement",
     re.IGNORECASE,
 )
 RELEVANT_FAMILY_RE = re.compile(
@@ -108,12 +109,24 @@ STRONG_NEGATIVE_ACCESSORY_RE = re.compile(
     r"\b(?:dichtung|o-ring|glocke|stopfen|tauchrohr(?:set)?|montageset|schraubenset|sicherungsverschluss|verstellfu(?:ß|ss)set|siebeinsatz|ersatzteilset|reinigungshilfe|reduzierst[üu]ck|verbindungsst[üu]ck)\b",
     re.IGNORECASE,
 )
+TRAY_INCOMPLETE_BASE_SIGNAL_RE = re.compile(
+    r"funktionseinheit|ohne\s+abdeckhaube|ohne\s+abdeckung|ben[öo]tigt\s+(?:eine|einen)?\s*abdeckhaube|requires?\s+(?:top\s*)?cover",
+    re.IGNORECASE,
+)
+TRAY_COVER_SIGNAL_RE = re.compile(
+    r"abdeckhaube|abdeckung|abdeckplatte|deckel|abdeckelement|top\s*cover|cover\s*element",
+    re.IGNORECASE,
+)
+TRAY_KNOWN_INCOMPLETE_BASE_RE = re.compile(
+    r"tempoplex-ablauf-6963-1\.html|domoplex-ablauf-6928-21\.html",
+    re.IGNORECASE,
+)
 STRICT_ACCESSORY_GATE_RE = re.compile(
     r"\b(?:abdichtungsmanschette|abdichtungsband|tauchrohr(?:set)?|montagekleber|reduzierst[üu]ck|reinigungshilfe|verbindungsst[üu]ck|dichtung|o-ring|glocke|stopfen|montageset|schraubenset|sicherungsverschluss|verstellfu(?:ß|ss)set|ersatzteil(?:e|set)?|wartung(?:steil)?)\b",
     re.IGNORECASE,
 )
 COVER_ONLY_GATE_RE = re.compile(
-    r"\b(?:rost|stegrost|einleger|profil|abdeckung|verschlussplatte)\b",
+    r"\b(?:rost|stegrost|einleger|profil|abdeckung|abdeckhaube|abdeckelement|verschlussplatte)\b",
     re.IGNORECASE,
 )
 GOLDEN_DRAIN_OVERRIDE_RE = re.compile(
@@ -370,6 +383,14 @@ def _classify_entity_type_with_reason(url: str, title: str, flat: str, family: s
     positive_core = re.search(r"grundk[öo]rper|geruchverschluss|rinnenk[öo]rper|ablaufk[öo]rper|badablauf|top-badablauf|bodenablauf|duschwannenablauf", title_txt, re.IGNORECASE)
     pos = POSITIVE_DRAIN_ENTITY_RE.search(txt)
     relevant_family = family in {"advantix_line", "advantix_floor", "tempoplex", "tempoplex_plus", "tempoplex_60", "domoplex", "duoplex", "varioplex", "other_relevant_shower_drain"}
+    tray_family = family in {"tempoplex", "tempoplex_plus", "tempoplex_60", "domoplex", "duoplex", "varioplex"}
+
+    if tray_family and re.search(r"\bablauf\b|\bfunktionseinheit\b", txt, re.IGNORECASE) and TRAY_INCOMPLETE_BASE_SIGNAL_RE.search(txt):
+        return "base_set", "tray_incomplete_function_unit_signal", (pos.group(0) if pos else "funktionseinheit"), (neg.group(0) if neg else None)
+    if tray_family and TRAY_KNOWN_INCOMPLETE_BASE_RE.search(url):
+        return "base_set", "tray_known_incomplete_base_model", (pos.group(0) if pos else "ablauf"), (neg.group(0) if neg else None)
+    if tray_family and TRAY_COVER_SIGNAL_RE.search(txt) and not re.search(r"\bablauf\b", title_txt, re.IGNORECASE):
+        return "cover", "tray_top_cover_signal", (pos.group(0) if pos else "abdeckhaube"), (neg.group(0) if neg else None)
 
     if family == "unrelated":
         return "accessory", "family_unrelated", (pos.group(0) if pos else None), (neg.group(0) if neg else None)
@@ -380,7 +401,7 @@ def _classify_entity_type_with_reason(url: str, title: str, flat: str, family: s
         if re.search(r"advantix-bodenablauf-4951-20\.html", url, re.IGNORECASE):
             return "complete_drain", "golden_url_override_floor_drain", (pos.group(0) if pos else "bodenablauf"), (neg.group(0) if neg else None)
         if re.search(r"tempoplex-ablauf-6963-1\.html", url, re.IGNORECASE):
-            return "complete_drain", "golden_url_override_shower_tray_drain", (pos.group(0) if pos else "ablauf"), (neg.group(0) if neg else None)
+            return "base_set", "golden_url_override_shower_tray_base_set", (pos.group(0) if pos else "ablauf"), (neg.group(0) if neg else None)
         return "complete_drain", "golden_url_override_line_drain", (pos.group(0) if pos else "duschrinne"), (neg.group(0) if neg else None)
 
     if relevant_family and _has_strong_drain_page_signals(url, title, flat) and not neg:
@@ -445,6 +466,8 @@ def _is_unrelated_branch(url: str, title: str = "") -> bool:
 def _is_spare_part_like(url: str, title: str, flat: str, system_role: str) -> bool:
     focus_txt = f"{url} {title}"
     txt = f"{focus_txt} {flat}"
+    if system_role == "cover":
+        return False
     if _is_unrelated_branch(url, title):
         return True
     if SPARE_TOKEN_RE.search(focus_txt):
@@ -466,9 +489,10 @@ def _is_mounting_accessory_like(url: str, title: str, flat: str) -> bool:
 def _is_strict_accessory_gate_hit(url: str, title: str, flat: str, system_role: str, drain_category: str) -> bool:
     focus_txt = f"{url} {title}"
     txt = f"{focus_txt} {flat}"
-    if STRICT_ACCESSORY_GATE_RE.search(focus_txt):
+    tray_cover = drain_category == "shower_tray_drain" and system_role in {"cover", "profile"}
+    if STRICT_ACCESSORY_GATE_RE.search(focus_txt) and not tray_cover:
         return True
-    if COVER_ONLY_GATE_RE.search(focus_txt):
+    if COVER_ONLY_GATE_RE.search(focus_txt) and not tray_cover:
         return True
     if system_role == "accessory":
         return True
@@ -476,7 +500,7 @@ def _is_strict_accessory_gate_hit(url: str, title: str, flat: str, system_role: 
         return True
     # extra guard: if role is already cover/profile and title/url is cover-like,
     # keep it as component context but do not let it become an accepted drain candidate.
-    if system_role in {"cover", "profile"} and COVER_ONLY_GATE_RE.search(txt):
+    if system_role in {"cover", "profile"} and COVER_ONLY_GATE_RE.search(txt) and drain_category != "shower_tray_drain":
         return True
     return False
 
@@ -787,7 +811,7 @@ def _parse_article_table(html: str) -> List[Dict[str, Any]]:
                 continue
             row: Dict[str, Any] = {headers[i] if i < len(headers) else f"col_{i}": vals[i] for i in range(len(vals))}
             row_txt = _clean_text(" ".join(vals))
-            if not re.search(r"\d{4,5}[.\-]\d{2}", row_txt):
+            if not re.search(r"\d{4,5}[.\-]\d{1,2}", row_txt):
                 continue
             row["_row_text"] = row_txt
             for i, h in enumerate(norm):
@@ -1234,7 +1258,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             "was_synthetic_url": bool(link_meta.get("was_synthetic_url")),
         })
 
-    # cover-only suppression: if family has drain/base/profile, suppress covers in that family
+    # cover-only suppression: if family has drain/base/profile, suppress covers in that family.
+    # For shower-tray families we keep covers for downstream pairing in pipeline.
     by_family: Dict[str, List[Dict[str, Any]]] = {}
     for r in preaccepted:
         fam = str(r.get("discovery_seed_family") or "other")
@@ -1244,7 +1269,12 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         non_cover = [r for r in rows if str(r.get("system_role") or "") in {"complete_drain", "base_set", "profile"}]
         covers = [r for r in rows if str(r.get("system_role") or "") == "cover"]
         kept_rows: List[Dict[str, Any]] = []
-        if non_cover:
+        tray_family = fam in {"tempoplex", "tempoplex_plus", "tempoplex_60", "domoplex", "duoplex", "varioplex"}
+        if tray_family:
+            kept_rows.extend(sorted(rows, key=lambda r: ROLE_PRIORITY.get(str(r.get("system_role") or ""), 99)))
+            if covers and len(sample_cover_kept) < 20:
+                sample_cover_kept.extend([str(r.get("product_url")) for r in covers[: max(0, 20 - len(sample_cover_kept))]])
+        elif non_cover:
             kept_rows.extend(sorted(non_cover, key=lambda r: ROLE_PRIORITY.get(str(r.get("system_role") or ""), 99)))
             if len(sample_base_or_drain_rescued) < 20:
                 sample_base_or_drain_rescued.extend([str(r.get("product_url")) for r in kept_rows[: max(0, 20 - len(sample_base_or_drain_rescued))]])
