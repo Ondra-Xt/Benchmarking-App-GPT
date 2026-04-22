@@ -211,6 +211,11 @@ class PipelineExportTests(unittest.TestCase):
             "Advantix-Badablauf 4980-60",
             "Advantix-Badablauf 4980-61",
             "Advantix-Badablauf 4980-63",
+            "Advantix Top-Bodenablauf 4914-11",
+            "Advantix Top-Bodenablauf 4914-21",
+            "Advantix-Bodenablauf-Grundkörper 4951-15",
+            "Advantix-Bodenablauf-Grundkörper 4955-15",
+            "Advantix-Bodenablauf-Grundkörper 4955-25",
         ]:
             role = pipeline._infer_viega_role({"system_role": "accessory", "product_name": name, "product_url": f"https://v.example/{name.replace(' ', '-')}.html"})
             self.assertEqual(role, "base_set")

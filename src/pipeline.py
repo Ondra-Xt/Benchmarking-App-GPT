@@ -110,6 +110,13 @@ def _viega_model_block(row: Dict[str, Any]) -> str:
 def _infer_viega_role(row: Dict[str, Any]) -> str:
     sr = str(row.get("system_role") or "").strip().lower()
     txt = f"{row.get('product_name','')} {row.get('product_url','')}".lower()
+    model_txt = f"{row.get('product_id','')} {row.get('product_name','')} {row.get('product_url','')}".lower()
+    target_drain_body_models = (
+        "4914-20", "4980-60", "4980-61", "4980-63",
+        "4951-20", "4951-15", "4955-15", "4955-25",
+        "4914-11", "4914-21",
+    )
+    has_target_model = any(m in model_txt.replace(".", "-") for m in target_drain_body_models)
     has_negative_accessory = any(
         k in txt
         for k in (
@@ -137,6 +144,9 @@ def _infer_viega_role(row: Dict[str, Any]) -> str:
             "top-badablauf",
             "top badablauf",
             "topbadablauf",
+            "top-bodenablauf",
+            "top bodenablauf",
+            "topbodenablauf",
             "bodenablauf",
             "duschwannenablauf",
             "grundkörper",
@@ -150,6 +160,8 @@ def _infer_viega_role(row: Dict[str, Any]) -> str:
     )
     if sr and sr != "accessory":
         return sr
+    if has_target_model:
+        return "base_set"
     if has_negative_accessory and not has_drain_body:
         return "accessory"
     if has_drain_body:
@@ -299,6 +311,7 @@ def run_update(
         "sample_drain_body_matches": [],
         "sample_accessory_matches": [],
         "sample_non_promotable_accessory": [],
+        "sample_reclassified_base_sets": [],
     }
 
     if "manufacturer" in registry_df.columns:
@@ -405,7 +418,10 @@ def run_update(
             rowd = r.to_dict() if hasattr(r, "to_dict") else dict(r)
             fam = _viega_family_hint(rowd)
             block = _viega_model_block(rowd)
+            raw_role = str(rowd.get("system_role") or "").strip().lower()
             role = _infer_viega_role(rowd)
+            if raw_role == "accessory" and role == "base_set" and len(viega_debug["sample_reclassified_base_sets"]) < 20:
+                viega_debug["sample_reclassified_base_sets"].append(url)
             if role == "base_set" and len(viega_debug["sample_drain_body_matches"]) < 20:
                 viega_debug["sample_drain_body_matches"].append(url)
             if role == "accessory" and len(viega_debug["sample_accessory_matches"]) < 20:
@@ -641,6 +657,13 @@ def run_update(
             "product_id": "__summary__",
             "label": "sample_non_promotable_accessory",
             "snippet": str(viega_debug["sample_non_promotable_accessory"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_reclassified_base_sets",
+            "snippet": str(viega_debug["sample_reclassified_base_sets"][:10]),
             "source": "promotion_stage",
         })
         evidence_rows.append({
