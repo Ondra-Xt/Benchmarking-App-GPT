@@ -811,7 +811,7 @@ def _parse_article_table(html: str) -> List[Dict[str, Any]]:
                 continue
             row: Dict[str, Any] = {headers[i] if i < len(headers) else f"col_{i}": vals[i] for i in range(len(vals))}
             row_txt = _clean_text(" ".join(vals))
-            if not re.search(r"\d{4,5}[.\-]\d{2}", row_txt):
+            if not re.search(r"\d{4,5}[.\-]\d{1,2}", row_txt):
                 continue
             row["_row_text"] = row_txt
             for i, h in enumerate(norm):
