@@ -444,6 +444,38 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue(excluded.empty)
         self.assertTrue(bom.empty)
 
+    def test_domoplex_and_tempoplex_plus_variant_rows_emit_per_variant_products(self):
+        class _FakeMultiFamilyVariantConnector(_FakeViegaConnector):
+            @staticmethod
+            def extract_parameters(url):
+                base = _FakeViegaConnector.extract_parameters(url)
+                u = url.lower()
+                if "domoplex-abdeckhaube" in u:
+                    base["article_rows_json"] = '[{"article_no":"123 456","variant_label":"Domoplex Chrom","_row_text":"Domoplex Chrom 123 456"}]'
+                if "tempoplex-plus-abdeckhaube" in u:
+                    base["article_rows_json"] = '[{"article_no":"654 321","variant_label":"Plus Schwarz","_row_text":"Plus Schwarz 654 321"}]'
+                return base
+
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "viega", "product_id": "viega-692821", "product_name": "Domoplex-Ablauf 6928.21", "product_url": "https://v.example/Domoplex-Ablauf-6928-21.html", "candidate_type": "component", "complete_system": "yes", "system_role": "base_set", "discovery_seed_family": "domoplex"},
+                {"manufacturer": "viega", "product_id": "viega-domo-cover", "product_name": "Domoplex-Abdeckhaube passend für 6928.21", "product_url": "https://v.example/Domoplex-Abdeckhaube-9999-1.html", "candidate_type": "component", "complete_system": "yes", "system_role": "cover", "discovery_seed_family": "domoplex"},
+                {"manufacturer": "viega", "product_id": "viega-plus-base", "product_name": "Tempoplex-Plus-Ablauf 1111.11", "product_url": "https://v.example/Tempoplex-Plus-Ablauf-1111-11.html", "candidate_type": "component", "complete_system": "yes", "system_role": "base_set", "discovery_seed_family": "tempoplex_plus"},
+                {"manufacturer": "viega", "product_id": "viega-plus-cover", "product_name": "Tempoplex-Plus-Abdeckhaube 1111.11", "product_url": "https://v.example/Tempoplex-Plus-Abdeckhaube-1111-1.html", "candidate_type": "component", "complete_system": "yes", "system_role": "cover", "discovery_seed_family": "tempoplex_plus"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"viega": _FakeMultiFamilyVariantConnector()}, clear=True):
+            products, _comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
+        paired_ids = set(products[products["promotion_reason"] == "tray_base_with_cover_pairing"]["product_id"].tolist())
+        self.assertIn("viega-692821__123456", paired_ids)
+        self.assertIn("viega-plus-base__654321", paired_ids)
+        dcnt = evidence[evidence["label"] == "domoplex_cover_variant_rows_parsed_count"]["snippet"].tolist()
+        pcnt = evidence[evidence["label"] == "tempoplex_plus_cover_variant_rows_parsed_count"]["snippet"].tolist()
+        self.assertTrue(dcnt and int(dcnt[0]) >= 1)
+        self.assertTrue(pcnt and int(pcnt[0]) >= 1)
+        self.assertTrue(excluded.empty)
+        self.assertTrue(bom.empty)
+
 
 if __name__ == "__main__":
     unittest.main()
