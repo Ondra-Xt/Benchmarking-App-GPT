@@ -341,8 +341,11 @@ class PipelineExportTests(unittest.TestCase):
                 base = _FakeViegaConnector.extract_parameters(url)
                 if "abdeckhaube-6964-0" in url.lower():
                     base["article_rows_json"] = (
-                        '[{"article_no":"6964.01","variant_label":"Chrom","_row_text":"Chrom 6964.01"},'
-                        '{"article_no":"6964.02","variant_label":"Schwarz matt","_row_text":"Schwarz matt 6964.02"}]'
+                        '[{"article_no":"649 982","variant_label":"Kunststoff verchromt","_row_text":"Kunststoff verchromt 649 982"},'
+                        '{"article_no":"806 132","variant_label":"Kunststoff schwarz matt","_row_text":"Kunststoff schwarz matt 806 132"},'
+                        '{"article_no":"775 070","variant_label":"Kunststoff Sonderfarbe","_row_text":"Kunststoff Sonderfarbe 775 070"},'
+                        '{"article_no":"775 087","variant_label":"Kunststoff Metallfarbe","_row_text":"Kunststoff Metallfarbe 775 087"},'
+                        '{"article_no":"775 094","variant_label":"vergoldet","_row_text":"vergoldet 775 094"}]'
                     )
                 return base
 
@@ -355,13 +358,15 @@ class PipelineExportTests(unittest.TestCase):
         with patch.dict(pipeline.CONNECTORS, {"viega": _FakeVariantConnector()}, clear=True):
             products, _comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
         paired = products[products["promotion_reason"] == "tray_base_with_cover_pairing"]
-        self.assertEqual(len(paired), 2)
-        self.assertIn("6964.01", "".join(paired["product_name"].tolist()))
-        self.assertIn("6964.02", "".join(paired["product_name"].tolist()))
+        self.assertEqual(len(paired), 5)
+        self.assertIn("viega-69631__649982", set(paired["product_id"].tolist()))
+        self.assertIn("viega-69631__806132", set(paired["product_id"].tolist()))
         variant_components = products[products["promotion_reason"] == "cover_only_component"]
-        self.assertEqual(len(variant_components), 2)
+        self.assertEqual(len(variant_components), 5)
         variant_count = evidence[evidence["label"] == "tray_cover_variant_count"]["snippet"].tolist()
-        self.assertTrue(variant_count and int(variant_count[0]) >= 2)
+        self.assertTrue(variant_count and int(variant_count[0]) >= 5)
+        tempoplex_pairs = evidence[evidence["label"] == "tempoplex_products_created_from_cover_variants_count"]["snippet"].tolist()
+        self.assertTrue(tempoplex_pairs and int(tempoplex_pairs[0]) >= 5)
         self.assertTrue(excluded.empty)
         self.assertTrue(bom.empty)
 
