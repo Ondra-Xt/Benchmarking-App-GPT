@@ -32,6 +32,7 @@ VIEGA_TRAY_FAMILIES = {"tempoplex", "tempoplex_plus", "tempoplex_60", "domoplex"
 VIEGA_TRAY_KNOWN_BASE_TO_COVER_BLOCKS = {
     "tempoplex": {"6963": {"6964"}},
 }
+VIEGA_TEMPOPLEX_DETERMINISTIC_MODEL_PAIRS = {("6963.1", "6964.0")}
 VIEGA_TRAY_KNOWN_INCOMPLETE_BASE_MODELS = {
     "tempoplex": {"6963.1"},
     "domoplex": {"6928.21"},
@@ -219,31 +220,42 @@ def _extract_model_token(text: str) -> str:
 
 
 def _is_tray_cover_compatible(base_row: Dict[str, Any], cover_row: Dict[str, Any]) -> bool:
+    ok, _reason = _match_tray_cover(base_row, cover_row)
+    return ok
+
+
+def _match_tray_cover(base_row: Dict[str, Any], cover_row: Dict[str, Any]) -> Tuple[bool, str]:
     base_family = _viega_family_hint(base_row)
     cover_family = _viega_family_hint(cover_row)
-    if base_family != cover_family:
-        return False
-    if base_family not in VIEGA_TRAY_FAMILIES:
-        return False
 
     base_txt = f"{base_row.get('product_name','')} {base_row.get('product_url','')}".lower()
     cover_txt = f"{cover_row.get('product_name','')} {cover_row.get('product_url','')}".lower()
     base_model = _extract_model_token(base_txt)
     cover_model = _extract_model_token(cover_txt)
+
+    tempoplex_aliases = {"tempoplex", "tempoplex_plus", "tempoplex_60"}
+    if (base_model, cover_model) in VIEGA_TEMPOPLEX_DETERMINISTIC_MODEL_PAIRS and base_family in tempoplex_aliases and cover_family in tempoplex_aliases:
+        return True, "tempoplex_6963_1_to_6964_0_deterministic_map"
+
+    if base_family != cover_family:
+        return False, "family_mismatch"
+    if base_family not in VIEGA_TRAY_FAMILIES:
+        return False, "non_tray_family"
+
     base_block = (base_model.split(".", 1)[0] if base_model else _viega_model_block(base_row))
     cover_block = (cover_model.split(".", 1)[0] if cover_model else _viega_model_block(cover_row))
     known_for_family = VIEGA_TRAY_KNOWN_BASE_TO_COVER_BLOCKS.get(base_family, {})
     known_cover_blocks = known_for_family.get(base_block, set())
     if known_cover_blocks and cover_block in known_cover_blocks:
-        return True
+        return True, "known_block_map"
 
     if base_model and base_model in cover_txt:
-        return True
+        return True, "base_model_mentioned_in_cover"
     if cover_model and cover_model in base_txt:
-        return True
+        return True, "cover_model_mentioned_in_base"
     if base_block and re.search(rf"\b{re.escape(base_block)}(?:[.\-]\d{{1,2}})?\b", cover_txt):
-        return True
-    return False
+        return True, "base_block_mentioned_in_cover"
+    return False, "no_compatibility_signal"
 
 
 def _is_rejected_ersatz_cover(row: Dict[str, Any]) -> bool:
@@ -267,6 +279,7 @@ def _parse_cover_variants(params: Dict[str, Any], cover_row: Dict[str, Any]) -> 
     out: List[Dict[str, Any]] = []
     family = _viega_family_hint(cover_row)
     cover_model = _extract_model_token(f"{cover_row.get('product_name','')} {cover_row.get('product_url','')}".lower()) or _viega_model_block(cover_row)
+    compatible_base_model = "6963.1" if family in {"tempoplex", "tempoplex_plus", "tempoplex_60"} and cover_model == "6964.0" else ""
     for r in rows:
         if not isinstance(r, dict):
             continue
@@ -286,6 +299,7 @@ def _parse_cover_variants(params: Dict[str, Any], cover_row: Dict[str, Any]) -> 
             "cover_model": cover_model,
             "parent_cover_model": cover_model,
             "compatible_family": family,
+            "compatible_base_model": compatible_base_model,
             "raw_variant_text": str(r.get("_row_text") or variant_raw),
         })
     return out
@@ -454,6 +468,7 @@ def run_update(
         "rejected_ersatzteile_cover_count": 0,
         "tray_cover_variant_count": 0,
         "cover_variant_rows_parsed_count": 0,
+        "tempoplex_pairing_fix_applied": 0,
     }
     tray_pairings_by_base_id: Dict[str, List[Dict[str, Any]]] = {}
     tray_pairing_reason_by_base_id: Dict[str, str] = {}
@@ -492,15 +507,23 @@ def run_update(
                 if not cpid or cpid == bpid:
                     continue
                 is_ersatz = _is_rejected_ersatz_cover(c)
-                ersatz_exception = is_ersatz and _is_cover_top_element_text(c) and _is_tray_cover_compatible(b, c)
+                is_match, match_reason = _match_tray_cover(b, c)
+                ersatz_exception = is_ersatz and _is_cover_top_element_text(c) and is_match
                 if is_ersatz and not ersatz_exception:
                     viega_debug["rejected_ersatzteile_cover_count"] += 1
                     continue
                 if _viega_family_hint(b) != _viega_family_hint(c):
+                    # deterministic Tempoplex map is allowed across tempoplex aliases
+                    if not is_match:
+                        viega_debug["rejected_wrong_family_cover_count"] += 1
+                        continue
+                if is_match:
+                    if match_reason == "tempoplex_6963_1_to_6964_0_deterministic_map":
+                        viega_debug["tempoplex_pairing_fix_applied"] += 1
+                    matches.append(c)
+                else:
                     viega_debug["rejected_wrong_family_cover_count"] += 1
                     continue
-                if _is_tray_cover_compatible(b, c):
-                    matches.append(c)
             if matches:
                 tray_pairings_by_base_id[bpid] = matches
                 tray_pairing_reason_by_base_id[bpid] = "compatible_cover_match"
@@ -817,6 +840,7 @@ def run_update(
                     "cover_colour": var.get("cover_colour"),
                     "cover_variant_key": var.get("cover_variant_key"),
                     "compatible_family": var.get("compatible_family"),
+                    "compatible_base_model": var.get("compatible_base_model"),
                     "raw_variant_text": var.get("raw_variant_text"),
                 })
 
@@ -858,6 +882,7 @@ def run_update(
                             "cover_finish_raw": var.get("cover_finish_raw"),
                             "cover_colour": var.get("cover_colour"),
                             "cover_variant_key": var.get("cover_variant_key"),
+                            "compatible_base_model": var.get("compatible_base_model"),
                         })
                         comparison_rows.append({
                             "manufacturer": "viega",
@@ -1137,6 +1162,13 @@ def run_update(
             "product_id": "__summary__",
             "label": "cover_variant_rows_parsed_count",
             "snippet": str(viega_debug["cover_variant_rows_parsed_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "tempoplex_pairing_fix_applied",
+            "snippet": str(viega_debug["tempoplex_pairing_fix_applied"]),
             "source": "promotion_stage",
         })
 
