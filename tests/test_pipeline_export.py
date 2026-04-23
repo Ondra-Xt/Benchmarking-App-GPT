@@ -272,6 +272,210 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue(excluded.empty)
         self.assertTrue(bom.empty)
 
+    def test_viega_tray_tempoplex_pairing_promotes_only_synthetic_complete_system(self):
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "viega", "product_id": "viega-69631", "product_name": "Tempoplex-Ablauf 6963.1", "product_url": "https://v.example/Tempoplex-Ablauf-6963-1.html", "candidate_type": "component", "complete_system": "yes", "system_role": "base_set", "discovery_seed_family": "tempoplex"},
+                {"manufacturer": "viega", "product_id": "viega-69640", "product_name": "Tempoplex-Abdeckhaube 6964.0", "product_url": "https://v.example/Tempoplex-Abdeckhaube-6964-0.html", "candidate_type": "component", "complete_system": "yes", "system_role": "cover", "discovery_seed_family": "tempoplex"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"viega": _FakeViegaConnector()}, clear=True):
+            products, _comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
+        standalone = products[products["product_id"].isin(["viega-69631", "viega-69640"])]
+        self.assertTrue((standalone["promote_to_product"] == "no").all())
+        paired = products[products["promotion_reason"] == "tray_base_with_cover_pairing"]
+        self.assertEqual(len(paired), 1)
+        self.assertEqual(paired.iloc[0]["promote_to_product"], "yes")
+        self.assertEqual(paired.iloc[0]["pairing_reason"], "compatible_cover_match")
+        self.assertIn("tray_complete_systems_created_count", set(evidence["label"].tolist()))
+        self.assertTrue(excluded.empty)
+        self.assertTrue(bom.empty)
+
+    def test_viega_tray_domoplex_base_without_cover_stays_incomplete(self):
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "viega", "product_id": "viega-692821", "product_name": "Domoplex-Ablauf 6928.21 Funktionseinheit ohne Abdeckhaube", "product_url": "https://v.example/Domoplex-Ablauf-6928-21.html", "candidate_type": "component", "complete_system": "yes", "system_role": "base_set", "discovery_seed_family": "domoplex"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"viega": _FakeViegaConnector()}, clear=True):
+            products, _comparison, excluded, _evidence, bom = pipeline.run_update(registry, default_config())
+        self.assertEqual(len(products), 1)
+        self.assertEqual(products.iloc[0]["promote_to_product"], "no")
+        self.assertEqual(products.iloc[0]["promotion_reason"], "incomplete_assembly")
+        self.assertTrue(excluded.empty)
+        self.assertTrue(bom.empty)
+
+    def test_varioplex_complete_drain_can_still_promote_when_not_incomplete_function_unit(self):
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "viega", "product_id": "viega-777711", "product_name": "Varioplex-Ablauf 7777.11", "product_url": "https://v.example/Varioplex-Ablauf-7777-11.html", "candidate_type": "drain", "complete_system": "yes", "system_role": "complete_drain", "discovery_seed_family": "varioplex"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"viega": _FakeViegaConnector()}, clear=True):
+            products, _comparison, excluded, _evidence, bom = pipeline.run_update(registry, default_config())
+        self.assertEqual(len(products), 1)
+        self.assertEqual(products.iloc[0]["promote_to_product"], "yes")
+        self.assertEqual(products.iloc[0]["promotion_reason"], "promoted_complete_assembly")
+        self.assertTrue(excluded.empty)
+        self.assertTrue(bom.empty)
+
+    def test_tray_pairing_rejects_ersatz_cover_candidates(self):
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "viega", "product_id": "viega-69631", "product_name": "Tempoplex-Ablauf 6963.1", "product_url": "https://v.example/Tempoplex-Ablauf-6963-1.html", "candidate_type": "component", "complete_system": "yes", "system_role": "base_set", "discovery_seed_family": "tempoplex"},
+                {"manufacturer": "viega", "product_id": "viega-69695-r", "product_name": "Tempoplex-Dichtung 6969.5 Ersatzteil", "product_url": "https://v.example/Ersatzteile/Tempoplex-Dichtung-6969-5.html", "candidate_type": "component", "complete_system": "yes", "system_role": "cover", "discovery_seed_family": "tempoplex"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"viega": _FakeViegaConnector()}, clear=True):
+            products, _comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
+        self.assertFalse((products["promotion_reason"] == "tray_base_with_cover_pairing").any())
+        summary = evidence[evidence["label"] == "rejected_ersatzteile_cover_count"]["snippet"].tolist()
+        self.assertTrue(summary and int(summary[0]) >= 1)
+        self.assertTrue(excluded.empty)
+        self.assertTrue(bom.empty)
+
+    def test_tempoplex_cover_variants_are_parsed_and_pairing_emits_per_variant_products(self):
+        class _FakeVariantConnector(_FakeViegaConnector):
+            @staticmethod
+            def extract_parameters(url):
+                base = _FakeViegaConnector.extract_parameters(url)
+                if "abdeckhaube-6964-0" in url.lower():
+                    base["article_rows_json"] = (
+                        '[{"article_no":"649 982","variant_label":"Kunststoff verchromt","_row_text":"Kunststoff verchromt 649 982"},'
+                        '{"article_no":"806 132","variant_label":"Kunststoff schwarz matt","_row_text":"Kunststoff schwarz matt 806 132"},'
+                        '{"article_no":"775 070","variant_label":"Kunststoff Sonderfarbe","_row_text":"Kunststoff Sonderfarbe 775 070"},'
+                        '{"article_no":"775 087","variant_label":"Kunststoff Metallfarbe","_row_text":"Kunststoff Metallfarbe 775 087"},'
+                        '{"article_no":"775 094","variant_label":"vergoldet","_row_text":"vergoldet 775 094"}]'
+                    )
+                return base
+
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "viega", "product_id": "viega-69631", "product_name": "Tempoplex-Ablauf 6963.1", "product_url": "https://v.example/Tempoplex-Ablauf-6963-1.html", "candidate_type": "component", "complete_system": "yes", "system_role": "base_set", "discovery_seed_family": "tempoplex"},
+                {"manufacturer": "viega", "product_id": "viega-69640", "product_name": "Tempoplex-Abdeckhaube 6964.0", "product_url": "https://v.example/Tempoplex-Abdeckhaube-6964-0.html", "candidate_type": "component", "complete_system": "yes", "system_role": "cover", "discovery_seed_family": "tempoplex"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"viega": _FakeVariantConnector()}, clear=True):
+            products, _comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
+        paired = products[products["promotion_reason"] == "tray_base_with_cover_pairing"]
+        self.assertEqual(len(paired), 5)
+        self.assertIn("viega-69631__649982", set(paired["product_id"].tolist()))
+        self.assertIn("viega-69631__806132", set(paired["product_id"].tolist()))
+        variant_components = products[products["promotion_reason"] == "cover_only_component"]
+        self.assertEqual(len(variant_components), 5)
+        variant_count = evidence[evidence["label"] == "tray_cover_variant_count"]["snippet"].tolist()
+        self.assertTrue(variant_count and int(variant_count[0]) >= 5)
+        tempoplex_pairs = evidence[evidence["label"] == "tempoplex_products_created_from_cover_variants_count"]["snippet"].tolist()
+        self.assertTrue(tempoplex_pairs and int(tempoplex_pairs[0]) >= 5)
+        self.assertTrue(excluded.empty)
+        self.assertTrue(bom.empty)
+
+    def test_tempoplex_deterministic_pairing_fix_allows_6963_1_with_6964_0_across_tempoplex_aliases(self):
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "viega", "product_id": "viega-69631", "product_name": "Tempoplex-Ablauf 6963.1", "product_url": "https://v.example/Tempoplex-Ablauf-6963-1.html", "candidate_type": "component", "complete_system": "yes", "system_role": "base_set", "discovery_seed_family": "tempoplex"},
+                {"manufacturer": "viega", "product_id": "viega-69640", "product_name": "Tempoplex-Plus-Abdeckhaube 6964.0", "product_url": "https://v.example/Tempoplex-Plus-Abdeckhaube-6964-0.html", "candidate_type": "component", "complete_system": "yes", "system_role": "cover", "discovery_seed_family": "tempoplex_plus"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"viega": _FakeViegaConnector()}, clear=True):
+            products, _comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
+        paired = products[products["promotion_reason"] == "tray_base_with_cover_pairing"]
+        self.assertEqual(len(paired), 1)
+        fix = evidence[evidence["label"] == "tempoplex_pairing_fix_applied"]["snippet"].tolist()
+        self.assertTrue(fix and int(fix[0]) >= 1)
+        self.assertTrue(excluded.empty)
+        self.assertTrue(bom.empty)
+
+    def test_tempoplex_final_fallback_emits_pair_when_family_hints_are_missing(self):
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "viega", "product_id": "viega-69631", "product_name": "Tempoplex-Ablauf 6963.1", "product_url": "https://v.example/Tempoplex-Ablauf-6963-1.html", "candidate_type": "component", "complete_system": "yes", "system_role": "base_set", "discovery_seed_family": "unknown"},
+                {"manufacturer": "viega", "product_id": "viega-69640", "product_name": "Tempoplex-Abdeckhaube 6964.0", "product_url": "https://v.example/Tempoplex-Abdeckhaube-6964-0.html", "candidate_type": "component", "complete_system": "yes", "system_role": "cover", "discovery_seed_family": "unknown"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"viega": _FakeViegaConnector()}, clear=True):
+            products, _comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
+        paired = products[products["pairing_reason"] == "tempoplex_6963_1_to_6964_0_final_fallback"]
+        self.assertEqual(len(paired), 1)
+        self.assertIn("viega-69631", paired.iloc[0]["matched_component_ids"])
+        self.assertIn("viega-69640", paired.iloc[0]["matched_component_ids"])
+        fix = evidence[evidence["label"] == "tempoplex_pairing_fix_applied"]["snippet"].tolist()
+        self.assertTrue(fix and int(fix[0]) >= 1)
+        self.assertTrue(excluded.empty)
+        self.assertTrue(bom.empty)
+
+    def test_paired_tray_product_inherits_hydraulic_fields_from_base_set(self):
+        class _FakeInheritanceConnector(_FakeViegaConnector):
+            @staticmethod
+            def extract_parameters(url):
+                if "ablauf-6963-1" in url.lower():
+                    return {
+                        "flow_rate_lps": 0.72,
+                        "outlet_dn": "DN50",
+                        "flow_rate_raw_text": "Ablaufleistung 0,72 l/s",
+                        "material_detail": "Kunststoff",
+                        "evidence": [],
+                    }
+                return {
+                    "flow_rate_lps": None,
+                    "outlet_dn": None,
+                    "material_detail": "Edelstahl",
+                    "evidence": [],
+                }
+
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "viega", "product_id": "viega-69631", "product_name": "Tempoplex-Ablauf 6963.1", "product_url": "https://v.example/Tempoplex-Ablauf-6963-1.html", "candidate_type": "component", "complete_system": "yes", "system_role": "base_set", "discovery_seed_family": "tempoplex"},
+                {"manufacturer": "viega", "product_id": "viega-69640", "product_name": "Tempoplex-Abdeckhaube 6964.0", "product_url": "https://v.example/Tempoplex-Abdeckhaube-6964-0.html", "candidate_type": "component", "complete_system": "yes", "system_role": "cover", "discovery_seed_family": "tempoplex"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"viega": _FakeInheritanceConnector()}, clear=True):
+            products, _comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
+        paired = products[products["promotion_reason"] == "tray_base_with_cover_pairing"]
+        self.assertGreaterEqual(len(paired), 1)
+        row = paired.iloc[0]
+        self.assertEqual(row["flow_rate_lps"], 0.72)
+        self.assertEqual(row["outlet_dn"], "DN50")
+        self.assertEqual(row["flow_rate_raw_text"], "Ablaufleistung 0,72 l/s")
+        self.assertIn("viega-69631", row["matched_component_ids"])
+        self.assertIn("viega-69640", row["matched_component_ids"])
+        inh = evidence[evidence["label"] == "paired_product_inheritance_applied_count"]["snippet"].tolist()
+        self.assertTrue(inh and int(inh[0]) >= 1)
+        self.assertTrue(excluded.empty)
+        self.assertTrue(bom.empty)
+
+    def test_domoplex_and_tempoplex_plus_variant_rows_emit_per_variant_products(self):
+        class _FakeMultiFamilyVariantConnector(_FakeViegaConnector):
+            @staticmethod
+            def extract_parameters(url):
+                base = _FakeViegaConnector.extract_parameters(url)
+                u = url.lower()
+                if "domoplex-abdeckhaube" in u:
+                    base["article_rows_json"] = '[{"article_no":"123 456","variant_label":"Domoplex Chrom","_row_text":"Domoplex Chrom 123 456"}]'
+                if "tempoplex-plus-abdeckhaube" in u:
+                    base["article_rows_json"] = '[{"article_no":"654 321","variant_label":"Plus Schwarz","_row_text":"Plus Schwarz 654 321"}]'
+                return base
+
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "viega", "product_id": "viega-692821", "product_name": "Domoplex-Ablauf 6928.21", "product_url": "https://v.example/Domoplex-Ablauf-6928-21.html", "candidate_type": "component", "complete_system": "yes", "system_role": "base_set", "discovery_seed_family": "domoplex"},
+                {"manufacturer": "viega", "product_id": "viega-domo-cover", "product_name": "Domoplex-Abdeckhaube passend für 6928.21", "product_url": "https://v.example/Domoplex-Abdeckhaube-9999-1.html", "candidate_type": "component", "complete_system": "yes", "system_role": "cover", "discovery_seed_family": "domoplex"},
+                {"manufacturer": "viega", "product_id": "viega-plus-base", "product_name": "Tempoplex-Plus-Ablauf 1111.11", "product_url": "https://v.example/Tempoplex-Plus-Ablauf-1111-11.html", "candidate_type": "component", "complete_system": "yes", "system_role": "base_set", "discovery_seed_family": "tempoplex_plus"},
+                {"manufacturer": "viega", "product_id": "viega-plus-cover", "product_name": "Tempoplex-Plus-Abdeckhaube 1111.11", "product_url": "https://v.example/Tempoplex-Plus-Abdeckhaube-1111-1.html", "candidate_type": "component", "complete_system": "yes", "system_role": "cover", "discovery_seed_family": "tempoplex_plus"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"viega": _FakeMultiFamilyVariantConnector()}, clear=True):
+            products, _comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
+        paired_ids = set(products[products["promotion_reason"] == "tray_base_with_cover_pairing"]["product_id"].tolist())
+        self.assertIn("viega-692821__123456", paired_ids)
+        self.assertIn("viega-plus-base__654321", paired_ids)
+        dcnt = evidence[evidence["label"] == "domoplex_cover_variant_rows_parsed_count"]["snippet"].tolist()
+        pcnt = evidence[evidence["label"] == "tempoplex_plus_cover_variant_rows_parsed_count"]["snippet"].tolist()
+        self.assertTrue(dcnt and int(dcnt[0]) >= 1)
+        self.assertTrue(pcnt and int(pcnt[0]) >= 1)
+        self.assertTrue(excluded.empty)
+        self.assertTrue(bom.empty)
+
 
 if __name__ == "__main__":
     unittest.main()
