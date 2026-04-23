@@ -468,11 +468,18 @@ def run_update(
         "tray_cover_variant_count": 0,
         "cover_variant_rows_parsed_count": 0,
         "tempoplex_pairing_fix_applied": 0,
+        "paired_product_inheritance_applied_count": 0,
+        "sample_paired_products_with_inherited_fields": [],
+        "base_set_to_product_field_map": {},
+        "cover_to_product_field_map": {},
+        "inherited_flow_rate_count": 0,
+        "inherited_outlet_dn_count": 0,
     }
     tray_pairings_by_base_id: Dict[str, List[Dict[str, Any]]] = {}
     tray_pairing_reason_by_base_id: Dict[str, str] = {}
     tray_paired_cover_ids: Set[str] = set()
     cover_variants_by_cover_id: Dict[str, List[Dict[str, Any]]] = {}
+    viega_params_by_id: Dict[str, Dict[str, Any]] = {}
 
     if "manufacturer" in registry_df.columns:
         for _, rv in registry_df[registry_df["manufacturer"] == "viega"].iterrows():
@@ -582,6 +589,8 @@ def run_update(
             continue
 
         params = connector.extract_parameters(url) or {}
+        if manufacturer == "viega":
+            viega_params_by_id[product_id] = {k: v for k, v in params.items() if k != "evidence"}
 
         # ACO cleanup: drains without flow should be excluded
         if manufacturer == "aco" and candidate_type == "drain" and params.get("flow_rate_lps") in (None, ""):
@@ -848,6 +857,91 @@ def run_update(
         registry_rows = [r.to_dict() for _, r in registry_df.iterrows()]
         by_id = {str(r.get("product_id") or ""): r for r in registry_rows}
         pre_existing_tempoplex_pair = False
+
+        def _emit_paired_product(
+            *,
+            base_id: str,
+            cover_id: str,
+            base_name: str,
+            cover_name: str,
+            base_url: str,
+            fam: str,
+            pairing_reason: str,
+            var: Optional[Dict[str, Any]] = None,
+            product_id_suffix: str = "",
+        ) -> None:
+            inherited_fields = {}
+            base_params = viega_params_by_id.get(base_id, {})
+            for k in ("flow_rate_lps", "outlet_dn", "flow_rate_raw_text", "material_detail", "din_en_1253_cert"):
+                if base_params.get(k) not in (None, ""):
+                    inherited_fields[k] = base_params.get(k)
+                    viega_debug["base_set_to_product_field_map"][k] = viega_debug["base_set_to_product_field_map"].get(k, 0) + 1
+            if inherited_fields.get("flow_rate_lps") not in (None, ""):
+                viega_debug["inherited_flow_rate_count"] += 1
+            if inherited_fields.get("outlet_dn") not in (None, ""):
+                viega_debug["inherited_outlet_dn_count"] += 1
+            if var:
+                for k in ("cover_article_no", "cover_finish_raw", "cover_colour", "cover_variant_key", "compatible_base_model"):
+                    if var.get(k) not in (None, ""):
+                        viega_debug["cover_to_product_field_map"][k] = viega_debug["cover_to_product_field_map"].get(k, 0) + 1
+            param_score, _param_detail = compute_parameter_score(inherited_fields, cfg)
+            equiv_score = compute_equivalence_score({"candidate_type": "drain", **inherited_fields}, cfg)
+            system_score = compute_system_score("drain", has_bom_options=False)
+            final_score = compute_final_score(param_score, system_score, equiv_score, cfg)
+
+            full_id = f"{base_id}__{cover_id}{product_id_suffix}"
+            pname = f"{base_name} + {cover_name}"
+            if var and var.get("cover_article_no"):
+                pname = f"{pname} [{var.get('cover_article_no')}]"
+            row = {
+                "manufacturer": "viega",
+                "product_id": full_id,
+                "product_name": pname,
+                "product_url": base_url,
+                "candidate_type": "drain",
+                "promote_to_product": "yes",
+                "promotion_reason": "tray_base_with_cover_pairing",
+                "missing_required_parts": "",
+                "matched_component_ids": ",".join([base_id, cover_id]),
+                "pairing_reason": pairing_reason,
+                "why_not_product_reason": "",
+                "drain_category": "shower_tray_drain",
+                "system_role": "complete_drain",
+                "product_family": fam,
+                "base_set_source_id": base_id,
+                "cover_source_id": cover_id,
+                **inherited_fields,
+                "param_score": param_score,
+                "equiv_score": equiv_score,
+                "system_score": system_score,
+                "final_score": final_score,
+            }
+            if var:
+                row.update({
+                    "cover_article_no": var.get("cover_article_no"),
+                    "cover_finish_raw": var.get("cover_finish_raw"),
+                    "cover_colour": var.get("cover_colour"),
+                    "cover_variant_key": var.get("cover_variant_key"),
+                    "compatible_base_model": var.get("compatible_base_model"),
+                })
+            products_rows.append(row)
+            comparison_rows.append({
+                "manufacturer": "viega",
+                "product_id": full_id,
+                "product_name": pname,
+                "product_url": base_url,
+                "final_score": final_score,
+                "param_score": param_score,
+                "equiv_score": equiv_score,
+                "system_score": system_score,
+            })
+            viega_debug["tray_complete_systems_created_count"] += 1
+            viega_debug["paired_product_inheritance_applied_count"] += 1
+            if len(viega_debug["sample_paired_products_with_inherited_fields"]) < 20:
+                viega_debug["sample_paired_products_with_inherited_fields"].append(
+                    f"{full_id}: inherited={sorted(inherited_fields.keys())}"
+                )
+
         for base_id, cover_rows in tray_pairings_by_base_id.items():
             base_row = by_id.get(base_id)
             if not base_row:
@@ -866,68 +960,27 @@ def run_update(
                 if cover_variants:
                     for var in cover_variants:
                         var_key = str(var.get("cover_variant_key") or var.get("cover_article_no") or cover_id)
-                        full_id = f"{base_id}__{cover_id}__{var_key}"
-                        products_rows.append({
-                            "manufacturer": "viega",
-                            "product_id": full_id,
-                            "product_name": f"{base_name} + {cover_name} [{var.get('cover_article_no')}]",
-                            "product_url": base_url,
-                            "candidate_type": "drain",
-                            "promote_to_product": "yes",
-                            "promotion_reason": "tray_base_with_cover_pairing",
-                            "missing_required_parts": "",
-                            "matched_component_ids": ",".join([base_id, cover_id]),
-                            "pairing_reason": tray_pairing_reason_by_base_id.get(base_id, "compatible_cover_match"),
-                            "why_not_product_reason": "",
-                            "drain_category": "shower_tray_drain",
-                            "system_role": "complete_drain",
-                            "product_family": fam,
-                            "cover_article_no": var.get("cover_article_no"),
-                            "cover_finish_raw": var.get("cover_finish_raw"),
-                            "cover_colour": var.get("cover_colour"),
-                            "cover_variant_key": var.get("cover_variant_key"),
-                            "compatible_base_model": var.get("compatible_base_model"),
-                        })
-                        comparison_rows.append({
-                            "manufacturer": "viega",
-                            "product_id": full_id,
-                            "product_name": f"{base_name} + {cover_name} [{var.get('cover_article_no')}]",
-                            "product_url": base_url,
-                            "final_score": None,
-                            "param_score": None,
-                            "equiv_score": None,
-                            "system_score": None,
-                        })
-                        viega_debug["tray_complete_systems_created_count"] += 1
+                        _emit_paired_product(
+                            base_id=base_id,
+                            cover_id=cover_id,
+                            base_name=base_name,
+                            cover_name=cover_name,
+                            base_url=base_url,
+                            fam=fam,
+                            pairing_reason=tray_pairing_reason_by_base_id.get(base_id, "compatible_cover_match"),
+                            var=var,
+                            product_id_suffix=f"__{var_key}",
+                        )
                 else:
-                    full_id = f"{base_id}__{cover_id}"
-                    products_rows.append({
-                        "manufacturer": "viega",
-                        "product_id": full_id,
-                        "product_name": f"{base_name} + {cover_name}",
-                        "product_url": base_url,
-                        "candidate_type": "drain",
-                        "promote_to_product": "yes",
-                        "promotion_reason": "tray_base_with_cover_pairing",
-                        "missing_required_parts": "",
-                        "matched_component_ids": ",".join([base_id, cover_id]),
-                        "pairing_reason": tray_pairing_reason_by_base_id.get(base_id, "compatible_cover_match"),
-                        "why_not_product_reason": "",
-                        "drain_category": "shower_tray_drain",
-                        "system_role": "complete_drain",
-                        "product_family": fam,
-                    })
-                    comparison_rows.append({
-                        "manufacturer": "viega",
-                        "product_id": full_id,
-                        "product_name": f"{base_name} + {cover_name}",
-                        "product_url": base_url,
-                        "final_score": None,
-                        "param_score": None,
-                        "equiv_score": None,
-                        "system_score": None,
-                    })
-                    viega_debug["tray_complete_systems_created_count"] += 1
+                    _emit_paired_product(
+                        base_id=base_id,
+                        cover_id=cover_id,
+                        base_name=base_name,
+                        cover_name=cover_name,
+                        base_url=base_url,
+                        fam=fam,
+                        pairing_reason=tray_pairing_reason_by_base_id.get(base_id, "compatible_cover_match"),
+                    )
 
         # final deterministic fallback: ensure Tempoplex 6963.1 + 6964.0 emits at least one paired product
         if not pre_existing_tempoplex_pair:
@@ -946,34 +999,17 @@ def run_update(
                 c = cover_candidates[0]
                 base_id = str(b.get("product_id") or "")
                 cover_id = str(c.get("product_id") or "")
-                products_rows.append({
-                    "manufacturer": "viega",
-                    "product_id": f"{base_id}__{cover_id}__deterministic",
-                    "product_name": f"{b.get('product_name')} + {c.get('product_name')}",
-                    "product_url": str(b.get("product_url") or ""),
-                    "candidate_type": "drain",
-                    "promote_to_product": "yes",
-                    "promotion_reason": "tray_base_with_cover_pairing",
-                    "missing_required_parts": "",
-                    "matched_component_ids": ",".join([base_id, cover_id]),
-                    "pairing_reason": "tempoplex_6963_1_to_6964_0_final_fallback",
-                    "why_not_product_reason": "",
-                    "drain_category": "shower_tray_drain",
-                    "system_role": "complete_drain",
-                    "product_family": "tempoplex",
-                })
-                comparison_rows.append({
-                    "manufacturer": "viega",
-                    "product_id": f"{base_id}__{cover_id}__deterministic",
-                    "product_name": f"{b.get('product_name')} + {c.get('product_name')}",
-                    "product_url": str(b.get("product_url") or ""),
-                    "final_score": None,
-                    "param_score": None,
-                    "equiv_score": None,
-                    "system_score": None,
-                })
+                _emit_paired_product(
+                    base_id=base_id,
+                    cover_id=cover_id,
+                    base_name=str(b.get("product_name") or ""),
+                    cover_name=str(c.get("product_name") or ""),
+                    base_url=str(b.get("product_url") or ""),
+                    fam="tempoplex",
+                    pairing_reason="tempoplex_6963_1_to_6964_0_final_fallback",
+                    product_id_suffix="__deterministic",
+                )
                 viega_debug["tempoplex_pairing_fix_applied"] += 1
-                viega_debug["tray_complete_systems_created_count"] += 1
                 if len(viega_debug["sample_tray_pairings"]) < 20:
                     viega_debug["sample_tray_pairings"].append(f"{b.get('product_url')} + {c.get('product_url')}")
 
@@ -1221,6 +1257,48 @@ def run_update(
             "product_id": "__summary__",
             "label": "tempoplex_pairing_fix_applied",
             "snippet": str(viega_debug["tempoplex_pairing_fix_applied"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "paired_product_inheritance_applied_count",
+            "snippet": str(viega_debug["paired_product_inheritance_applied_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_paired_products_with_inherited_fields",
+            "snippet": str(viega_debug["sample_paired_products_with_inherited_fields"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "base_set_to_product_field_map",
+            "snippet": str(viega_debug["base_set_to_product_field_map"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "cover_to_product_field_map",
+            "snippet": str(viega_debug["cover_to_product_field_map"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "inherited_flow_rate_count",
+            "snippet": str(viega_debug["inherited_flow_rate_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "inherited_outlet_dn_count",
+            "snippet": str(viega_debug["inherited_outlet_dn_count"]),
             "source": "promotion_stage",
         })
 

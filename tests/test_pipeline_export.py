@@ -399,6 +399,46 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue(excluded.empty)
         self.assertTrue(bom.empty)
 
+    def test_paired_tray_product_inherits_hydraulic_fields_from_base_set(self):
+        class _FakeInheritanceConnector(_FakeViegaConnector):
+            @staticmethod
+            def extract_parameters(url):
+                if "ablauf-6963-1" in url.lower():
+                    return {
+                        "flow_rate_lps": 0.72,
+                        "outlet_dn": "DN50",
+                        "flow_rate_raw_text": "Ablaufleistung 0,72 l/s",
+                        "material_detail": "Kunststoff",
+                        "evidence": [],
+                    }
+                return {
+                    "flow_rate_lps": None,
+                    "outlet_dn": None,
+                    "material_detail": "Edelstahl",
+                    "evidence": [],
+                }
+
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "viega", "product_id": "viega-69631", "product_name": "Tempoplex-Ablauf 6963.1", "product_url": "https://v.example/Tempoplex-Ablauf-6963-1.html", "candidate_type": "component", "complete_system": "yes", "system_role": "base_set", "discovery_seed_family": "tempoplex"},
+                {"manufacturer": "viega", "product_id": "viega-69640", "product_name": "Tempoplex-Abdeckhaube 6964.0", "product_url": "https://v.example/Tempoplex-Abdeckhaube-6964-0.html", "candidate_type": "component", "complete_system": "yes", "system_role": "cover", "discovery_seed_family": "tempoplex"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"viega": _FakeInheritanceConnector()}, clear=True):
+            products, _comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
+        paired = products[products["promotion_reason"] == "tray_base_with_cover_pairing"]
+        self.assertGreaterEqual(len(paired), 1)
+        row = paired.iloc[0]
+        self.assertEqual(row["flow_rate_lps"], 0.72)
+        self.assertEqual(row["outlet_dn"], "DN50")
+        self.assertEqual(row["flow_rate_raw_text"], "Ablaufleistung 0,72 l/s")
+        self.assertIn("viega-69631", row["matched_component_ids"])
+        self.assertIn("viega-69640", row["matched_component_ids"])
+        inh = evidence[evidence["label"] == "paired_product_inheritance_applied_count"]["snippet"].tolist()
+        self.assertTrue(inh and int(inh[0]) >= 1)
+        self.assertTrue(excluded.empty)
+        self.assertTrue(bom.empty)
+
 
 if __name__ == "__main__":
     unittest.main()
