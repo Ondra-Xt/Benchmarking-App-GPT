@@ -381,6 +381,24 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue(excluded.empty)
         self.assertTrue(bom.empty)
 
+    def test_tempoplex_final_fallback_emits_pair_when_family_hints_are_missing(self):
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "viega", "product_id": "viega-69631", "product_name": "Tempoplex-Ablauf 6963.1", "product_url": "https://v.example/Tempoplex-Ablauf-6963-1.html", "candidate_type": "component", "complete_system": "yes", "system_role": "base_set", "discovery_seed_family": "unknown"},
+                {"manufacturer": "viega", "product_id": "viega-69640", "product_name": "Tempoplex-Abdeckhaube 6964.0", "product_url": "https://v.example/Tempoplex-Abdeckhaube-6964-0.html", "candidate_type": "component", "complete_system": "yes", "system_role": "cover", "discovery_seed_family": "unknown"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"viega": _FakeViegaConnector()}, clear=True):
+            products, _comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
+        paired = products[products["pairing_reason"] == "tempoplex_6963_1_to_6964_0_final_fallback"]
+        self.assertEqual(len(paired), 1)
+        self.assertIn("viega-69631", paired.iloc[0]["matched_component_ids"])
+        self.assertIn("viega-69640", paired.iloc[0]["matched_component_ids"])
+        fix = evidence[evidence["label"] == "tempoplex_pairing_fix_applied"]["snippet"].tolist()
+        self.assertTrue(fix and int(fix[0]) >= 1)
+        self.assertTrue(excluded.empty)
+        self.assertTrue(bom.empty)
+
 
 if __name__ == "__main__":
     unittest.main()

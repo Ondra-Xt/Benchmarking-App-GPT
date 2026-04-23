@@ -233,8 +233,7 @@ def _match_tray_cover(base_row: Dict[str, Any], cover_row: Dict[str, Any]) -> Tu
     base_model = _extract_model_token(base_txt)
     cover_model = _extract_model_token(cover_txt)
 
-    tempoplex_aliases = {"tempoplex", "tempoplex_plus", "tempoplex_60"}
-    if (base_model, cover_model) in VIEGA_TEMPOPLEX_DETERMINISTIC_MODEL_PAIRS and base_family in tempoplex_aliases and cover_family in tempoplex_aliases:
+    if (base_model, cover_model) in VIEGA_TEMPOPLEX_DETERMINISTIC_MODEL_PAIRS:
         return True, "tempoplex_6963_1_to_6964_0_deterministic_map"
 
     if base_family != cover_family:
@@ -848,6 +847,7 @@ def run_update(
     if "manufacturer" in registry_df.columns:
         registry_rows = [r.to_dict() for _, r in registry_df.iterrows()]
         by_id = {str(r.get("product_id") or ""): r for r in registry_rows}
+        pre_existing_tempoplex_pair = False
         for base_id, cover_rows in tray_pairings_by_base_id.items():
             base_row = by_id.get(base_id)
             if not base_row:
@@ -858,6 +858,10 @@ def run_update(
             for cover_row in cover_rows[:1]:
                 cover_id = str(cover_row.get("product_id") or "")
                 cover_name = str(cover_row.get("product_name") or "")
+                base_model = _extract_model_token(f"{base_name} {base_url}".lower())
+                cover_model = _extract_model_token(f"{cover_name} {cover_row.get('product_url','')}".lower())
+                if (base_model, cover_model) in VIEGA_TEMPOPLEX_DETERMINISTIC_MODEL_PAIRS:
+                    pre_existing_tempoplex_pair = True
                 cover_variants = cover_variants_by_cover_id.get(cover_id, [])
                 if cover_variants:
                     for var in cover_variants:
@@ -924,6 +928,54 @@ def run_update(
                         "system_score": None,
                     })
                     viega_debug["tray_complete_systems_created_count"] += 1
+
+        # final deterministic fallback: ensure Tempoplex 6963.1 + 6964.0 emits at least one paired product
+        if not pre_existing_tempoplex_pair:
+            base_candidates = [
+                r for r in registry_rows
+                if _extract_model_token(f"{r.get('product_name','')} {r.get('product_url','')}".lower()) == "6963.1"
+                and _infer_viega_role(r) == "base_set"
+            ]
+            cover_candidates = [
+                r for r in registry_rows
+                if _extract_model_token(f"{r.get('product_name','')} {r.get('product_url','')}".lower()) == "6964.0"
+                and _infer_viega_role(r) == "cover"
+            ]
+            if base_candidates and cover_candidates:
+                b = base_candidates[0]
+                c = cover_candidates[0]
+                base_id = str(b.get("product_id") or "")
+                cover_id = str(c.get("product_id") or "")
+                products_rows.append({
+                    "manufacturer": "viega",
+                    "product_id": f"{base_id}__{cover_id}__deterministic",
+                    "product_name": f"{b.get('product_name')} + {c.get('product_name')}",
+                    "product_url": str(b.get("product_url") or ""),
+                    "candidate_type": "drain",
+                    "promote_to_product": "yes",
+                    "promotion_reason": "tray_base_with_cover_pairing",
+                    "missing_required_parts": "",
+                    "matched_component_ids": ",".join([base_id, cover_id]),
+                    "pairing_reason": "tempoplex_6963_1_to_6964_0_final_fallback",
+                    "why_not_product_reason": "",
+                    "drain_category": "shower_tray_drain",
+                    "system_role": "complete_drain",
+                    "product_family": "tempoplex",
+                })
+                comparison_rows.append({
+                    "manufacturer": "viega",
+                    "product_id": f"{base_id}__{cover_id}__deterministic",
+                    "product_name": f"{b.get('product_name')} + {c.get('product_name')}",
+                    "product_url": str(b.get("product_url") or ""),
+                    "final_score": None,
+                    "param_score": None,
+                    "equiv_score": None,
+                    "system_score": None,
+                })
+                viega_debug["tempoplex_pairing_fix_applied"] += 1
+                viega_debug["tray_complete_systems_created_count"] += 1
+                if len(viega_debug["sample_tray_pairings"]) < 20:
+                    viega_debug["sample_tray_pairings"].append(f"{b.get('product_url')} + {c.get('product_url')}")
 
     if any(str(x).strip().lower() == "viega" for x in registry_df.get("manufacturer", pd.Series(dtype=str)).tolist()):
         evidence_rows.append({
