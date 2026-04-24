@@ -361,10 +361,19 @@ class PipelineExportTests(unittest.TestCase):
         self.assertEqual(len(paired), 5)
         self.assertIn("viega-69631__649982", set(paired["product_id"].tolist()))
         self.assertIn("viega-69631__806132", set(paired["product_id"].tolist()))
+        p649 = paired[paired["product_id"] == "viega-69631__649982"].iloc[0]
+        self.assertEqual(p649["cover_article_no"], "649 982")
+        self.assertEqual(p649["diameter_mm"], 115)
+        self.assertEqual(p649["compatible_outlet_size"], "D90")
         variant_components = products[products["promotion_reason"] == "cover_only_component"]
         self.assertEqual(len(variant_components), 5)
+        c649 = variant_components[variant_components["product_id"] == "viega-69640__649982"].iloc[0]
+        self.assertEqual(c649["diameter_mm"], 115)
+        self.assertEqual(c649["compatible_outlet_size"], "D90")
         variant_count = evidence[evidence["label"] == "tray_cover_variant_count"]["snippet"].tolist()
         self.assertTrue(variant_count and int(variant_count[0]) >= 5)
+        sample_rows = evidence[evidence["label"] == "sample_cover_variant_rows"]["snippet"].tolist()
+        self.assertTrue(sample_rows and "649 982" in sample_rows[0])
         tempoplex_pairs = evidence[evidence["label"] == "tempoplex_products_created_from_cover_variants_count"]["snippet"].tolist()
         self.assertTrue(tempoplex_pairs and int(tempoplex_pairs[0]) >= 5)
         self.assertTrue(excluded.empty)

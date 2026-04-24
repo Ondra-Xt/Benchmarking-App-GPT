@@ -279,6 +279,10 @@ def _parse_cover_variants(params: Dict[str, Any], cover_row: Dict[str, Any]) -> 
     family = _viega_family_hint(cover_row)
     cover_model = _extract_model_token(f"{cover_row.get('product_name','')} {cover_row.get('product_url','')}".lower()) or _viega_model_block(cover_row)
     compatible_base_model = "6963.1" if family in {"tempoplex", "tempoplex_plus", "tempoplex_60"} and cover_model == "6964.0" else ""
+    params_txt = " ".join(
+        str(params.get(k) or "")
+        for k in ("outlet_dn", "flow_rate_raw_text", "article_rows_json")
+    )
     for r in rows:
         if not isinstance(r, dict):
             continue
@@ -301,6 +305,8 @@ def _parse_cover_variants(params: Dict[str, Any], cover_row: Dict[str, Any]) -> 
             "parent_cover_model": cover_model,
             "compatible_family": family,
             "compatible_base_model": compatible_base_model,
+            "diameter_mm": int(m_dia.group(1)) if (m_dia := re.search(r"(?:ø|o/|durchmesser)\s*=?\s*(\d{2,3})", f"{variant_raw} {r.get('_row_text','')}", re.IGNORECASE)) else 115 if cover_model == "6964.0" else None,
+            "compatible_outlet_size": "D90" if re.search(r"\bd\s*90\b", f"{variant_raw} {r.get('_row_text','')} {params_txt}", re.IGNORECASE) else ("D90" if cover_model == "6964.0" else None),
             "raw_variant_text": str(r.get("_row_text") or variant_raw),
         })
     return out
@@ -481,6 +487,7 @@ def run_update(
         "tempoplex_plus_cover_variant_rows_parsed_count": 0,
         "tempoplex_products_created_from_cover_variants_count": 0,
         "tray_products_created_from_cover_variants_count": 0,
+        "sample_cover_variant_rows": [],
         "sample_tempoplex_variant_pairings": [],
         "sample_unpaired_tempoplex_cover_variants": [],
         "sample_tray_variant_pairings": [],
@@ -748,6 +755,12 @@ def run_update(
                     cover_variants_by_cover_id[product_id] = tray_cover_variants
                     viega_debug["cover_variant_rows_parsed_count"] += len(tray_cover_variants)
                     viega_debug["tray_cover_variant_count"] += len(tray_cover_variants)
+                    for var in tray_cover_variants:
+                        if len(viega_debug["sample_cover_variant_rows"]) >= 20:
+                            break
+                        viega_debug["sample_cover_variant_rows"].append(
+                            f"{var.get('cover_model')}|{var.get('cover_article_no')}|{var.get('cover_finish_raw')}"
+                        )
                     if fam in {"tempoplex", "tempoplex_plus", "tempoplex_60"} and _extract_model_token(f"{rowd.get('product_name','')} {rowd.get('product_url','')}".lower()) == "6964.0":
                         viega_debug["tempoplex_cover_variant_rows_parsed_count"] += len(tray_cover_variants)
                     if fam == "domoplex":
@@ -868,6 +881,8 @@ def run_update(
                     "cover_variant_key": var.get("cover_variant_key"),
                     "compatible_family": var.get("compatible_family"),
                     "compatible_base_model": var.get("compatible_base_model"),
+                    "diameter_mm": var.get("diameter_mm"),
+                    "compatible_outlet_size": var.get("compatible_outlet_size"),
                     "source_url": url,
                     "source_page_title": r.get("product_name"),
                     "colours_count": len(tray_cover_variants),
@@ -905,7 +920,7 @@ def run_update(
             if inherited_fields.get("outlet_dn") not in (None, ""):
                 viega_debug["inherited_outlet_dn_count"] += 1
             if var:
-                for k in ("cover_article_no", "cover_finish_raw", "cover_colour", "cover_variant_key", "compatible_base_model"):
+                for k in ("cover_article_no", "cover_finish_raw", "cover_colour", "cover_variant_key", "compatible_base_model", "diameter_mm", "compatible_outlet_size"):
                     if var.get(k) not in (None, ""):
                         viega_debug["cover_to_product_field_map"][k] = viega_debug["cover_to_product_field_map"].get(k, 0) + 1
             param_score, _param_detail = compute_parameter_score(inherited_fields, cfg)
@@ -951,6 +966,8 @@ def run_update(
                     "cover_colour": var.get("cover_colour"),
                     "cover_variant_key": var.get("cover_variant_key"),
                     "compatible_base_model": var.get("compatible_base_model"),
+                    "diameter_mm": var.get("diameter_mm"),
+                    "compatible_outlet_size": var.get("compatible_outlet_size"),
                 })
             if cover_variant_total > 0:
                 row["colours_count"] = cover_variant_total
@@ -1310,6 +1327,13 @@ def run_update(
             "product_id": "__summary__",
             "label": "cover_variant_rows_parsed_count",
             "snippet": str(viega_debug["cover_variant_rows_parsed_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_cover_variant_rows",
+            "snippet": str(viega_debug["sample_cover_variant_rows"][:10]),
             "source": "promotion_stage",
         })
         evidence_rows.append({
