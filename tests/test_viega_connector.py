@@ -73,6 +73,32 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         self.assertEqual(params["sealing_fleece_preassembled"], "yes")
         self.assertEqual(params["colours_count"], 1)
 
+    def test_parse_article_table_accepts_spaced_article_numbers_for_cover_rows(self):
+        html = """
+        <html><body><main>
+        <table>
+          <tr><th>Ausführung</th><th>Artikel</th></tr>
+          <tr><td>Kunststoff verchromt</td><td>649 982</td></tr>
+          <tr><td>Kunststoff schwarz matt</td><td>806 132</td></tr>
+        </table>
+        </main></body></html>
+        """
+        rows = viega._parse_article_table(html)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0].get("article_no"), "649 982")
+        self.assertEqual(rows[1].get("article_no"), "806 132")
+
+    def test_get_bom_options_exposes_cover_article_rows(self):
+        opts = viega.get_bom_options(
+            "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Abdeckhaube-6964-0.html",
+            params={
+                "article_rows_json": '[{"article_no":"649 982","variant_label":"Kunststoff verchromt","_row_text":"Kunststoff verchromt 649 982"}]'
+            },
+        )
+        self.assertEqual(len(opts), 1)
+        self.assertEqual(opts[0]["option_group"], "cover_variant")
+        self.assertEqual(opts[0]["option_sku"], "649 982")
+
     def test_4982_10_base_body_is_component_candidate(self):
         self.assertEqual(
             viega._classify_candidate(

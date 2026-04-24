@@ -811,7 +811,10 @@ def _parse_article_table(html: str) -> List[Dict[str, Any]]:
                 continue
             row: Dict[str, Any] = {headers[i] if i < len(headers) else f"col_{i}": vals[i] for i in range(len(vals))}
             row_txt = _clean_text(" ".join(vals))
-            if not re.search(r"\d{4,5}[.\-]\d{1,2}", row_txt):
+            if not (
+                re.search(r"\d{4,5}[.\-]\d{1,2}", row_txt)
+                or re.search(r"\b\d{3}\s?\d{3}\b", row_txt)
+            ):
                 continue
             row["_row_text"] = row_txt
             for i, h in enumerate(norm):
@@ -1564,7 +1567,28 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
 
 
 def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-    return []
+    p = params or {}
+    article_rows = p.get("article_rows_json")
+    if not article_rows:
+        return []
+    try:
+        rows = json.loads(article_rows) if isinstance(article_rows, str) else list(article_rows)
+    except Exception:
+        return []
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        article = str(r.get("article_no") or r.get("Artikel") or "").strip()
+        if not article:
+            continue
+        out.append({
+            "option_group": "cover_variant",
+            "option_label": str(r.get("variant_label") or r.get("Ausführung") or article),
+            "option_sku": article,
+            "option_meta": str(r.get("_row_text") or ""),
+        })
+    return out
 ROLE_PRIORITY = {
     "complete_drain": 1,
     "base_set": 2,
