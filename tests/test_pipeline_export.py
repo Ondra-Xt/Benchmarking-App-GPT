@@ -344,9 +344,9 @@ class PipelineExportTests(unittest.TestCase):
                         '[{"article_no":"649 982 *)","variant_label":"Kunststoff verchromt","_row_text":"Kunststoff verchromt 649 982 *)"},'
                         '{"article_no":"649 982","variant_label":"Kunststoff verchromt","_row_text":"Kunststoff verchromt 649 982"},'
                         '{"article_no":"806 132","variant_label":"Kunststoff schwarz matt","_row_text":"Kunststoff schwarz matt 806 132"},'
-                        '{"article_no":"775 070","variant_label":"Kunststoff Sonderfarbe","_row_text":"Kunststoff Sonderfarbe 775 070"},'
-                        '{"article_no":"775 087","variant_label":"Kunststoff Metallfarbe","_row_text":"Kunststoff Metallfarbe 775 087"},'
-                        '{"article_no":"775 094","variant_label":"vergoldet","_row_text":"vergoldet 775 094"},'
+                        '{"article_no":"775 070","variant_label":"Kunststoff Sonderfarbe","_row_text":"Kunststoff Sonderfarbe 775 070 1) siehe auch 775 087 775 094"},'
+                        '{"article_no":"775 087","variant_label":"Kunststoff Metallfarbe","_row_text":"Kunststoff Metallfarbe 775 087 1) siehe auch 775 070 775 094"},'
+                        '{"article_no":"775 094","variant_label":"vergoldet","_row_text":"vergoldet 775 094 1) siehe auch 775 070 775 087"},'
                         '{"article_no":"649 982 806 132","variant_label":"BAD CONCAT","_row_text":"This is a malformed concatenated pseudo-row with two article numbers 649 982 and 806 132"}]'
                     )
                 return base
@@ -363,6 +363,9 @@ class PipelineExportTests(unittest.TestCase):
         self.assertEqual(len(paired), 5)
         self.assertIn("viega-69631__649982", set(paired["product_id"].tolist()))
         self.assertIn("viega-69631__806132", set(paired["product_id"].tolist()))
+        self.assertIn("viega-69631__775070", set(paired["product_id"].tolist()))
+        self.assertIn("viega-69631__775087", set(paired["product_id"].tolist()))
+        self.assertIn("viega-69631__775094", set(paired["product_id"].tolist()))
         p649 = paired[paired["product_id"] == "viega-69631__649982"].iloc[0]
         self.assertEqual(p649["cover_article_no"], "649982")
         self.assertEqual(p649["diameter_mm"], 115)
@@ -382,6 +385,8 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue(deduped and int(deduped[0]) >= 1)
         normalized = evidence[evidence["label"] == "normalized_article_numbers"]["snippet"].tolist()
         self.assertTrue(normalized and "649982" in normalized[0])
+        accepted_6964 = evidence[evidence["label"] == "sample_6964_rows_accepted"]["snippet"].tolist()
+        self.assertTrue(accepted_6964 and "775070" in " ".join(accepted_6964))
         paired_valid = evidence[evidence["label"] == "paired_products_created_from_valid_variants_count"]["snippet"].tolist()
         self.assertTrue(paired_valid and int(paired_valid[0]) >= 5)
         tempoplex_pairs = evidence[evidence["label"] == "tempoplex_products_created_from_cover_variants_count"]["snippet"].tolist()
