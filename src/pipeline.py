@@ -848,6 +848,8 @@ def run_update(
 
             tray_incomplete_signal = is_tray and role == "base_set" and (_is_known_or_signaled_incomplete_tray_base(rowd) or not tray_matches)
             promote = (role in {"complete_drain"}) and (not non_promotable) and (not explicit_override) and len(missing_required_parts) == 0
+            if is_tray:
+                promote = False
             if promote:
                 reason = "promoted_complete_assembly"
             elif explicit_override:
