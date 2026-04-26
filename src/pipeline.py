@@ -277,6 +277,22 @@ def _normalize_cover_article(article_text: str) -> Optional[str]:
     return re.sub(r"\D", "", nums[0]) or None
 
 
+def _normalize_cover_article_with_refs(article_text: str) -> Optional[str]:
+    normalized = _normalize_cover_article(article_text)
+    if normalized:
+        return normalized
+    txt = str(article_text or "")
+    if not txt:
+        return None
+    # Narrow rescue for row text/article cells that append cross-reference numbers
+    # (e.g. "775 070 1) siehe auch 775 087 775 094"): keep the first article token.
+    if re.search(r"siehe|see|vgl\.?|referenz|hinweis", txt, re.IGNORECASE):
+        m = re.search(r"\b(\d{3}\s?\d{3})\b", txt)
+        if m:
+            return re.sub(r"\D", "", m.group(1))
+    return None
+
+
 def _parse_cover_variants(params: Dict[str, Any], cover_row: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     raw = params.get("article_rows_json")
     if not raw:
@@ -342,7 +358,7 @@ def _parse_cover_variants(params: Dict[str, Any], cover_row: Dict[str, Any]) -> 
             if cover_model == "6964.0" and len(sample_6964_rejected) < 20:
                 sample_6964_rejected.append(f"row_too_long:{row_txt_full[:120]}")
             continue
-        article_norm = _normalize_cover_article(article_raw) or _normalize_cover_article(row_text)
+        article_norm = _normalize_cover_article_with_refs(article_raw) or _normalize_cover_article_with_refs(row_text)
         article_candidates_raw = {
             re.sub(r"\D", "", x)
             for x in re.findall(r"\b\d{3}\s?\d{3}\b", article_raw)
@@ -355,7 +371,12 @@ def _parse_cover_variants(params: Dict[str, Any], cover_row: Dict[str, Any]) -> 
         }
         # strict but narrow: if article column has one clean article ID, trust it even when row text
         # contains additional IDs from footnotes/adjacent notes.
-        multi_article_in_source = (len(article_candidates_raw) > 1) or (len(article_candidates_raw) == 0 and len(article_candidates_row) > 1)
+        raw_has_ref_hint = bool(re.search(r"siehe|see|vgl\.?|referenz|hinweis", article_raw, re.IGNORECASE))
+        row_has_ref_hint = bool(re.search(r"siehe|see|vgl\.?|referenz|hinweis", row_text, re.IGNORECASE))
+        multi_article_in_source = (
+            (len(article_candidates_raw) > 1 and not (raw_has_ref_hint and article_norm))
+            or (len(article_candidates_raw) == 0 and len(article_candidates_row) > 1 and not (row_has_ref_hint and article_norm))
+        )
         if multi_article_in_source:
             rejected_count += 1
             if len(sample_rejected) < 20:

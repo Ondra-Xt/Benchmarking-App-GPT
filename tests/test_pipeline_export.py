@@ -344,9 +344,9 @@ class PipelineExportTests(unittest.TestCase):
                         '[{"article_no":"649 982 *)","variant_label":"Kunststoff verchromt","_row_text":"Kunststoff verchromt 649 982 *)"},'
                         '{"article_no":"649 982","variant_label":"Kunststoff verchromt","_row_text":"Kunststoff verchromt 649 982"},'
                         '{"article_no":"806 132","variant_label":"Kunststoff schwarz matt","_row_text":"Kunststoff schwarz matt 806 132"},'
-                        '{"article_no":"775 070","variant_label":"Kunststoff Sonderfarbe","_row_text":"Kunststoff Sonderfarbe 775 070 1) siehe auch 775 087 775 094"},'
-                        '{"article_no":"775 087","variant_label":"Kunststoff Metallfarbe","_row_text":"Kunststoff Metallfarbe 775 087 1) siehe auch 775 070 775 094"},'
-                        '{"article_no":"775 094","variant_label":"vergoldet","_row_text":"vergoldet 775 094 1) siehe auch 775 070 775 087"},'
+                        '{"article_no":"775 070 1) siehe auch 775 087 775 094","variant_label":"Kunststoff Sonderfarbe","_row_text":"Kunststoff Sonderfarbe 775 070 1) siehe auch 775 087 775 094"},'
+                        '{"article_no":"775 087 1) siehe auch 775 070 775 094","variant_label":"Kunststoff Metallfarbe","_row_text":"Kunststoff Metallfarbe 775 087 1) siehe auch 775 070 775 094"},'
+                        '{"article_no":"775 094 1) siehe auch 775 070 775 087","variant_label":"vergoldet","_row_text":"vergoldet 775 094 1) siehe auch 775 070 775 087"},'
                         '{"article_no":"649 982 806 132","variant_label":"BAD CONCAT","_row_text":"This is a malformed concatenated pseudo-row with two article numbers 649 982 and 806 132"}]'
                     )
                 return base
