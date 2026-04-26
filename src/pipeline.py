@@ -333,6 +333,7 @@ def _parse_cover_variants(params: Dict[str, Any], cover_row: Dict[str, Any]) -> 
     sample_6964_seen: List[str] = []
     sample_6964_rejected: List[str] = []
     sample_6964_accepted: List[str] = []
+    fallback_6964_added = 0
     family = _viega_family_hint(cover_row)
     cover_model = _extract_model_token(f"{cover_row.get('product_name','')} {cover_row.get('product_url','')}".lower()) or _viega_model_block(cover_row)
     compatible_base_model = "6963.1" if family in {"tempoplex", "tempoplex_plus", "tempoplex_60"} and cover_model == "6964.0" else ""
@@ -428,6 +429,62 @@ def _parse_cover_variants(params: Dict[str, Any], cover_row: Dict[str, Any]) -> 
             sample_valid.append(f"{cover_model}|{article_norm}|{variant_raw}")
         if cover_model == "6964.0" and len(sample_6964_accepted) < 20:
             sample_6964_accepted.append(f"{article_norm}|{variant_raw}")
+    if cover_model == "6964.0":
+        fallback_targets = {
+            "775070": "sonderfarbe",
+            "775087": "metallfarbe",
+            "775094": "vergoldet",
+        }
+        existing_articles = {str(v.get("cover_article_no_normalized") or "") for v in out}
+        for target_article, target_hint in fallback_targets.items():
+            if target_article in existing_articles:
+                continue
+            for r in rows:
+                if not isinstance(r, dict):
+                    continue
+                row_text = re.sub(r"\s+", " ", str(r.get("_row_text") or "")).strip()
+                if not row_text or len(row_text) > 240:
+                    continue
+                has_target = bool(
+                    re.search(
+                        rf"\b{target_article[:3]}\s?{target_article[3:]}\b",
+                        f"{r.get('article_no','')} {r.get('article_no_raw','')} {row_text}",
+                        re.IGNORECASE,
+                    )
+                )
+                if not has_target:
+                    continue
+                hint_text = f"{str(r.get('variant_label') or '')} {row_text}".lower()
+                if target_hint not in hint_text and target_article != "775094":
+                    continue
+                finish = str(r.get("variant_label") or r.get("Ausführung") or row_text).strip()
+                if not finish:
+                    continue
+                colour = ""
+                mcol = re.search(r"(chrom|schwarz|weiß|weiss|edelstahl|gold|bronze|matt)", finish, re.IGNORECASE)
+                if mcol:
+                    colour = mcol.group(1)
+                out.append({
+                    "cover_article_no": target_article,
+                    "cover_article_no_raw": str(r.get("article_no_raw") or r.get("article_no") or ""),
+                    "cover_article_no_normalized": target_article,
+                    "cover_finish_raw": finish,
+                    "cover_colour": colour,
+                    "cover_variant_key": f"{cover_model}:{target_article}",
+                    "cover_model": cover_model,
+                    "parent_cover_model": cover_model,
+                    "compatible_family": family,
+                    "compatible_base_model": compatible_base_model,
+                    "diameter_mm": 115,
+                    "compatible_outlet_size": "D90",
+                    "raw_variant_text": row_text,
+                })
+                normalized_articles.append(target_article)
+                fallback_6964_added += 1
+                if len(sample_6964_accepted) < 20:
+                    sample_6964_accepted.append(f"{target_article}|fallback")
+                existing_articles.add(target_article)
+                break
     return out, {
         "raw_cover_table_rows_count": raw_count,
         "valid_cover_variant_rows_count": len(out),
@@ -439,6 +496,7 @@ def _parse_cover_variants(params: Dict[str, Any], cover_row: Dict[str, Any]) -> 
         "sample_6964_rows_seen": sample_6964_seen,
         "sample_6964_rows_rejected": sample_6964_rejected,
         "sample_6964_rows_accepted": sample_6964_accepted,
+        "fallback_6964_missing_rows_applied_count": fallback_6964_added,
     }
 
 
@@ -629,6 +687,7 @@ def run_update(
         "sample_6964_rows_seen": [],
         "sample_6964_rows_rejected": [],
         "sample_6964_rows_accepted": [],
+        "fallback_6964_missing_rows_applied_count": 0,
         "sample_tempoplex_variant_pairings": [],
         "sample_unpaired_tempoplex_cover_variants": [],
         "sample_tray_variant_pairings": [],
@@ -914,6 +973,9 @@ def run_update(
                 for s in parse_stats.get("sample_6964_rows_accepted") or []:
                     if len(viega_debug["sample_6964_rows_accepted"]) < 20:
                         viega_debug["sample_6964_rows_accepted"].append(str(s))
+                viega_debug["fallback_6964_missing_rows_applied_count"] += int(
+                    parse_stats.get("fallback_6964_missing_rows_applied_count") or 0
+                )
                 if tray_cover_variants:
                     cover_variants_by_cover_id[product_id] = tray_cover_variants
                     viega_debug["cover_variant_rows_parsed_count"] += len(tray_cover_variants)
@@ -1568,6 +1630,13 @@ def run_update(
             "product_id": "__summary__",
             "label": "sample_6964_rows_accepted",
             "snippet": str(viega_debug["sample_6964_rows_accepted"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "fallback_6964_missing_rows_applied_count",
+            "snippet": str(viega_debug["fallback_6964_missing_rows_applied_count"]),
             "source": "promotion_stage",
         })
         evidence_rows.append({
