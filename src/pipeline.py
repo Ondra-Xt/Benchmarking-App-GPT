@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple, Optional, Union, Iterable, Set
 import re
+import json
 import pandas as pd
 
 from .config import WeightConfig
@@ -27,6 +28,16 @@ VIEGA_EXPLICIT_DRAIN_BODY_OVERRIDE_IDS = {
     "viega-491411",
     "viega-491421",
 }
+VIEGA_TRAY_FAMILIES = {"tempoplex", "tempoplex_plus", "tempoplex_60", "domoplex", "duoplex", "varioplex"}
+VIEGA_TRAY_KNOWN_BASE_TO_COVER_BLOCKS = {
+    "tempoplex": {"6963": {"6964"}},
+}
+VIEGA_TEMPOPLEX_DETERMINISTIC_MODEL_PAIRS = {("6963.1", "6964.0")}
+VIEGA_TRAY_KNOWN_INCOMPLETE_BASE_MODELS = {
+    "tempoplex": {"6963.1"},
+    "domoplex": {"6928.21"},
+}
+VIEGA_ERSATZ_OR_SERVICE_RE = re.compile(r"ersatzteil|ersatzteile|wartung|service|dichtung|o-ring|montageset|schraubenset", re.IGNORECASE)
 
 
 def _slug(s: str) -> str:
@@ -179,6 +190,8 @@ def _infer_viega_role(row: Dict[str, Any]) -> str:
         return "accessory"
     if has_drain_body:
         return "base_set"
+    if any(k in txt for k in ("abdeckhaube", "abdeckung", "abdeckelement", "deckel", "top cover", "cover element")):
+        return "cover"
     if any(k in txt for k in ("rost", "abdeckung", "verschlussplatte")):
         return "cover"
     if "profil" in txt:
@@ -197,6 +210,250 @@ def _is_explicit_viega_drain_body_override(product_id: str, row: Dict[str, Any])
     txt = f"{row.get('product_name','')} {row.get('product_url','')}".lower().replace(".", "-")
     model_tokens = ("4914-20", "4980-60", "4980-61", "4980-63", "4951-20", "4951-15", "4955-15", "4955-25", "4914-11", "4914-21")
     return any(tok in txt for tok in model_tokens)
+
+
+def _extract_model_token(text: str) -> str:
+    m = re.search(r"(\d{4,5})[.\-](\d{1,2})", text)
+    if m:
+        return f"{m.group(1)}.{m.group(2)}"
+    return ""
+
+
+def _is_tray_cover_compatible(base_row: Dict[str, Any], cover_row: Dict[str, Any]) -> bool:
+    ok, _reason = _match_tray_cover(base_row, cover_row)
+    return ok
+
+
+def _match_tray_cover(base_row: Dict[str, Any], cover_row: Dict[str, Any]) -> Tuple[bool, str]:
+    base_family = _viega_family_hint(base_row)
+    cover_family = _viega_family_hint(cover_row)
+
+    base_txt = f"{base_row.get('product_name','')} {base_row.get('product_url','')}".lower()
+    cover_txt = f"{cover_row.get('product_name','')} {cover_row.get('product_url','')}".lower()
+    base_model = _extract_model_token(base_txt)
+    cover_model = _extract_model_token(cover_txt)
+
+    if (base_model, cover_model) in VIEGA_TEMPOPLEX_DETERMINISTIC_MODEL_PAIRS:
+        return True, "tempoplex_6963_1_to_6964_0_deterministic_map"
+
+    if base_family != cover_family:
+        return False, "family_mismatch"
+    if base_family not in VIEGA_TRAY_FAMILIES:
+        return False, "non_tray_family"
+
+    base_block = (base_model.split(".", 1)[0] if base_model else _viega_model_block(base_row))
+    cover_block = (cover_model.split(".", 1)[0] if cover_model else _viega_model_block(cover_row))
+    known_for_family = VIEGA_TRAY_KNOWN_BASE_TO_COVER_BLOCKS.get(base_family, {})
+    known_cover_blocks = known_for_family.get(base_block, set())
+    if known_cover_blocks and cover_block in known_cover_blocks:
+        return True, "known_block_map"
+
+    if base_model and base_model in cover_txt:
+        return True, "base_model_mentioned_in_cover"
+    if cover_model and cover_model in base_txt:
+        return True, "cover_model_mentioned_in_base"
+    if base_block and re.search(rf"\b{re.escape(base_block)}(?:[.\-]\d{{1,2}})?\b", cover_txt):
+        return True, "base_block_mentioned_in_cover"
+    return False, "no_compatibility_signal"
+
+
+def _is_rejected_ersatz_cover(row: Dict[str, Any]) -> bool:
+    txt = f"{row.get('product_name','')} {row.get('product_url','')}".lower()
+    return bool(VIEGA_ERSATZ_OR_SERVICE_RE.search(txt))
+
+
+def _is_cover_top_element_text(row: Dict[str, Any]) -> bool:
+    txt = f"{row.get('product_name','')} {row.get('product_url','')}".lower()
+    return any(tok in txt for tok in ("abdeckhaube", "abdeckung", "abdeckelement", "cover"))
+
+
+def _normalize_cover_article(article_text: str) -> Optional[str]:
+    txt = str(article_text or "").strip()
+    if not txt:
+        return None
+    nums = re.findall(r"\b\d{3}\s?\d{3}\b", txt)
+    if len(nums) != 1:
+        return None
+    return re.sub(r"\D", "", nums[0]) or None
+
+
+def _normalize_cover_article_with_refs(article_text: str) -> Optional[str]:
+    normalized = _normalize_cover_article(article_text)
+    if normalized:
+        return normalized
+    txt = str(article_text or "")
+    if not txt:
+        return None
+    # Narrow rescue for row text/article cells that append cross-reference numbers
+    # (e.g. "775 070 1) siehe auch 775 087 775 094"): keep the first article token.
+    if re.search(r"siehe|see|vgl\.?|referenz|hinweis", txt, re.IGNORECASE):
+        m = re.search(r"\b(\d{3}\s?\d{3})\b", txt)
+        if m:
+            return re.sub(r"\D", "", m.group(1))
+    return None
+
+
+def _parse_cover_variants(params: Dict[str, Any], cover_row: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    raw = params.get("article_rows_json")
+    if not raw:
+        return [], {
+            "raw_cover_table_rows_count": 0,
+            "valid_cover_variant_rows_count": 0,
+            "rejected_malformed_cover_rows_count": 0,
+            "deduplicated_cover_variant_rows_count": 0,
+            "sample_valid_cover_variants": [],
+            "sample_rejected_cover_rows": [],
+            "normalized_article_numbers": [],
+            "sample_6964_rows_seen": [],
+            "sample_6964_rows_rejected": [],
+            "sample_6964_rows_accepted": [],
+        }
+    try:
+        rows = json.loads(raw) if isinstance(raw, str) else list(raw)
+    except Exception:
+        return [], {
+            "raw_cover_table_rows_count": 0,
+            "valid_cover_variant_rows_count": 0,
+            "rejected_malformed_cover_rows_count": 0,
+            "deduplicated_cover_variant_rows_count": 0,
+            "sample_valid_cover_variants": [],
+            "sample_rejected_cover_rows": [],
+            "normalized_article_numbers": [],
+            "sample_6964_rows_seen": [],
+            "sample_6964_rows_rejected": [],
+            "sample_6964_rows_accepted": [],
+        }
+    out: List[Dict[str, Any]] = []
+    raw_count = 0
+    rejected_count = 0
+    deduped_count = 0
+    sample_valid: List[str] = []
+    sample_rejected: List[str] = []
+    normalized_articles: List[str] = []
+    sample_6964_seen: List[str] = []
+    sample_6964_rejected: List[str] = []
+    sample_6964_accepted: List[str] = []
+    family = _viega_family_hint(cover_row)
+    cover_model = _extract_model_token(f"{cover_row.get('product_name','')} {cover_row.get('product_url','')}".lower()) or _viega_model_block(cover_row)
+    compatible_base_model = "6963.1" if family in {"tempoplex", "tempoplex_plus", "tempoplex_60"} and cover_model == "6964.0" else ""
+    params_txt = " ".join(
+        str(params.get(k) or "")
+        for k in ("outlet_dn", "flow_rate_raw_text", "article_rows_json")
+    )
+    seen_keys: Set[Tuple[str, str]] = set()
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        raw_count += 1
+        article_raw = str(r.get("article_no") or r.get("Artikel") or "").strip()
+        variant_raw = str(r.get("variant_label") or r.get("Ausführung") or "").strip()
+        row_text = str(r.get("_row_text") or "").strip()
+        row_txt_full = re.sub(r"\s+", " ", f"{variant_raw} {article_raw} {row_text}").strip()
+        if cover_model == "6964.0" and len(sample_6964_seen) < 20:
+            sample_6964_seen.append(row_txt_full[:160])
+        if len(row_txt_full) > 240:
+            rejected_count += 1
+            if len(sample_rejected) < 20:
+                sample_rejected.append(f"row_too_long:{row_txt_full[:120]}")
+            if cover_model == "6964.0" and len(sample_6964_rejected) < 20:
+                sample_6964_rejected.append(f"row_too_long:{row_txt_full[:120]}")
+            continue
+        article_norm = _normalize_cover_article_with_refs(article_raw) or _normalize_cover_article_with_refs(row_text)
+        article_candidates_raw = {
+            re.sub(r"\D", "", x)
+            for x in re.findall(r"\b\d{3}\s?\d{3}\b", article_raw)
+            if re.sub(r"\D", "", x)
+        }
+        article_candidates_row = {
+            re.sub(r"\D", "", x)
+            for x in re.findall(r"\b\d{3}\s?\d{3}\b", row_text)
+            if re.sub(r"\D", "", x)
+        }
+        # strict but narrow: if article column has one clean article ID, trust it even when row text
+        # contains additional IDs from footnotes/adjacent notes.
+        raw_has_ref_hint = bool(re.search(r"siehe|see|vgl\.?|referenz|hinweis", article_raw, re.IGNORECASE))
+        row_has_ref_hint = bool(re.search(r"siehe|see|vgl\.?|referenz|hinweis", row_text, re.IGNORECASE))
+        multi_article_in_source = (
+            (len(article_candidates_raw) > 1 and not (raw_has_ref_hint and article_norm))
+            or (len(article_candidates_raw) == 0 and len(article_candidates_row) > 1 and not (row_has_ref_hint and article_norm))
+        )
+        if multi_article_in_source:
+            rejected_count += 1
+            if len(sample_rejected) < 20:
+                sample_rejected.append(f"multi_article:{row_txt_full[:120]}")
+            if cover_model == "6964.0" and len(sample_6964_rejected) < 20:
+                sample_6964_rejected.append(f"multi_article:{row_txt_full[:120]}")
+            continue
+        if not article_norm:
+            rejected_count += 1
+            if len(sample_rejected) < 20:
+                sample_rejected.append(f"missing_article:{row_txt_full[:120]}")
+            if cover_model == "6964.0" and len(sample_6964_rejected) < 20:
+                sample_6964_rejected.append(f"missing_article:{row_txt_full[:120]}")
+            continue
+        variant_raw = variant_raw or str(r.get("_row_text") or "").strip()
+        if not variant_raw:
+            rejected_count += 1
+            if len(sample_rejected) < 20:
+                sample_rejected.append(f"missing_variant_label:{article_norm}")
+            if cover_model == "6964.0" and len(sample_6964_rejected) < 20:
+                sample_6964_rejected.append(f"missing_variant_label:{article_norm}")
+            continue
+        dedup_key = (cover_model, article_norm)
+        if dedup_key in seen_keys:
+            deduped_count += 1
+            continue
+        seen_keys.add(dedup_key)
+        colour = ""
+        mcol = re.search(r"(chrom|schwarz|weiß|weiss|edelstahl|gold|bronze|matt)", variant_raw, re.IGNORECASE)
+        if mcol:
+            colour = mcol.group(1)
+        normalized_articles.append(article_norm)
+        out.append({
+            "cover_article_no": article_norm,
+            "cover_article_no_raw": article_raw,
+            "cover_article_no_normalized": article_norm,
+            "cover_finish_raw": variant_raw,
+            "cover_colour": colour,
+            "cover_variant_key": f"{cover_model}:{article_norm}",
+            "cover_model": cover_model,
+            "parent_cover_model": cover_model,
+            "compatible_family": family,
+            "compatible_base_model": compatible_base_model,
+            "diameter_mm": int(m_dia.group(1)) if (m_dia := re.search(r"(?:ø|o/|durchmesser)\s*=?\s*(\d{2,3})", f"{variant_raw} {r.get('_row_text','')}", re.IGNORECASE)) else 115 if cover_model == "6964.0" else None,
+            "compatible_outlet_size": "D90" if re.search(r"\bd\s*90\b", f"{variant_raw} {r.get('_row_text','')} {params_txt}", re.IGNORECASE) else ("D90" if cover_model == "6964.0" else None),
+            "raw_variant_text": str(r.get("_row_text") or variant_raw),
+        })
+        if len(sample_valid) < 20:
+            sample_valid.append(f"{cover_model}|{article_norm}|{variant_raw}")
+        if cover_model == "6964.0" and len(sample_6964_accepted) < 20:
+            sample_6964_accepted.append(f"{article_norm}|{variant_raw}")
+    return out, {
+        "raw_cover_table_rows_count": raw_count,
+        "valid_cover_variant_rows_count": len(out),
+        "rejected_malformed_cover_rows_count": rejected_count,
+        "deduplicated_cover_variant_rows_count": deduped_count,
+        "sample_valid_cover_variants": sample_valid,
+        "sample_rejected_cover_rows": sample_rejected,
+        "normalized_article_numbers": normalized_articles[:50],
+        "sample_6964_rows_seen": sample_6964_seen,
+        "sample_6964_rows_rejected": sample_6964_rejected,
+        "sample_6964_rows_accepted": sample_6964_accepted,
+    }
+
+
+def _is_known_or_signaled_incomplete_tray_base(row: Dict[str, Any]) -> bool:
+    fam = _viega_family_hint(row)
+    if fam not in VIEGA_TRAY_FAMILIES:
+        return False
+    txt = f"{row.get('product_name','')} {row.get('product_url','')}".lower()
+    model = _extract_model_token(txt)
+    known_models = VIEGA_TRAY_KNOWN_INCOMPLETE_BASE_MODELS.get(fam, set())
+    if model and model in known_models:
+        return True
+    if any(sig in txt for sig in ("funktionseinheit", "ohne abdeckhaube", "requires top cover", "requires cover")):
+        return True
+    return False
 
 # --- API pro app.py ------------------------------------------------------
 
@@ -337,7 +594,51 @@ def run_update(
         "explicit_override_applied_count": 0,
         "explicit_override_ids": [],
         "sample_overridden_drain_bodies": [],
+        "tray_base_set_count": 0,
+        "tray_cover_count": 0,
+        "tray_pair_candidates_count": 0,
+        "tray_complete_systems_created_count": 0,
+        "sample_tray_pairings": [],
+        "sample_unpaired_tray_base_sets": [],
+        "sample_unpaired_tray_covers": [],
+        "rejected_wrong_family_cover_count": 0,
+        "rejected_ersatzteile_cover_count": 0,
+        "tray_cover_variant_count": 0,
+        "cover_variant_rows_parsed_count": 0,
+        "tempoplex_pairing_fix_applied": 0,
+        "paired_product_inheritance_applied_count": 0,
+        "sample_paired_products_with_inherited_fields": [],
+        "base_set_to_product_field_map": {},
+        "cover_to_product_field_map": {},
+        "inherited_flow_rate_count": 0,
+        "inherited_outlet_dn_count": 0,
+        "tempoplex_cover_variant_rows_parsed_count": 0,
+        "domoplex_cover_variant_rows_parsed_count": 0,
+        "tempoplex_plus_cover_variant_rows_parsed_count": 0,
+        "tempoplex_products_created_from_cover_variants_count": 0,
+        "tray_products_created_from_cover_variants_count": 0,
+        "paired_products_created_from_valid_variants_count": 0,
+        "sample_cover_variant_rows": [],
+        "raw_cover_table_rows_count": 0,
+        "valid_cover_variant_rows_count": 0,
+        "rejected_malformed_cover_rows_count": 0,
+        "deduplicated_cover_variant_rows_count": 0,
+        "sample_valid_cover_variants": [],
+        "sample_rejected_cover_rows": [],
+        "normalized_article_numbers": [],
+        "sample_6964_rows_seen": [],
+        "sample_6964_rows_rejected": [],
+        "sample_6964_rows_accepted": [],
+        "sample_tempoplex_variant_pairings": [],
+        "sample_unpaired_tempoplex_cover_variants": [],
+        "sample_tray_variant_pairings": [],
+        "sample_unpaired_tray_cover_variants": [],
     }
+    tray_pairings_by_base_id: Dict[str, List[Dict[str, Any]]] = {}
+    tray_pairing_reason_by_base_id: Dict[str, str] = {}
+    tray_paired_cover_ids: Set[str] = set()
+    cover_variants_by_cover_id: Dict[str, List[Dict[str, Any]]] = {}
+    viega_params_by_id: Dict[str, Dict[str, Any]] = {}
 
     if "manufacturer" in registry_df.columns:
         for _, rv in registry_df[registry_df["manufacturer"] == "viega"].iterrows():
@@ -350,6 +651,60 @@ def run_update(
             grp["roles"].add(role)
             grp["product_ids"].append(str(rr.get("product_id") or ""))
             grp["urls"].append(str(rr.get("product_url") or ""))
+        tray_rows = [rv.to_dict() for _, rv in registry_df[registry_df["manufacturer"] == "viega"].iterrows() if _viega_family_hint(rv.to_dict()) in VIEGA_TRAY_FAMILIES]
+        tray_base_rows = []
+        tray_cover_rows = []
+        for row in tray_rows:
+            role = _infer_viega_role(row)
+            txt = f"{row.get('product_name','')} {row.get('product_url','')}".lower()
+            if role == "base_set" and ("ablauf" in txt or "funktionseinheit" in txt):
+                tray_base_rows.append(row)
+            elif role == "cover":
+                tray_cover_rows.append(row)
+        viega_debug["tray_base_set_count"] = len(tray_base_rows)
+        viega_debug["tray_cover_count"] = len(tray_cover_rows)
+
+        for b in tray_base_rows:
+            bpid = str(b.get("product_id") or "")
+            matches: List[Dict[str, Any]] = []
+            for c in tray_cover_rows:
+                cpid = str(c.get("product_id") or "")
+                if not cpid or cpid == bpid:
+                    continue
+                is_ersatz = _is_rejected_ersatz_cover(c)
+                is_match, match_reason = _match_tray_cover(b, c)
+                ersatz_exception = is_ersatz and _is_cover_top_element_text(c) and is_match
+                if is_ersatz and not ersatz_exception:
+                    viega_debug["rejected_ersatzteile_cover_count"] += 1
+                    continue
+                if _viega_family_hint(b) != _viega_family_hint(c):
+                    # deterministic Tempoplex map is allowed across tempoplex aliases
+                    if not is_match:
+                        viega_debug["rejected_wrong_family_cover_count"] += 1
+                        continue
+                if is_match:
+                    if match_reason == "tempoplex_6963_1_to_6964_0_deterministic_map":
+                        viega_debug["tempoplex_pairing_fix_applied"] += 1
+                    matches.append(c)
+                else:
+                    viega_debug["rejected_wrong_family_cover_count"] += 1
+                    continue
+            if matches:
+                tray_pairings_by_base_id[bpid] = matches
+                tray_pairing_reason_by_base_id[bpid] = "compatible_cover_match"
+                viega_debug["tray_pair_candidates_count"] += len(matches)
+                for m in matches:
+                    tray_paired_cover_ids.add(str(m.get("product_id") or ""))
+                    if len(viega_debug["sample_tray_pairings"]) < 20:
+                        viega_debug["sample_tray_pairings"].append(
+                            f"{b.get('product_url')} + {m.get('product_url')}"
+                        )
+            elif len(viega_debug["sample_unpaired_tray_base_sets"]) < 20:
+                viega_debug["sample_unpaired_tray_base_sets"].append(str(b.get("product_url") or ""))
+        for c in tray_cover_rows:
+            cpid = str(c.get("product_id") or "")
+            if cpid not in tray_paired_cover_ids and len(viega_debug["sample_unpaired_tray_covers"]) < 20:
+                viega_debug["sample_unpaired_tray_covers"].append(str(c.get("product_url") or ""))
 
     for _, r in registry_df.iterrows():
         manufacturer = _normalize_manufacturer(r.get("manufacturer", ""))
@@ -393,6 +748,8 @@ def run_update(
             continue
 
         params = connector.extract_parameters(url) or {}
+        if manufacturer == "viega":
+            viega_params_by_id[product_id] = {k: v for k, v in params.items() if k != "evidence"}
 
         # ACO cleanup: drains without flow should be excluded
         if manufacturer == "aco" and candidate_type == "drain" and params.get("flow_rate_lps") in (None, ""):
@@ -439,6 +796,8 @@ def run_update(
         promotion_reason = "default"
         missing_required_parts: List[str] = []
         matched_component_ids: List[str] = []
+        tray_cover_variants: List[Dict[str, Any]] = []
+        role = ""
         if manufacturer == "viega":
             rowd = r.to_dict() if hasattr(r, "to_dict") else dict(r)
             fam = _viega_family_hint(rowd)
@@ -491,12 +850,15 @@ def run_update(
                 )
             )
             is_tray = fam in {"tempoplex", "tempoplex_plus", "tempoplex_60", "domoplex", "duoplex", "varioplex"}
+            tray_matches = tray_pairings_by_base_id.get(product_id, [])
             has_body = any(x in roles for x in {"complete_drain", "base_set"})
             has_top = any(x in roles for x in {"cover", "profile"}) or role == "complete_drain"
+            if is_tray and role == "base_set":
+                has_top = has_top or bool(tray_matches)
             missing_required_parts: List[str] = []
             if not has_body:
                 missing_required_parts.append("body_or_base")
-            if not is_tray and not has_top:
+            if not has_top and (role in {"complete_drain", "base_set"}):
                 missing_required_parts.append("top_element")
             if params.get("flow_rate_lps") in (None, ""):
                 missing_required_parts.append("flow_rate_lps")
@@ -505,12 +867,17 @@ def run_update(
             if standalone_subpart:
                 missing_required_parts.append("standalone_subpart_not_complete_product")
 
+            tray_incomplete_signal = is_tray and role == "base_set" and (_is_known_or_signaled_incomplete_tray_base(rowd) or not tray_matches)
             promote = (role in {"complete_drain"}) and (not non_promotable) and (not explicit_override) and len(missing_required_parts) == 0
             if promote:
                 reason = "promoted_complete_assembly"
             elif explicit_override:
                 reason = "incomplete_assembly"
+            elif tray_incomplete_signal:
+                reason = "incomplete_assembly"
             elif role == "base_set" and not strong_accessory_item:
+                reason = "incomplete_assembly"
+            elif is_tray and role == "cover":
                 reason = "incomplete_assembly"
             elif non_promotable:
                 reason = "non_promotable_accessory"
@@ -521,6 +888,46 @@ def run_update(
             promote_to_product = promote
             promotion_reason = reason
             matched_component_ids = list(g.get("product_ids") or [])
+            if is_tray and role == "cover":
+                tray_cover_variants, parse_stats = _parse_cover_variants(params, rowd)
+                viega_debug["raw_cover_table_rows_count"] += int(parse_stats.get("raw_cover_table_rows_count") or 0)
+                viega_debug["valid_cover_variant_rows_count"] += int(parse_stats.get("valid_cover_variant_rows_count") or 0)
+                viega_debug["rejected_malformed_cover_rows_count"] += int(parse_stats.get("rejected_malformed_cover_rows_count") or 0)
+                viega_debug["deduplicated_cover_variant_rows_count"] += int(parse_stats.get("deduplicated_cover_variant_rows_count") or 0)
+                for s in parse_stats.get("sample_valid_cover_variants") or []:
+                    if len(viega_debug["sample_valid_cover_variants"]) < 20:
+                        viega_debug["sample_valid_cover_variants"].append(str(s))
+                for s in parse_stats.get("sample_rejected_cover_rows") or []:
+                    if len(viega_debug["sample_rejected_cover_rows"]) < 20:
+                        viega_debug["sample_rejected_cover_rows"].append(str(s))
+                for s in parse_stats.get("normalized_article_numbers") or []:
+                    if len(viega_debug["normalized_article_numbers"]) < 50:
+                        viega_debug["normalized_article_numbers"].append(str(s))
+                for s in parse_stats.get("sample_6964_rows_seen") or []:
+                    if len(viega_debug["sample_6964_rows_seen"]) < 20:
+                        viega_debug["sample_6964_rows_seen"].append(str(s))
+                for s in parse_stats.get("sample_6964_rows_rejected") or []:
+                    if len(viega_debug["sample_6964_rows_rejected"]) < 20:
+                        viega_debug["sample_6964_rows_rejected"].append(str(s))
+                for s in parse_stats.get("sample_6964_rows_accepted") or []:
+                    if len(viega_debug["sample_6964_rows_accepted"]) < 20:
+                        viega_debug["sample_6964_rows_accepted"].append(str(s))
+                if tray_cover_variants:
+                    cover_variants_by_cover_id[product_id] = tray_cover_variants
+                    viega_debug["cover_variant_rows_parsed_count"] += len(tray_cover_variants)
+                    viega_debug["tray_cover_variant_count"] += len(tray_cover_variants)
+                    for var in tray_cover_variants:
+                        if len(viega_debug["sample_cover_variant_rows"]) >= 20:
+                            break
+                        viega_debug["sample_cover_variant_rows"].append(
+                            f"{var.get('cover_model')}|{var.get('cover_article_no')}|{var.get('cover_finish_raw')}"
+                        )
+                    if fam in {"tempoplex", "tempoplex_plus", "tempoplex_60"} and _extract_model_token(f"{rowd.get('product_name','')} {rowd.get('product_url','')}".lower()) == "6964.0":
+                        viega_debug["tempoplex_cover_variant_rows_parsed_count"] += len(tray_cover_variants)
+                    if fam == "domoplex":
+                        viega_debug["domoplex_cover_variant_rows_parsed_count"] += len(tray_cover_variants)
+                    if fam in {"tempoplex_plus", "tempoplex_60"}:
+                        viega_debug["tempoplex_plus_cover_variant_rows_parsed_count"] += len(tray_cover_variants)
             viega_debug["promotion_reason_counts"][reason] = viega_debug["promotion_reason_counts"].get(reason, 0) + 1
             if promote:
                 viega_debug["complete_assembly_candidates_count"] += 1
@@ -568,6 +975,7 @@ def run_update(
             "promotion_reason": promotion_reason,
             "missing_required_parts": ",".join(missing_required_parts),
             "matched_component_ids": ",".join(str(x) for x in matched_component_ids),
+            "pairing_reason": "",
             "why_not_product_reason": "" if promote_to_product else promotion_reason,
 
             # vytažené parametry:
@@ -606,6 +1014,243 @@ def run_update(
                 "snippet": str(v),
                 "source": url,
             })
+
+        if manufacturer == "viega" and tray_cover_variants:
+            for idx, var in enumerate(tray_cover_variants, start=1):
+                article_norm = str(var.get("cover_article_no_normalized") or "")
+                var_id = f"{product_id}__{article_norm}" if article_norm else f"{product_id}__var_{idx}"
+                var_name = f"{r.get('product_name')} [{var.get('cover_article_no')}]"
+                products_rows.append({
+                    "manufacturer": manufacturer,
+                    "product_id": var_id,
+                    "product_name": var_name,
+                    "product_url": url,
+                    "candidate_type": "component",
+                    "promote_to_product": "no",
+                    "promotion_reason": "cover_only_component",
+                    "missing_required_parts": "",
+                    "matched_component_ids": product_id,
+                    "pairing_reason": "",
+                    "why_not_product_reason": "cover_only_component",
+                    "system_role": "cover",
+                    "parent_cover_model": var.get("parent_cover_model"),
+                    "cover_model": var.get("cover_model"),
+                    "cover_article_no": var.get("cover_article_no"),
+                    "cover_article_no_normalized": var.get("cover_article_no_normalized"),
+                    "cover_finish_raw": var.get("cover_finish_raw"),
+                    "cover_colour": var.get("cover_colour"),
+                    "cover_variant_key": var.get("cover_variant_key"),
+                    "compatible_family": var.get("compatible_family"),
+                    "compatible_base_model": var.get("compatible_base_model"),
+                    "diameter_mm": var.get("diameter_mm"),
+                    "compatible_outlet_size": var.get("compatible_outlet_size"),
+                    "source_url": url,
+                    "source_page_title": r.get("product_name"),
+                    "colours_count": len(tray_cover_variants),
+                    "raw_variant_text": var.get("raw_variant_text"),
+                })
+
+    # synthetic tray complete-system products: base_set + compatible cover
+    if "manufacturer" in registry_df.columns:
+        registry_rows = [r.to_dict() for _, r in registry_df.iterrows()]
+        by_id = {str(r.get("product_id") or ""): r for r in registry_rows}
+        pre_existing_tempoplex_pair = False
+        used_tempoplex_variant_articles: Set[str] = set()
+
+        def _emit_paired_product(
+            *,
+            base_id: str,
+            cover_id: str,
+            base_name: str,
+            cover_name: str,
+            base_url: str,
+            fam: str,
+            pairing_reason: str,
+            var: Optional[Dict[str, Any]] = None,
+            product_id_suffix: str = "",
+            cover_variant_total: int = 0,
+        ) -> None:
+            inherited_fields = {}
+            base_params = viega_params_by_id.get(base_id, {})
+            for k in ("flow_rate_lps", "outlet_dn", "flow_rate_raw_text", "material_detail", "din_en_1253_cert"):
+                if base_params.get(k) not in (None, ""):
+                    inherited_fields[k] = base_params.get(k)
+                    viega_debug["base_set_to_product_field_map"][k] = viega_debug["base_set_to_product_field_map"].get(k, 0) + 1
+            if inherited_fields.get("flow_rate_lps") not in (None, ""):
+                viega_debug["inherited_flow_rate_count"] += 1
+            if inherited_fields.get("outlet_dn") not in (None, ""):
+                viega_debug["inherited_outlet_dn_count"] += 1
+            if var:
+                for k in ("cover_article_no", "cover_finish_raw", "cover_colour", "cover_variant_key", "compatible_base_model", "diameter_mm", "compatible_outlet_size"):
+                    if var.get(k) not in (None, ""):
+                        viega_debug["cover_to_product_field_map"][k] = viega_debug["cover_to_product_field_map"].get(k, 0) + 1
+            param_score, _param_detail = compute_parameter_score(inherited_fields, cfg)
+            equiv_score = compute_equivalence_score({"candidate_type": "drain", **inherited_fields}, cfg)
+            system_score = compute_system_score("drain", has_bom_options=False)
+            final_score = compute_final_score(param_score, system_score, equiv_score, cfg)
+
+            if var and str(var.get("cover_article_no_normalized") or ""):
+                full_id = f"{base_id}__{var.get('cover_article_no_normalized')}"
+            else:
+                full_id = f"{base_id}__{cover_id}{product_id_suffix}"
+            pname = f"{base_name} + {cover_name}"
+            if var and var.get("cover_article_no"):
+                pname = f"{pname} [{var.get('cover_article_no')}]"
+            row = {
+                "manufacturer": "viega",
+                "product_id": full_id,
+                "product_name": pname,
+                "product_url": base_url,
+                "candidate_type": "drain",
+                "promote_to_product": "yes",
+                "promotion_reason": "tray_base_with_cover_pairing",
+                "missing_required_parts": "",
+                "matched_component_ids": ",".join([base_id, cover_id]),
+                "pairing_reason": pairing_reason,
+                "why_not_product_reason": "",
+                "drain_category": "shower_tray_drain",
+                "system_role": "complete_drain",
+                "product_family": fam,
+                "base_set_source_id": base_id,
+                "cover_source_id": cover_id,
+                **inherited_fields,
+                "param_score": param_score,
+                "equiv_score": equiv_score,
+                "system_score": system_score,
+                "final_score": final_score,
+            }
+            if var:
+                row.update({
+                    "cover_article_no": var.get("cover_article_no"),
+                    "cover_article_no_normalized": var.get("cover_article_no_normalized"),
+                    "cover_finish_raw": var.get("cover_finish_raw"),
+                    "cover_colour": var.get("cover_colour"),
+                    "cover_variant_key": var.get("cover_variant_key"),
+                    "compatible_base_model": var.get("compatible_base_model"),
+                    "diameter_mm": var.get("diameter_mm"),
+                    "compatible_outlet_size": var.get("compatible_outlet_size"),
+                })
+            if cover_variant_total > 0:
+                row["colours_count"] = cover_variant_total
+            products_rows.append(row)
+            comparison_rows.append({
+                "manufacturer": "viega",
+                "product_id": full_id,
+                "product_name": pname,
+                "product_url": base_url,
+                "final_score": final_score,
+                "param_score": param_score,
+                "equiv_score": equiv_score,
+                "system_score": system_score,
+            })
+            viega_debug["tray_complete_systems_created_count"] += 1
+            viega_debug["paired_product_inheritance_applied_count"] += 1
+            if len(viega_debug["sample_paired_products_with_inherited_fields"]) < 20:
+                viega_debug["sample_paired_products_with_inherited_fields"].append(
+                    f"{full_id}: inherited={sorted(inherited_fields.keys())}"
+                )
+            base_model = _extract_model_token(f"{base_name} {base_url}".lower())
+            if base_model == "6963.1" and var and str(var.get("cover_article_no_normalized") or ""):
+                viega_debug["tempoplex_products_created_from_cover_variants_count"] += 1
+                used_tempoplex_variant_articles.add(str(var.get("cover_article_no_normalized")))
+                if len(viega_debug["sample_tempoplex_variant_pairings"]) < 20:
+                    viega_debug["sample_tempoplex_variant_pairings"].append(
+                        f"{base_id}+{var.get('cover_article_no_normalized')}"
+                    )
+            if var:
+                viega_debug["tray_products_created_from_cover_variants_count"] += 1
+                viega_debug["paired_products_created_from_valid_variants_count"] += 1
+                if len(viega_debug["sample_tray_variant_pairings"]) < 20:
+                    viega_debug["sample_tray_variant_pairings"].append(
+                        f"{base_id}+{var.get('cover_article_no_normalized') or var.get('cover_article_no')}"
+                    )
+
+        for base_id, cover_rows in tray_pairings_by_base_id.items():
+            base_row = by_id.get(base_id)
+            if not base_row:
+                continue
+            base_name = str(base_row.get("product_name") or "")
+            base_url = str(base_row.get("product_url") or "")
+            fam = _viega_family_hint(base_row)
+            for cover_row in cover_rows[:1]:
+                cover_id = str(cover_row.get("product_id") or "")
+                cover_name = str(cover_row.get("product_name") or "")
+                base_model = _extract_model_token(f"{base_name} {base_url}".lower())
+                cover_model = _extract_model_token(f"{cover_name} {cover_row.get('product_url','')}".lower())
+                if (base_model, cover_model) in VIEGA_TEMPOPLEX_DETERMINISTIC_MODEL_PAIRS:
+                    pre_existing_tempoplex_pair = True
+                cover_variants = cover_variants_by_cover_id.get(cover_id, [])
+                if cover_variants:
+                    for var in cover_variants:
+                        var_key = str(var.get("cover_variant_key") or var.get("cover_article_no") or cover_id)
+                        _emit_paired_product(
+                            base_id=base_id,
+                            cover_id=cover_id,
+                            base_name=base_name,
+                            cover_name=cover_name,
+                            base_url=base_url,
+                            fam=fam,
+                            pairing_reason=tray_pairing_reason_by_base_id.get(base_id, "compatible_cover_match"),
+                            var=var,
+                            product_id_suffix=f"__{var_key}",
+                            cover_variant_total=len(cover_variants),
+                        )
+                else:
+                    _emit_paired_product(
+                        base_id=base_id,
+                        cover_id=cover_id,
+                        base_name=base_name,
+                        cover_name=cover_name,
+                        base_url=base_url,
+                        fam=fam,
+                        pairing_reason=tray_pairing_reason_by_base_id.get(base_id, "compatible_cover_match"),
+                    )
+
+        # final deterministic fallback: ensure Tempoplex 6963.1 + 6964.0 emits at least one paired product
+        if not pre_existing_tempoplex_pair:
+            base_candidates = [
+                r for r in registry_rows
+                if _extract_model_token(f"{r.get('product_name','')} {r.get('product_url','')}".lower()) == "6963.1"
+                and _infer_viega_role(r) == "base_set"
+            ]
+            cover_candidates = [
+                r for r in registry_rows
+                if _extract_model_token(f"{r.get('product_name','')} {r.get('product_url','')}".lower()) == "6964.0"
+                and _infer_viega_role(r) == "cover"
+            ]
+            if base_candidates and cover_candidates:
+                b = base_candidates[0]
+                c = cover_candidates[0]
+                base_id = str(b.get("product_id") or "")
+                cover_id = str(c.get("product_id") or "")
+                _emit_paired_product(
+                    base_id=base_id,
+                    cover_id=cover_id,
+                    base_name=str(b.get("product_name") or ""),
+                    cover_name=str(c.get("product_name") or ""),
+                    base_url=str(b.get("product_url") or ""),
+                    fam="tempoplex",
+                    pairing_reason="tempoplex_6963_1_to_6964_0_final_fallback",
+                    product_id_suffix="__deterministic",
+                )
+                viega_debug["tempoplex_pairing_fix_applied"] += 1
+                if len(viega_debug["sample_tray_pairings"]) < 20:
+                    viega_debug["sample_tray_pairings"].append(f"{b.get('product_url')} + {c.get('product_url')}")
+
+        for cover_id, variants in cover_variants_by_cover_id.items():
+            cover_row = by_id.get(cover_id, {})
+            cover_model = _extract_model_token(f"{cover_row.get('product_name','')} {cover_row.get('product_url','')}".lower())
+            for var in variants:
+                article_norm = str(var.get("cover_article_no_normalized") or "")
+                if article_norm and article_norm not in used_tempoplex_variant_articles and cover_model == "6964.0":
+                    if len(viega_debug["sample_unpaired_tempoplex_cover_variants"]) < 20:
+                        viega_debug["sample_unpaired_tempoplex_cover_variants"].append(article_norm)
+                if article_norm:
+                    used_in_any_pair = any(
+                        article_norm in str(x) for x in viega_debug["sample_tray_variant_pairings"]
+                    )
+                    if (not used_in_any_pair) and len(viega_debug["sample_unpaired_tray_cover_variants"]) < 20:
+                        viega_debug["sample_unpaired_tray_cover_variants"].append(article_norm)
 
     if any(str(x).strip().lower() == "viega" for x in registry_df.get("manufacturer", pd.Series(dtype=str)).tolist()):
         evidence_rows.append({
@@ -767,6 +1412,279 @@ def run_update(
             "product_id": "__summary__",
             "label": "sample_emitted_excluded",
             "snippet": str(viega_debug["sample_emitted_excluded"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "tray_base_set_count",
+            "snippet": str(viega_debug["tray_base_set_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "tray_cover_count",
+            "snippet": str(viega_debug["tray_cover_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "tray_cover_variant_count",
+            "snippet": str(viega_debug["tray_cover_variant_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "tray_pair_candidates_count",
+            "snippet": str(viega_debug["tray_pair_candidates_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "tray_complete_systems_created_count",
+            "snippet": str(viega_debug["tray_complete_systems_created_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_tray_pairings",
+            "snippet": str(viega_debug["sample_tray_pairings"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_unpaired_tray_base_sets",
+            "snippet": str(viega_debug["sample_unpaired_tray_base_sets"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_unpaired_tray_covers",
+            "snippet": str(viega_debug["sample_unpaired_tray_covers"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "rejected_wrong_family_cover_count",
+            "snippet": str(viega_debug["rejected_wrong_family_cover_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "rejected_ersatzteile_cover_count",
+            "snippet": str(viega_debug["rejected_ersatzteile_cover_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "cover_variant_rows_parsed_count",
+            "snippet": str(viega_debug["cover_variant_rows_parsed_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "raw_cover_table_rows_count",
+            "snippet": str(viega_debug["raw_cover_table_rows_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "valid_cover_variant_rows_count",
+            "snippet": str(viega_debug["valid_cover_variant_rows_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "rejected_malformed_cover_rows_count",
+            "snippet": str(viega_debug["rejected_malformed_cover_rows_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "deduplicated_cover_variant_rows_count",
+            "snippet": str(viega_debug["deduplicated_cover_variant_rows_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_cover_variant_rows",
+            "snippet": str(viega_debug["sample_cover_variant_rows"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_valid_cover_variants",
+            "snippet": str(viega_debug["sample_valid_cover_variants"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_rejected_cover_rows",
+            "snippet": str(viega_debug["sample_rejected_cover_rows"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "normalized_article_numbers",
+            "snippet": str(viega_debug["normalized_article_numbers"][:20]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_6964_rows_seen",
+            "snippet": str(viega_debug["sample_6964_rows_seen"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_6964_rows_rejected",
+            "snippet": str(viega_debug["sample_6964_rows_rejected"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_6964_rows_accepted",
+            "snippet": str(viega_debug["sample_6964_rows_accepted"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "tempoplex_pairing_fix_applied",
+            "snippet": str(viega_debug["tempoplex_pairing_fix_applied"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "paired_product_inheritance_applied_count",
+            "snippet": str(viega_debug["paired_product_inheritance_applied_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_paired_products_with_inherited_fields",
+            "snippet": str(viega_debug["sample_paired_products_with_inherited_fields"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "base_set_to_product_field_map",
+            "snippet": str(viega_debug["base_set_to_product_field_map"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "cover_to_product_field_map",
+            "snippet": str(viega_debug["cover_to_product_field_map"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "inherited_flow_rate_count",
+            "snippet": str(viega_debug["inherited_flow_rate_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "inherited_outlet_dn_count",
+            "snippet": str(viega_debug["inherited_outlet_dn_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "tempoplex_cover_variant_rows_parsed_count",
+            "snippet": str(viega_debug["tempoplex_cover_variant_rows_parsed_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "tempoplex_products_created_from_cover_variants_count",
+            "snippet": str(viega_debug["tempoplex_products_created_from_cover_variants_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_tempoplex_variant_pairings",
+            "snippet": str(viega_debug["sample_tempoplex_variant_pairings"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_unpaired_tempoplex_cover_variants",
+            "snippet": str(viega_debug["sample_unpaired_tempoplex_cover_variants"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "domoplex_cover_variant_rows_parsed_count",
+            "snippet": str(viega_debug["domoplex_cover_variant_rows_parsed_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "tempoplex_plus_cover_variant_rows_parsed_count",
+            "snippet": str(viega_debug["tempoplex_plus_cover_variant_rows_parsed_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "tray_products_created_from_cover_variants_count",
+            "snippet": str(viega_debug["tray_products_created_from_cover_variants_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "paired_products_created_from_valid_variants_count",
+            "snippet": str(viega_debug["paired_products_created_from_valid_variants_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_tray_variant_pairings",
+            "snippet": str(viega_debug["sample_tray_variant_pairings"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_unpaired_tray_cover_variants",
+            "snippet": str(viega_debug["sample_unpaired_tray_cover_variants"][:10]),
             "source": "promotion_stage",
         })
 
