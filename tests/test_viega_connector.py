@@ -97,7 +97,24 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         )
         self.assertEqual(len(opts), 1)
         self.assertEqual(opts[0]["option_group"], "cover_variant")
-        self.assertEqual(opts[0]["option_sku"], "649 982")
+        self.assertEqual(opts[0]["option_sku"], "649982")
+
+    def test_get_bom_options_normalizes_reference_rows_and_filters_malformed_garbage(self):
+        opts = viega.get_bom_options(
+            "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Abdeckhaube-6964-0.html",
+            params={
+                "article_rows_json": json.dumps(
+                    [
+                        {"article_no": "775 070 1) siehe auch 775 087 775 094", "variant_label": "Kunststoff Sonderfarbe", "_row_text": "Kunststoff Sonderfarbe 775 070 1) siehe auch 775 087 775 094"},
+                        {"article_no": "775 087 1) siehe auch 775 070 775 094", "variant_label": "Kunststoff Metallfarbe", "_row_text": "Kunststoff Metallfarbe 775 087 1) siehe auch 775 070 775 094"},
+                        {"article_no": "775 094 1) siehe auch 775 070 775 087", "variant_label": "vergoldet", "_row_text": "vergoldet 775 094 1) siehe auch 775 070 775 087"},
+                        {"article_no": "649 982 806 132", "variant_label": "BAD CONCAT", "_row_text": "X " * 200},
+                        {"article_no": "775 087 1) siehe auch 775 070 775 094", "variant_label": "Kunststoff Metallfarbe", "_row_text": "Kunststoff Metallfarbe 775 087 1) siehe auch 775 070 775 094"},
+                    ]
+                )
+            },
+        )
+        self.assertEqual({o["option_sku"] for o in opts}, {"775070", "775087", "775094"})
 
     def test_4982_10_base_body_is_component_candidate(self):
         self.assertEqual(

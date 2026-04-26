@@ -837,12 +837,35 @@ def _parse_article_table(html: str) -> List[Dict[str, Any]]:
                 if "ausführung" in h or "ausfuehrung" in h:
                     row["variant_label"] = v
                 if "artikel" in h or "art." in h:
-                    row["article_no"] = v
+                    row["article_no_raw"] = v
+                    # Keep article field narrow/clean when table cell includes reference footnotes.
+                    # Example: "775 070 1) siehe auch 775 087 775 094" -> "775 070".
+                    m_article = re.search(r"\b(\d{3}\s?\d{3})\b", v)
+                    if m_article:
+                        row["article_no"] = m_article.group(1)
+                    else:
+                        row["article_no"] = v
             fopts, _, _ = _extract_flow_from_ablaufleistung(row_txt)
             if fopts:
                 row["flow_opts"] = fopts
             out.append(row)
     return out
+
+
+def _normalize_cover_article_for_option(article_text: str, row_text: str = "") -> Optional[str]:
+    txt = _clean_text(str(article_text or ""))
+    if not txt:
+        txt = _clean_text(str(row_text or ""))
+    if not txt:
+        return None
+    nums = [re.sub(r"\D", "", x) for x in re.findall(r"\b\d{3}\s?\d{3}\b", txt)]
+    nums = [n for n in nums if n]
+    if len(set(nums)) == 1:
+        return nums[0]
+    # narrow rescue for reference/footnote rows: keep first token if row clearly carries refs
+    if re.search(r"siehe|see|vgl\.?|referenz|hinweis", txt, re.IGNORECASE) and nums:
+        return nums[0]
+    return None
 
 
 def _select_article_row(rows: List[Dict[str, Any]], target_mm: int = 1200) -> Optional[Dict[str, Any]]:
@@ -1576,17 +1599,33 @@ def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -
     except Exception:
         return []
     out: List[Dict[str, Any]] = []
+    seen: Set[str] = set()
     for r in rows:
         if not isinstance(r, dict):
             continue
-        article = str(r.get("article_no") or r.get("Artikel") or "").strip()
+        row_text = _clean_text(str(r.get("_row_text") or ""))
+        if len(row_text) > 260:
+            continue
+        article = _normalize_cover_article_for_option(
+            str(r.get("article_no") or r.get("article_no_raw") or r.get("Artikel") or ""),
+            row_text=row_text,
+        )
         if not article:
             continue
+        finish = _clean_text(str(r.get("variant_label") or r.get("Ausführung") or ""))
+        if not finish:
+            finish = _clean_text(row_text)
+        if not finish:
+            continue
+        dedup_key = f"{article}"
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
         out.append({
             "option_group": "cover_variant",
-            "option_label": str(r.get("variant_label") or r.get("Ausführung") or article),
+            "option_label": finish,
             "option_sku": article,
-            "option_meta": str(r.get("_row_text") or ""),
+            "option_meta": row_text[:220],
         })
     return out
 ROLE_PRIORITY = {
