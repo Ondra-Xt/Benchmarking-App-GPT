@@ -431,19 +431,25 @@ class PipelineExportTests(unittest.TestCase):
         with patch.dict(pipeline.CONNECTORS, {"viega": _FakeFallbackConnector()}, clear=True):
             products, _comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
         paired_ids = set(products[products["promotion_reason"] == "tray_base_with_cover_pairing"]["product_id"].tolist())
+        component_ids = set(products[products["promotion_reason"] == "cover_only_component"]["product_id"].tolist())
         self.assertIn("viega-69631__649982", paired_ids)
         self.assertIn("viega-69631__806132", paired_ids)
         self.assertIn("viega-69631__775070", paired_ids)
         self.assertIn("viega-69631__775087", paired_ids)
         self.assertIn("viega-69631__775094", paired_ids)
-        explicit_cnt = evidence[evidence["label"] == "explicit_tempoplex_cover_override_applied_count"]["snippet"].tolist()
+        self.assertIn("viega-69640__775070", component_ids)
+        self.assertIn("viega-69640__775087", component_ids)
+        self.assertIn("viega-69640__775094", component_ids)
+        explicit_cnt = evidence[evidence["label"] == "explicit_tempoplex_6964_seed_applied_count"]["snippet"].tolist()
         self.assertTrue(explicit_cnt and int(explicit_cnt[0]) >= 3)
-        explicit_articles = evidence[evidence["label"] == "explicit_tempoplex_cover_override_articles"]["snippet"].tolist()
+        explicit_articles = evidence[evidence["label"] == "explicit_tempoplex_6964_seed_articles"]["snippet"].tolist()
         self.assertTrue(explicit_articles and "775070" in explicit_articles[0] and "775087" in explicit_articles[0] and "775094" in explicit_articles[0])
-        sample_explicit = evidence[evidence["label"] == "sample_explicit_tempoplex_variant_products"]["snippet"].tolist()
+        sample_explicit = evidence[evidence["label"] == "sample_explicit_tempoplex_6964_seed_rows"]["snippet"].tolist()
         self.assertTrue(sample_explicit and "775070" in sample_explicit[0])
+        seeded_opts = bom[(bom["option_group"] == "cover_variant") & (bom["option_sku"].isin(["775070", "775087", "775094"]))]
+        self.assertEqual(set(seeded_opts["option_sku"].tolist()), {"775070", "775087", "775094"})
         self.assertTrue(excluded.empty)
-        self.assertTrue(bom.empty)
+        self.assertFalse(bom.empty)
 
     def test_tempoplex_final_fallback_emits_pair_when_family_hints_are_missing(self):
         registry = pd.DataFrame(

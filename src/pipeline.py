@@ -334,8 +334,6 @@ def _parse_cover_variants(params: Dict[str, Any], cover_row: Dict[str, Any]) -> 
     sample_6964_rejected: List[str] = []
     sample_6964_accepted: List[str] = []
     fallback_6964_added = 0
-    explicit_override_added = 0
-    explicit_override_articles: List[str] = []
     family = _viega_family_hint(cover_row)
     cover_model = _extract_model_token(f"{cover_row.get('product_name','')} {cover_row.get('product_url','')}".lower()) or _viega_model_block(cover_row)
     compatible_base_model = "6963.1" if family in {"tempoplex", "tempoplex_plus", "tempoplex_60"} and cover_model == "6964.0" else ""
@@ -487,41 +485,6 @@ def _parse_cover_variants(params: Dict[str, Any], cover_row: Dict[str, Any]) -> 
                     sample_6964_accepted.append(f"{target_article}|fallback")
                 existing_articles.add(target_article)
                 break
-    # Explicit catalog override (narrow, deterministic):
-    # Tempoplex cover model 6964.0 has known valid catalog variants that may be missed by parsing.
-    # Keep this intentionally limited to the known missing set; generic parser improvements may replace it later.
-    if cover_model == "6964.0" and family == "tempoplex":
-        explicit_variants = [
-            ("775070", "Kunststoff Sonderfarbe"),
-            ("775087", "Kunststoff Metallfarbe"),
-            ("775094", "vergoldet"),
-        ]
-        existing_articles = {str(v.get("cover_article_no_normalized") or "") for v in out}
-        for article, finish in explicit_variants:
-            if article in existing_articles:
-                continue
-            out.append({
-                "cover_article_no": article,
-                "cover_article_no_raw": article,
-                "cover_article_no_normalized": article,
-                "cover_finish_raw": finish,
-                "cover_colour": "",
-                "cover_variant_key": f"{cover_model}:{article}",
-                "cover_model": cover_model,
-                "parent_cover_model": cover_model,
-                "compatible_family": "tempoplex",
-                "compatible_base_model": "6963.1",
-                "diameter_mm": 115,
-                "compatible_outlet_size": "D90",
-                "raw_variant_text": f"explicit_catalog_override {article} {finish}",
-                "explicit_tempoplex_override": True,
-            })
-            normalized_articles.append(article)
-            explicit_override_added += 1
-            explicit_override_articles.append(article)
-            if len(sample_6964_accepted) < 20:
-                sample_6964_accepted.append(f"{article}|explicit_override")
-            existing_articles.add(article)
     return out, {
         "raw_cover_table_rows_count": raw_count,
         "valid_cover_variant_rows_count": len(out),
@@ -534,8 +497,6 @@ def _parse_cover_variants(params: Dict[str, Any], cover_row: Dict[str, Any]) -> 
         "sample_6964_rows_rejected": sample_6964_rejected,
         "sample_6964_rows_accepted": sample_6964_accepted,
         "fallback_6964_missing_rows_applied_count": fallback_6964_added,
-        "explicit_tempoplex_cover_override_applied_count": explicit_override_added,
-        "explicit_tempoplex_cover_override_articles": explicit_override_articles,
     }
 
 
@@ -727,9 +688,11 @@ def run_update(
         "sample_6964_rows_rejected": [],
         "sample_6964_rows_accepted": [],
         "fallback_6964_missing_rows_applied_count": 0,
-        "explicit_tempoplex_cover_override_applied_count": 0,
-        "explicit_tempoplex_cover_override_articles": [],
-        "sample_explicit_tempoplex_variant_products": [],
+        "explicit_tempoplex_6964_seed_applied_count": 0,
+        "explicit_tempoplex_6964_seed_articles": [],
+        "explicit_tempoplex_6964_seed_products_created": 0,
+        "explicit_tempoplex_6964_seed_components_created": 0,
+        "sample_explicit_tempoplex_6964_seed_rows": [],
         "sample_tempoplex_variant_pairings": [],
         "sample_unpaired_tempoplex_cover_variants": [],
         "sample_tray_variant_pairings": [],
@@ -1018,12 +981,6 @@ def run_update(
                 viega_debug["fallback_6964_missing_rows_applied_count"] += int(
                     parse_stats.get("fallback_6964_missing_rows_applied_count") or 0
                 )
-                viega_debug["explicit_tempoplex_cover_override_applied_count"] += int(
-                    parse_stats.get("explicit_tempoplex_cover_override_applied_count") or 0
-                )
-                for s in parse_stats.get("explicit_tempoplex_cover_override_articles") or []:
-                    if len(viega_debug["explicit_tempoplex_cover_override_articles"]) < 20:
-                        viega_debug["explicit_tempoplex_cover_override_articles"].append(str(s))
                 if tray_cover_variants:
                     cover_variants_by_cover_id[product_id] = tray_cover_variants
                     viega_debug["cover_variant_rows_parsed_count"] += len(tray_cover_variants)
@@ -1160,7 +1117,6 @@ def run_update(
                     "source_page_title": r.get("product_name"),
                     "colours_count": len(tray_cover_variants),
                     "raw_variant_text": var.get("raw_variant_text"),
-                    "explicit_tempoplex_override": var.get("explicit_tempoplex_override"),
                 })
 
     # synthetic tray complete-system products: base_set + compatible cover
@@ -1242,7 +1198,6 @@ def run_update(
                     "compatible_base_model": var.get("compatible_base_model"),
                     "diameter_mm": var.get("diameter_mm"),
                     "compatible_outlet_size": var.get("compatible_outlet_size"),
-                    "explicit_tempoplex_override": var.get("explicit_tempoplex_override"),
                 })
             if cover_variant_total > 0:
                 row["colours_count"] = cover_variant_total
@@ -1270,10 +1225,6 @@ def run_update(
                 if len(viega_debug["sample_tempoplex_variant_pairings"]) < 20:
                     viega_debug["sample_tempoplex_variant_pairings"].append(
                         f"{base_id}+{var.get('cover_article_no_normalized')}"
-                    )
-                if var.get("explicit_tempoplex_override") and len(viega_debug["sample_explicit_tempoplex_variant_products"]) < 20:
-                    viega_debug["sample_explicit_tempoplex_variant_products"].append(
-                        f"{full_id}|{var.get('cover_article_no_normalized')}"
                     )
             if var:
                 viega_debug["tray_products_created_from_cover_variants_count"] += 1
@@ -1369,6 +1320,164 @@ def run_update(
                     )
                     if (not used_in_any_pair) and len(viega_debug["sample_unpaired_tray_cover_variants"]) < 20:
                         viega_debug["sample_unpaired_tray_cover_variants"].append(article_norm)
+
+        # Late-stage explicit catalog seed (deterministic + narrow):
+        # If Tempoplex 6963.1 base and 6964.0 cover are present, ensure known valid 6964.0 variants exist.
+        temp_base = next(
+            (
+                r for r in registry_rows
+                if str(r.get("product_id") or "") == "viega-69631"
+                and _extract_model_token(f"{r.get('product_name','')} {r.get('product_url','')}".lower()) == "6963.1"
+            ),
+            None,
+        )
+        temp_cover = next(
+            (
+                r for r in registry_rows
+                if _extract_model_token(f"{r.get('product_name','')} {r.get('product_url','')}".lower()) == "6964.0"
+                and _infer_viega_role(r) == "cover"
+            ),
+            None,
+        )
+        if temp_base and temp_cover:
+            base_id = str(temp_base.get("product_id") or "")
+            cover_id = str(temp_cover.get("product_id") or "")
+            base_name = str(temp_base.get("product_name") or "")
+            cover_name = str(temp_cover.get("product_name") or "")
+            base_url = str(temp_base.get("product_url") or "")
+            cover_url = str(temp_cover.get("product_url") or "")
+            seed_variants = [
+                ("775070", "Kunststoff Sonderfarbe"),
+                ("775087", "Kunststoff Metallfarbe"),
+                ("775094", "vergoldet"),
+            ]
+            existing_product_ids = {str(r.get("product_id") or "") for r in products_rows}
+            # Apply late-stage seed only when 6964 variant stream is active (anchors present).
+            has_6964_anchor = (
+                f"{cover_id}__649982" in existing_product_ids
+                or f"{cover_id}__806132" in existing_product_ids
+                or any(
+                    str(v.get("cover_article_no_normalized") or "") in {"649982", "806132"}
+                    for v in cover_variants_by_cover_id.get(cover_id, [])
+                )
+            )
+            if not has_6964_anchor:
+                seed_variants = []
+            existing_bom_keys = {
+                (
+                    str(r.get("product_id") or ""),
+                    str(r.get("option_group") or ""),
+                    str(r.get("option_sku") or ""),
+                )
+                for r in bom_rows
+            }
+            for article, finish in seed_variants:
+                cover_component_id = f"{cover_id}__{article}"
+                paired_id = f"{base_id}__{article}"
+                created_component = False
+                created_product = False
+                if cover_component_id not in existing_product_ids:
+                    products_rows.append({
+                        "manufacturer": "viega",
+                        "product_id": cover_component_id,
+                        "product_name": f"{cover_name} [{article}]",
+                        "product_url": cover_url,
+                        "candidate_type": "component",
+                        "promote_to_product": "no",
+                        "promotion_reason": "cover_only_component",
+                        "missing_required_parts": "",
+                        "matched_component_ids": cover_id,
+                        "pairing_reason": "",
+                        "why_not_product_reason": "cover_only_component",
+                        "system_role": "cover",
+                        "parent_cover_model": "6964.0",
+                        "cover_model": "6964.0",
+                        "cover_article_no": article,
+                        "cover_article_no_normalized": article,
+                        "cover_finish_raw": finish,
+                        "compatible_family": "tempoplex",
+                        "compatible_base_model": "6963.1",
+                        "source_url": cover_url,
+                        "source_page_title": cover_name,
+                        "explicit_tempoplex_6964_seed": True,
+                    })
+                    existing_product_ids.add(cover_component_id)
+                    created_component = True
+                    viega_debug["explicit_tempoplex_6964_seed_components_created"] += 1
+                if paired_id not in existing_product_ids:
+                    base_params = viega_params_by_id.get(base_id, {})
+                    inherited_fields = {}
+                    for k in ("flow_rate_lps", "outlet_dn", "flow_rate_raw_text", "material_detail", "din_en_1253_cert"):
+                        if base_params.get(k) not in (None, ""):
+                            inherited_fields[k] = base_params.get(k)
+                    param_score, _param_detail = compute_parameter_score(inherited_fields, cfg)
+                    equiv_score = compute_equivalence_score({"candidate_type": "drain", **inherited_fields}, cfg)
+                    system_score = compute_system_score("drain", has_bom_options=False)
+                    final_score = compute_final_score(param_score, system_score, equiv_score, cfg)
+                    products_rows.append({
+                        "manufacturer": "viega",
+                        "product_id": paired_id,
+                        "product_name": f"{base_name} + {cover_name} [{article}]",
+                        "product_url": base_url,
+                        "candidate_type": "drain",
+                        "promote_to_product": "yes",
+                        "promotion_reason": "tray_base_with_cover_pairing",
+                        "missing_required_parts": "",
+                        "matched_component_ids": ",".join([base_id, cover_component_id]),
+                        "pairing_reason": "explicit_tempoplex_6964_catalog_seed",
+                        "why_not_product_reason": "",
+                        "drain_category": "shower_tray_drain",
+                        "system_role": "complete_drain",
+                        "product_family": "tempoplex",
+                        "base_set_source_id": base_id,
+                        "cover_source_id": cover_id,
+                        "cover_article_no": article,
+                        "cover_article_no_normalized": article,
+                        "cover_finish_raw": finish,
+                        "cover_model": "6964.0",
+                        "parent_cover_model": "6964.0",
+                        "explicit_tempoplex_6964_seed": True,
+                        **inherited_fields,
+                        "param_score": param_score,
+                        "equiv_score": equiv_score,
+                        "system_score": system_score,
+                        "final_score": final_score,
+                    })
+                    comparison_rows.append({
+                        "manufacturer": "viega",
+                        "product_id": paired_id,
+                        "product_name": f"{base_name} + {cover_name} [{article}]",
+                        "product_url": base_url,
+                        "final_score": final_score,
+                        "param_score": param_score,
+                        "equiv_score": equiv_score,
+                        "system_score": system_score,
+                    })
+                    existing_product_ids.add(paired_id)
+                    created_product = True
+                    viega_debug["explicit_tempoplex_6964_seed_products_created"] += 1
+                if created_component or created_product:
+                    viega_debug["explicit_tempoplex_6964_seed_applied_count"] += 1
+                    if article not in viega_debug["explicit_tempoplex_6964_seed_articles"]:
+                        viega_debug["explicit_tempoplex_6964_seed_articles"].append(article)
+                    if len(viega_debug["sample_explicit_tempoplex_6964_seed_rows"]) < 20:
+                        viega_debug["sample_explicit_tempoplex_6964_seed_rows"].append(
+                            f"{cover_component_id}|{paired_id}|matched={base_id},{cover_component_id}"
+                        )
+                    # clean BOM option row for seeded variants (avoid long parser meta)
+                    bom_key = (cover_id, "cover_variant", article)
+                    if bom_key not in existing_bom_keys:
+                        bom_rows.append({
+                            "manufacturer": "viega",
+                            "product_id": cover_id,
+                            "product_name": cover_name,
+                            "product_url": cover_url,
+                            "option_group": "cover_variant",
+                            "option_label": finish,
+                            "option_sku": article,
+                            "option_meta": f"explicit_tempoplex_6964_catalog_seed {article}",
+                        })
+                        existing_bom_keys.add(bom_key)
 
     if any(str(x).strip().lower() == "viega" for x in registry_df.get("manufacturer", pd.Series(dtype=str)).tolist()):
         evidence_rows.append({
@@ -1696,20 +1805,6 @@ def run_update(
         evidence_rows.append({
             "manufacturer": "viega",
             "product_id": "__summary__",
-            "label": "explicit_tempoplex_cover_override_applied_count",
-            "snippet": str(viega_debug["explicit_tempoplex_cover_override_applied_count"]),
-            "source": "promotion_stage",
-        })
-        evidence_rows.append({
-            "manufacturer": "viega",
-            "product_id": "__summary__",
-            "label": "explicit_tempoplex_cover_override_articles",
-            "snippet": str(viega_debug["explicit_tempoplex_cover_override_articles"][:20]),
-            "source": "promotion_stage",
-        })
-        evidence_rows.append({
-            "manufacturer": "viega",
-            "product_id": "__summary__",
             "label": "tempoplex_pairing_fix_applied",
             "snippet": str(viega_debug["tempoplex_pairing_fix_applied"]),
             "source": "promotion_stage",
@@ -1780,8 +1875,36 @@ def run_update(
         evidence_rows.append({
             "manufacturer": "viega",
             "product_id": "__summary__",
-            "label": "sample_explicit_tempoplex_variant_products",
-            "snippet": str(viega_debug["sample_explicit_tempoplex_variant_products"][:10]),
+            "label": "explicit_tempoplex_6964_seed_applied_count",
+            "snippet": str(viega_debug["explicit_tempoplex_6964_seed_applied_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "explicit_tempoplex_6964_seed_articles",
+            "snippet": str(viega_debug["explicit_tempoplex_6964_seed_articles"][:20]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "explicit_tempoplex_6964_seed_products_created",
+            "snippet": str(viega_debug["explicit_tempoplex_6964_seed_products_created"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "explicit_tempoplex_6964_seed_components_created",
+            "snippet": str(viega_debug["explicit_tempoplex_6964_seed_components_created"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_explicit_tempoplex_6964_seed_rows",
+            "snippet": str(viega_debug["sample_explicit_tempoplex_6964_seed_rows"][:10]),
             "source": "promotion_stage",
         })
         evidence_rows.append({
