@@ -418,8 +418,7 @@ class PipelineExportTests(unittest.TestCase):
                 if "abdeckhaube-6964-0" in url.lower():
                     base["article_rows_json"] = (
                         '[{"article_no":"649 982","variant_label":"Kunststoff verchromt","_row_text":"Kunststoff verchromt 649 982"},'
-                        '{"article_no":"806 132","variant_label":"Kunststoff schwarz matt","_row_text":"Kunststoff schwarz matt 806 132"},'
-                        '{"article_no":"775 070 775 087 775 094","variant_label":"Kunststoff Sonderfarbe Metallfarbe vergoldet","_row_text":"Kunststoff Sonderfarbe 775 070; Kunststoff Metallfarbe 775 087; vergoldet 775 094"}]'
+                        '{"article_no":"806 132","variant_label":"Kunststoff schwarz matt","_row_text":"Kunststoff schwarz matt 806 132"}]'
                     )
                 return base
 
@@ -437,8 +436,12 @@ class PipelineExportTests(unittest.TestCase):
         self.assertIn("viega-69631__775070", paired_ids)
         self.assertIn("viega-69631__775087", paired_ids)
         self.assertIn("viega-69631__775094", paired_ids)
-        fallback_cnt = evidence[evidence["label"] == "fallback_6964_missing_rows_applied_count"]["snippet"].tolist()
-        self.assertTrue(fallback_cnt and int(fallback_cnt[0]) >= 3)
+        explicit_cnt = evidence[evidence["label"] == "explicit_tempoplex_cover_override_applied_count"]["snippet"].tolist()
+        self.assertTrue(explicit_cnt and int(explicit_cnt[0]) >= 3)
+        explicit_articles = evidence[evidence["label"] == "explicit_tempoplex_cover_override_articles"]["snippet"].tolist()
+        self.assertTrue(explicit_articles and "775070" in explicit_articles[0] and "775087" in explicit_articles[0] and "775094" in explicit_articles[0])
+        sample_explicit = evidence[evidence["label"] == "sample_explicit_tempoplex_variant_products"]["snippet"].tolist()
+        self.assertTrue(sample_explicit and "775070" in sample_explicit[0])
         self.assertTrue(excluded.empty)
         self.assertTrue(bom.empty)
 

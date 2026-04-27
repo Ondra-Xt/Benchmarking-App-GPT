@@ -334,6 +334,8 @@ def _parse_cover_variants(params: Dict[str, Any], cover_row: Dict[str, Any]) -> 
     sample_6964_rejected: List[str] = []
     sample_6964_accepted: List[str] = []
     fallback_6964_added = 0
+    explicit_override_added = 0
+    explicit_override_articles: List[str] = []
     family = _viega_family_hint(cover_row)
     cover_model = _extract_model_token(f"{cover_row.get('product_name','')} {cover_row.get('product_url','')}".lower()) or _viega_model_block(cover_row)
     compatible_base_model = "6963.1" if family in {"tempoplex", "tempoplex_plus", "tempoplex_60"} and cover_model == "6964.0" else ""
@@ -485,6 +487,41 @@ def _parse_cover_variants(params: Dict[str, Any], cover_row: Dict[str, Any]) -> 
                     sample_6964_accepted.append(f"{target_article}|fallback")
                 existing_articles.add(target_article)
                 break
+    # Explicit catalog override (narrow, deterministic):
+    # Tempoplex cover model 6964.0 has known valid catalog variants that may be missed by parsing.
+    # Keep this intentionally limited to the known missing set; generic parser improvements may replace it later.
+    if cover_model == "6964.0" and family == "tempoplex":
+        explicit_variants = [
+            ("775070", "Kunststoff Sonderfarbe"),
+            ("775087", "Kunststoff Metallfarbe"),
+            ("775094", "vergoldet"),
+        ]
+        existing_articles = {str(v.get("cover_article_no_normalized") or "") for v in out}
+        for article, finish in explicit_variants:
+            if article in existing_articles:
+                continue
+            out.append({
+                "cover_article_no": article,
+                "cover_article_no_raw": article,
+                "cover_article_no_normalized": article,
+                "cover_finish_raw": finish,
+                "cover_colour": "",
+                "cover_variant_key": f"{cover_model}:{article}",
+                "cover_model": cover_model,
+                "parent_cover_model": cover_model,
+                "compatible_family": "tempoplex",
+                "compatible_base_model": "6963.1",
+                "diameter_mm": 115,
+                "compatible_outlet_size": "D90",
+                "raw_variant_text": f"explicit_catalog_override {article} {finish}",
+                "explicit_tempoplex_override": True,
+            })
+            normalized_articles.append(article)
+            explicit_override_added += 1
+            explicit_override_articles.append(article)
+            if len(sample_6964_accepted) < 20:
+                sample_6964_accepted.append(f"{article}|explicit_override")
+            existing_articles.add(article)
     return out, {
         "raw_cover_table_rows_count": raw_count,
         "valid_cover_variant_rows_count": len(out),
@@ -497,6 +534,8 @@ def _parse_cover_variants(params: Dict[str, Any], cover_row: Dict[str, Any]) -> 
         "sample_6964_rows_rejected": sample_6964_rejected,
         "sample_6964_rows_accepted": sample_6964_accepted,
         "fallback_6964_missing_rows_applied_count": fallback_6964_added,
+        "explicit_tempoplex_cover_override_applied_count": explicit_override_added,
+        "explicit_tempoplex_cover_override_articles": explicit_override_articles,
     }
 
 
@@ -688,6 +727,9 @@ def run_update(
         "sample_6964_rows_rejected": [],
         "sample_6964_rows_accepted": [],
         "fallback_6964_missing_rows_applied_count": 0,
+        "explicit_tempoplex_cover_override_applied_count": 0,
+        "explicit_tempoplex_cover_override_articles": [],
+        "sample_explicit_tempoplex_variant_products": [],
         "sample_tempoplex_variant_pairings": [],
         "sample_unpaired_tempoplex_cover_variants": [],
         "sample_tray_variant_pairings": [],
@@ -976,6 +1018,12 @@ def run_update(
                 viega_debug["fallback_6964_missing_rows_applied_count"] += int(
                     parse_stats.get("fallback_6964_missing_rows_applied_count") or 0
                 )
+                viega_debug["explicit_tempoplex_cover_override_applied_count"] += int(
+                    parse_stats.get("explicit_tempoplex_cover_override_applied_count") or 0
+                )
+                for s in parse_stats.get("explicit_tempoplex_cover_override_articles") or []:
+                    if len(viega_debug["explicit_tempoplex_cover_override_articles"]) < 20:
+                        viega_debug["explicit_tempoplex_cover_override_articles"].append(str(s))
                 if tray_cover_variants:
                     cover_variants_by_cover_id[product_id] = tray_cover_variants
                     viega_debug["cover_variant_rows_parsed_count"] += len(tray_cover_variants)
@@ -1112,6 +1160,7 @@ def run_update(
                     "source_page_title": r.get("product_name"),
                     "colours_count": len(tray_cover_variants),
                     "raw_variant_text": var.get("raw_variant_text"),
+                    "explicit_tempoplex_override": var.get("explicit_tempoplex_override"),
                 })
 
     # synthetic tray complete-system products: base_set + compatible cover
@@ -1193,6 +1242,7 @@ def run_update(
                     "compatible_base_model": var.get("compatible_base_model"),
                     "diameter_mm": var.get("diameter_mm"),
                     "compatible_outlet_size": var.get("compatible_outlet_size"),
+                    "explicit_tempoplex_override": var.get("explicit_tempoplex_override"),
                 })
             if cover_variant_total > 0:
                 row["colours_count"] = cover_variant_total
@@ -1220,6 +1270,10 @@ def run_update(
                 if len(viega_debug["sample_tempoplex_variant_pairings"]) < 20:
                     viega_debug["sample_tempoplex_variant_pairings"].append(
                         f"{base_id}+{var.get('cover_article_no_normalized')}"
+                    )
+                if var.get("explicit_tempoplex_override") and len(viega_debug["sample_explicit_tempoplex_variant_products"]) < 20:
+                    viega_debug["sample_explicit_tempoplex_variant_products"].append(
+                        f"{full_id}|{var.get('cover_article_no_normalized')}"
                     )
             if var:
                 viega_debug["tray_products_created_from_cover_variants_count"] += 1
@@ -1642,6 +1696,20 @@ def run_update(
         evidence_rows.append({
             "manufacturer": "viega",
             "product_id": "__summary__",
+            "label": "explicit_tempoplex_cover_override_applied_count",
+            "snippet": str(viega_debug["explicit_tempoplex_cover_override_applied_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "explicit_tempoplex_cover_override_articles",
+            "snippet": str(viega_debug["explicit_tempoplex_cover_override_articles"][:20]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
             "label": "tempoplex_pairing_fix_applied",
             "snippet": str(viega_debug["tempoplex_pairing_fix_applied"]),
             "source": "promotion_stage",
@@ -1707,6 +1775,13 @@ def run_update(
             "product_id": "__summary__",
             "label": "sample_tempoplex_variant_pairings",
             "snippet": str(viega_debug["sample_tempoplex_variant_pairings"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_explicit_tempoplex_variant_products",
+            "snippet": str(viega_debug["sample_explicit_tempoplex_variant_products"][:10]),
             "source": "promotion_stage",
         })
         evidence_rows.append({
