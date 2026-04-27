@@ -1339,9 +1339,29 @@ def run_update(
             ),
             None,
         )
+        # fallback cover source from already-emitted 6964 anchor component variants if raw cover row is absent
+        if (not temp_cover) and temp_base:
+            anchor_component = next(
+                (
+                    r for r in products_rows
+                    if str(r.get("manufacturer") or "").lower() == "viega"
+                    and str(r.get("candidate_type") or "").lower() == "component"
+                    and str(r.get("system_role") or "").lower() == "cover"
+                    and str(r.get("product_id") or "").startswith("viega-69640__")
+                ),
+                None,
+            )
+            if anchor_component:
+                temp_cover = {
+                    "product_id": "viega-69640",
+                    "product_name": str(anchor_component.get("source_page_title") or "Tempoplex-Abdeckhaube 6964.0"),
+                    "product_url": str(anchor_component.get("source_url") or anchor_component.get("product_url") or ""),
+                }
+
         if temp_base and temp_cover:
             base_id = str(temp_base.get("product_id") or "")
             cover_id = str(temp_cover.get("product_id") or "")
+            cover_base_id = cover_id.split("__")[0] if "__" in cover_id else cover_id
             base_name = str(temp_base.get("product_name") or "")
             cover_name = str(temp_cover.get("product_name") or "")
             base_url = str(temp_base.get("product_url") or "")
@@ -1354,8 +1374,8 @@ def run_update(
             existing_product_ids = {str(r.get("product_id") or "") for r in products_rows}
             # Apply late-stage seed only when 6964 variant stream is active (anchors present).
             has_6964_anchor = (
-                f"{cover_id}__649982" in existing_product_ids
-                or f"{cover_id}__806132" in existing_product_ids
+                f"{cover_base_id}__649982" in existing_product_ids
+                or f"{cover_base_id}__806132" in existing_product_ids
                 or any(
                     str(v.get("cover_article_no_normalized") or "") in {"649982", "806132"}
                     for v in cover_variants_by_cover_id.get(cover_id, [])
@@ -1372,7 +1392,7 @@ def run_update(
                 for r in bom_rows
             }
             for article, finish in seed_variants:
-                cover_component_id = f"{cover_id}__{article}"
+                cover_component_id = f"{cover_base_id}__{article}"
                 paired_id = f"{base_id}__{article}"
                 created_component = False
                 created_product = False
@@ -1386,7 +1406,7 @@ def run_update(
                         "promote_to_product": "no",
                         "promotion_reason": "cover_only_component",
                         "missing_required_parts": "",
-                        "matched_component_ids": cover_id,
+                        "matched_component_ids": cover_base_id,
                         "pairing_reason": "",
                         "why_not_product_reason": "cover_only_component",
                         "system_role": "cover",
@@ -1430,7 +1450,7 @@ def run_update(
                         "system_role": "complete_drain",
                         "product_family": "tempoplex",
                         "base_set_source_id": base_id,
-                        "cover_source_id": cover_id,
+                        "cover_source_id": cover_base_id,
                         "cover_article_no": article,
                         "cover_article_no_normalized": article,
                         "cover_finish_raw": finish,
@@ -1465,11 +1485,11 @@ def run_update(
                             f"{cover_component_id}|{paired_id}|matched={base_id},{cover_component_id}"
                         )
                     # clean BOM option row for seeded variants (avoid long parser meta)
-                    bom_key = (cover_id, "cover_variant", article)
+                    bom_key = (cover_base_id, "cover_variant", article)
                     if bom_key not in existing_bom_keys:
                         bom_rows.append({
                             "manufacturer": "viega",
-                            "product_id": cover_id,
+                            "product_id": cover_base_id,
                             "product_name": cover_name,
                             "product_url": cover_url,
                             "option_group": "cover_variant",

@@ -469,6 +469,28 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue(excluded.empty)
         self.assertTrue(bom.empty)
 
+    def test_late_stage_seed_works_when_only_6964_anchor_variants_exist(self):
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "viega", "product_id": "viega-69631", "product_name": "Tempoplex-Ablauf 6963.1", "product_url": "https://v.example/Tempoplex-Ablauf-6963-1.html", "candidate_type": "component", "complete_system": "yes", "system_role": "base_set", "discovery_seed_family": "tempoplex"},
+                {"manufacturer": "viega", "product_id": "viega-69640__649982", "product_name": "Tempoplex-Abdeckhaube 6964.0 [649982]", "product_url": "https://v.example/Tempoplex-Abdeckhaube-6964-0.html", "candidate_type": "component", "complete_system": "yes", "system_role": "cover", "discovery_seed_family": "tempoplex"},
+                {"manufacturer": "viega", "product_id": "viega-69640__806132", "product_name": "Tempoplex-Abdeckhaube 6964.0 [806132]", "product_url": "https://v.example/Tempoplex-Abdeckhaube-6964-0.html", "candidate_type": "component", "complete_system": "yes", "system_role": "cover", "discovery_seed_family": "tempoplex"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"viega": _FakeViegaConnector()}, clear=True):
+            products, _comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
+        ids = set(products["product_id"].tolist())
+        self.assertIn("viega-69640__775070", ids)
+        self.assertIn("viega-69640__775087", ids)
+        self.assertIn("viega-69640__775094", ids)
+        self.assertIn("viega-69631__775070", ids)
+        self.assertIn("viega-69631__775087", ids)
+        self.assertIn("viega-69631__775094", ids)
+        seed_cnt = evidence[evidence["label"] == "explicit_tempoplex_6964_seed_applied_count"]["snippet"].tolist()
+        self.assertTrue(seed_cnt and int(seed_cnt[0]) >= 3)
+        self.assertTrue(excluded.empty)
+        self.assertFalse(bom.empty)
+
     def test_paired_tray_product_inherits_hydraulic_fields_from_base_set(self):
         class _FakeInheritanceConnector(_FakeViegaConnector):
             @staticmethod
