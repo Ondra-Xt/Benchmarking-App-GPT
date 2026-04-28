@@ -274,11 +274,23 @@ class PipelineExportTests(unittest.TestCase):
         )
         self.assertFalse(((components["promote_to_product"] == "yes") & (components["promotion_reason"] == "default")).any())
         self.assertTrue(excluded.empty)
-        self.assertTrue(bom.empty)
+        self.assertFalse(bom.empty)
+        aco_bom = bom[bom["manufacturer"] == "aco"]
+        self.assertFalse(aco_bom.empty)
+        self.assertTrue({"component_id", "option_type", "option_family", "option_role", "parent_family", "source_url", "option_meta"}.issubset(set(aco_bom.columns)))
+        # ensure options are concise and cleaned
+        self.assertTrue((aco_bom["option_meta"].astype(str).str.len() < 180).all())
+        self.assertTrue((aco_bom["option_label"].astype(str).str.len() < 150).all())
+        self.assertTrue((aco_bom["option_label"].astype(str).str.contains("wishlist|warenkorb|menge", case=False, regex=True) == False).all())
+        # spot-check at least one showerdrain base->grate and one accessory option
+        self.assertTrue(((aco_bom["option_type"] == "compatible_grate") & (aco_bom["option_role"] == "grate")).any())
+        self.assertTrue(((aco_bom["option_type"] == "optional_accessory") & (aco_bom["option_role"] == "accessory")).any())
         aco_summary_labels = set(evidence[evidence["manufacturer"] == "aco"]["label"].tolist())
         self.assertIn("aco_candidates_by_role", aco_summary_labels)
         self.assertIn("aco_products_by_role", aco_summary_labels)
         self.assertIn("aco_components_by_role", aco_summary_labels)
+        self.assertIn("aco_bom_options_count", aco_summary_labels)
+        self.assertIn("aco_bom_options_by_family", aco_summary_labels)
 
     def test_viega_lone_entities_remain_components_not_products(self):
         registry = pd.DataFrame(
@@ -298,6 +310,34 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue(excluded.empty)
         self.assertIn("Viega promotion", evidence["label"].tolist())
         self.assertTrue(bom.empty)
+
+    def test_aco_bom_family_aware_matching_for_easyflow_and_showerdrain(self):
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "aco", "product_id": "aco-easyflowplus-complete", "product_name": "ACO EasyFlow+ Komplettablauf DN50", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-plus-komplettablauf-dn50/", "candidate_type": "component", "complete_system": "component", "system_role": "complete_system", "product_family": "easyflowplus"},
+                {"manufacturer": "aco", "product_id": "aco-easyflowplus-body", "product_name": "ACO EasyFlow+ Einzelablauf DN50", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-plus-einzelablauf-dn50/", "candidate_type": "component", "complete_system": "component", "system_role": "drain_body", "product_family": "easyflowplus"},
+                {"manufacturer": "aco", "product_id": "aco-easyflowplus-grate", "product_name": "ACO EasyFlow+ Designrost", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-plus-designrost/", "candidate_type": "component", "complete_system": "component", "system_role": "grate", "product_family": "easyflowplus"},
+                {"manufacturer": "aco", "product_id": "aco-easyflowplus-adapter", "product_name": "ACO EasyFlow+ Aufsatzstücke", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-plus-aufsatzstuecke/", "candidate_type": "component", "complete_system": "component", "system_role": "accessory", "product_family": "easyflowplus"},
+                {"manufacturer": "aco", "product_id": "aco-showerdrainc-body", "product_name": "ACO ShowerDrain C Rinnenkörper", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper/", "candidate_type": "component", "complete_system": "component", "system_role": "drain_body", "product_family": "showerdrain_c"},
+                {"manufacturer": "aco", "product_id": "aco-showerdrainc-grate", "product_name": "ACO ShowerDrain C Designrost", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/designrost/", "candidate_type": "component", "complete_system": "component", "system_role": "grate", "product_family": "showerdrain_c"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"aco": _FakeAcoConnector()}, clear=True):
+            products, _comparison, _excluded, _evidence, bom = pipeline.run_update(registry, default_config())
+
+        drains = products[products["candidate_type"] == "drain"]
+        self.assertIn("aco-easyflowplus-complete", set(drains["product_id"].tolist()))
+        components = products[products["candidate_type"] == "component"].set_index("product_id")
+        self.assertEqual(components.loc["aco-easyflowplus-grate", "why_not_product_reason"], "cover_only_component")
+        self.assertEqual(components.loc["aco-easyflowplus-adapter", "why_not_product_reason"], "accessory_only")
+        self.assertEqual(components.loc["aco-easyflowplus-body", "why_not_product_reason"], "incomplete_assembly")
+
+        aco_bom = bom[bom["manufacturer"] == "aco"]
+        self.assertTrue(((aco_bom["product_id"] == "aco-easyflowplus-body") & (aco_bom["component_id"] == "aco-easyflowplus-grate") & (aco_bom["option_type"] == "compatible_grate")).any())
+        self.assertTrue(((aco_bom["product_id"] == "aco-easyflowplus-body") & (aco_bom["component_id"] == "aco-easyflowplus-adapter") & (aco_bom["option_type"] == "optional_accessory")).any())
+        self.assertTrue(((aco_bom["product_id"] == "aco-showerdrainc-body") & (aco_bom["component_id"] == "aco-showerdrainc-grate") & (aco_bom["option_type"] == "compatible_grate")).any())
+        # no cross-family pairings
+        self.assertFalse(((aco_bom["product_id"] == "aco-easyflowplus-body") & (aco_bom["component_id"] == "aco-showerdrainc-grate")).any())
 
     def test_viega_complete_assembly_promotes_body_to_product(self):
         registry = pd.DataFrame(
