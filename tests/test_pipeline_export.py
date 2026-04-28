@@ -208,9 +208,15 @@ class PipelineExportTests(unittest.TestCase):
                 {"manufacturer": "aco", "product_id": "aco-90108524", "product_name": "ACO ShowerDrain C 1000 mm (Artikel-Nr. 90108524)", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-90108524/", "candidate_type": "drain", "complete_system": "yes", "system_role": "drain_unit", "classification_reason": "article_row_variant"},
                 {"manufacturer": "aco", "product_id": "aco-90108534", "product_name": "ACO ShowerDrain C 1000 mm (Artikel-Nr. 90108534)", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-90108534/", "candidate_type": "drain", "complete_system": "yes", "system_role": "drain_unit", "classification_reason": "article_row_variant"},
                 {"manufacturer": "aco", "product_id": "aco-comp-showerpoint", "product_name": "ACO ShowerPoint", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-showerpoint/", "candidate_type": "component", "complete_system": "component", "system_role": "complete_system"},
+                {"manufacturer": "aco", "product_id": "aco-comp-passino", "product_name": "ACO Renovierungsablauf Passino", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-renovierungsablauf-passino/", "candidate_type": "component", "complete_system": "component", "system_role": "complete_system"},
                 {"manufacturer": "aco", "product_id": "aco-comp-family", "product_name": "ACO ShowerDrain S+", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/", "candidate_type": "component", "complete_system": "component", "system_role": "configuration_family"},
                 {"manufacturer": "aco", "product_id": "aco-comp-grate", "product_name": "ACO ShowerDrain C Designrost", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/designrost/", "candidate_type": "component", "complete_system": "component", "system_role": "grate"},
                 {"manufacturer": "aco", "product_id": "aco-comp-accessory", "product_name": "ACO ShowerStep", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/zubehoer/aco-showerstep/", "candidate_type": "component", "complete_system": "component", "system_role": "accessory"},
+                {"manufacturer": "aco", "product_id": "aco-fp-public-designrost", "product_name": "Design-Roste zur ShowerDrain Public 80/110/X", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/reihenduschrinnen/aco-showerdrain-public-80/designrost/", "candidate_type": "component", "complete_system": "component", "system_role": "complete_system"},
+                {"manufacturer": "aco", "product_id": "aco-fp-showerstep-keil", "product_name": "ACO ShowerStep – Gefällekeil", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/zubehoer/showerstep-gefaellekeil/", "candidate_type": "component", "complete_system": "component", "system_role": "complete_system"},
+                {"manufacturer": "aco", "product_id": "aco-fp-aufsatz", "product_name": "Aufsatzstücke", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aufsatzstuecke/", "candidate_type": "component", "complete_system": "component", "system_role": "complete_system"},
+                {"manufacturer": "aco", "product_id": "aco-fp-ablaufkoerper", "product_name": "Ablaufkörper Variant CR", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/ablaufkoerper-variant-cr/", "candidate_type": "component", "complete_system": "component", "system_role": "complete_system"},
+                {"manufacturer": "aco", "product_id": "aco-fp-config-family", "product_name": "ACO ShowerDrain Public 80 Komplettablauf Familie", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/reihenduschrinnen/aco-showerdrain-public-80/", "candidate_type": "component", "complete_system": "component", "system_role": "configuration_family"},
             ]
         )
         with patch.dict(pipeline.CONNECTORS, {"aco": _FakeAcoConnector()}, clear=True):
@@ -220,9 +226,20 @@ class PipelineExportTests(unittest.TestCase):
         components = products[products["candidate_type"] == "component"]
         self.assertTrue({"aco-90108544", "aco-90108554", "aco-90108524", "aco-90108534"}.issubset(set(drains["product_id"].tolist())))
         self.assertIn("aco-comp-showerpoint", set(drains["product_id"].tolist()))
+        self.assertIn("aco-comp-passino", set(drains["product_id"].tolist()))
         self.assertIn("aco-comp-family", set(components["product_id"].tolist()))
         self.assertIn("aco-comp-grate", set(components["product_id"].tolist()))
         self.assertIn("aco-comp-accessory", set(components["product_id"].tolist()))
+        self.assertIn("aco-fp-public-designrost", set(components["product_id"].tolist()))
+        self.assertIn("aco-fp-showerstep-keil", set(components["product_id"].tolist()))
+        self.assertIn("aco-fp-aufsatz", set(components["product_id"].tolist()))
+        self.assertIn("aco-fp-ablaufkoerper", set(components["product_id"].tolist()))
+        self.assertIn("aco-fp-config-family", set(components["product_id"].tolist()))
+        self.assertNotIn("aco-fp-public-designrost", set(drains["product_id"].tolist()))
+        self.assertNotIn("aco-fp-showerstep-keil", set(drains["product_id"].tolist()))
+        self.assertNotIn("aco-fp-aufsatz", set(drains["product_id"].tolist()))
+        self.assertNotIn("aco-fp-ablaufkoerper", set(drains["product_id"].tolist()))
+        self.assertNotIn("aco-fp-config-family", set(drains["product_id"].tolist()))
         self.assertEqual(
             components.set_index("product_id").loc["aco-comp-family", "why_not_product_reason"],
             "configuration_family_not_final_product",
@@ -234,6 +251,26 @@ class PipelineExportTests(unittest.TestCase):
         self.assertEqual(
             components.set_index("product_id").loc["aco-comp-accessory", "why_not_product_reason"],
             "accessory_only",
+        )
+        self.assertEqual(
+            components.set_index("product_id").loc["aco-fp-public-designrost", "why_not_product_reason"],
+            "cover_only_component",
+        )
+        self.assertEqual(
+            components.set_index("product_id").loc["aco-fp-showerstep-keil", "why_not_product_reason"],
+            "accessory_only",
+        )
+        self.assertEqual(
+            components.set_index("product_id").loc["aco-fp-aufsatz", "why_not_product_reason"],
+            "accessory_only",
+        )
+        self.assertEqual(
+            components.set_index("product_id").loc["aco-fp-ablaufkoerper", "why_not_product_reason"],
+            "incomplete_assembly",
+        )
+        self.assertEqual(
+            components.set_index("product_id").loc["aco-fp-config-family", "why_not_product_reason"],
+            "configuration_family_not_final_product",
         )
         self.assertFalse(((components["promote_to_product"] == "yes") & (components["promotion_reason"] == "default")).any())
         self.assertTrue(excluded.empty)

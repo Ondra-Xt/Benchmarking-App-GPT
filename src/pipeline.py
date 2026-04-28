@@ -103,6 +103,32 @@ def _classify_aco_promotion(row: Dict[str, Any], candidate_type: str) -> Tuple[s
     role = str(row.get("system_role") or "").strip().lower()
     txt = f"{row.get('product_name','')} {row.get('product_url','')}".lower()
     classification_reason = str(row.get("classification_reason") or "").strip().lower()
+    is_article_row_variant = candidate_type == "drain" and classification_reason == "article_row_variant"
+
+    # strict role-first guardrails: component roles must never be promoted by broad complete-system tokens
+    if role in ACO_CONFIGURATION_FAMILY_ROLES:
+        return "component", False, "configuration_family"
+    if role in ACO_COVER_ROLES:
+        return "component", False, "cover_only_component"
+    if role in ACO_ACCESSORY_ROLES:
+        return "component", False, "accessory_only"
+    if role in ACO_DRAIN_BODY_ROLES:
+        # preserve accepted ACO article-row variants as product drains
+        if is_article_row_variant:
+            return "drain", True, "article_row_variant"
+        return "component", False, "incomplete_assembly"
+
+    # explicit text guardrails from observed false positives
+    has_cover_tokens = any(t in txt for t in ("design-rost", "designrost", "design-rost", "design roste", "design-roste", "rost", "abdeckung"))
+    has_accessory_tokens = any(t in txt for t in ("showerstep", "gefällekeil", "gefaellekeil", "aufsatzstücke", "aufsatzstuecke"))
+    has_body_tokens = any(t in txt for t in ("ablaufkörper", "ablaufkoerper", "rinnenkörper", "rinnenkoerper"))
+    if not is_article_row_variant:
+        if has_cover_tokens:
+            return "component", False, "cover_only_component"
+        if has_accessory_tokens:
+            return "component", False, "accessory_only"
+        if has_body_tokens:
+            return "component", False, "incomplete_assembly"
 
     complete_signal = role in ACO_COMPLETE_SYSTEM_ROLES or any(
         token in txt for token in ("komplettablauf", "showerpoint", "passino", "passavant")
@@ -112,17 +138,8 @@ def _classify_aco_promotion(row: Dict[str, Any], candidate_type: str) -> Tuple[s
 
     if complete_signal:
         return "drain", True, "complete_system"
-    if role in ACO_CONFIGURATION_FAMILY_ROLES:
-        return "component", False, "configuration_family"
-    if role in ACO_COVER_ROLES:
-        return "component", False, "cover_only_component"
-    if role in ACO_ACCESSORY_ROLES:
-        return "component", False, "accessory_only"
-    if role in ACO_DRAIN_BODY_ROLES:
-        # preserve accepted ACO article-row variants as product drains
-        if candidate_type == "drain" and classification_reason == "article_row_variant":
-            return "drain", True, "article_row_variant"
-        return "component", False, "incomplete_assembly"
+    if is_article_row_variant:
+        return "drain", True, "article_row_variant"
     if candidate_type == "drain":
         return "drain", True, "default"
     return "component", False, "not_complete_system"
@@ -743,6 +760,23 @@ def run_update(
         "sample_unpaired_tempoplex_cover_variants": [],
         "sample_tray_variant_pairings": [],
         "sample_unpaired_tray_cover_variants": [],
+    }
+    tray_pairings_by_base_id: Dict[str, List[Dict[str, Any]]] = {}
+    tray_pairing_reason_by_base_id: Dict[str, str] = {}
+    tray_paired_cover_ids: Set[str] = set()
+    cover_variants_by_cover_id: Dict[str, List[Dict[str, Any]]] = {}
+    viega_params_by_id: Dict[str, Dict[str, Any]] = {}
+    aco_debug = {
+        "candidates_by_role": {},
+        "products_by_role": {},
+        "components_by_role": {},
+        "complete_systems_promoted_count": 0,
+        "complete_systems_promoted_sample": [],
+        "components_demoted_by_role_count": 0,
+        "components_with_promote_yes_count": 0,
+        "promotion_reason_counts": {},
+        "sample_aco_products": [],
+        "sample_aco_components": [],
     }
     tray_pairings_by_base_id: Dict[str, List[Dict[str, Any]]] = {}
     tray_pairing_reason_by_base_id: Dict[str, str] = {}
