@@ -778,6 +778,28 @@ def run_update(
         "sample_aco_products": [],
         "sample_aco_components": [],
     }
+    tray_pairings_by_base_id: Dict[str, List[Dict[str, Any]]] = {}
+    tray_pairing_reason_by_base_id: Dict[str, str] = {}
+    tray_paired_cover_ids: Set[str] = set()
+    cover_variants_by_cover_id: Dict[str, List[Dict[str, Any]]] = {}
+    viega_params_by_id: Dict[str, Dict[str, Any]] = {}
+    aco_debug = {
+        "candidates_by_role": {},
+        "products_by_role": {},
+        "components_by_role": {},
+        "complete_systems_promoted_count": 0,
+        "complete_systems_promoted_sample": [],
+        "components_demoted_by_role_count": 0,
+        "components_with_promote_yes_count": 0,
+        "promotion_reason_counts": {},
+        "sample_aco_products": [],
+        "sample_aco_components": [],
+    }
+    tray_pairings_by_base_id: Dict[str, List[Dict[str, Any]]] = {}
+    tray_pairing_reason_by_base_id: Dict[str, str] = {}
+    tray_paired_cover_ids: Set[str] = set()
+    cover_variants_by_cover_id: Dict[str, List[Dict[str, Any]]] = {}
+    viega_params_by_id: Dict[str, Dict[str, Any]] = {}
 
     if "manufacturer" in registry_df.columns:
         for _, rv in registry_df[registry_df["manufacturer"] == "viega"].iterrows():
@@ -1028,6 +1050,8 @@ def run_update(
 
             tray_incomplete_signal = is_tray and role == "base_set" and (_is_known_or_signaled_incomplete_tray_base(rowd) or not tray_matches)
             promote = (role in {"complete_drain"}) and (not non_promotable) and (not explicit_override) and len(missing_required_parts) == 0
+            if is_tray:
+                promote = False
             if promote:
                 reason = "promoted_complete_assembly"
             elif explicit_override:
