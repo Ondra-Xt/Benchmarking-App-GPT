@@ -171,11 +171,24 @@ def _aco_family_hint(row: Dict[str, Any]) -> str:
 
 def _aco_role_bucket(row: Dict[str, Any]) -> str:
     role = str(row.get("system_role") or "").strip().lower()
+    if not role:
+        why_not = str(row.get("why_not_product_reason") or "").strip().lower()
+        promo = str(row.get("promotion_reason") or "").strip().lower()
+        if promo == "complete_system":
+            role = "complete_system"
+        elif why_not == "configuration_family_not_final_product":
+            role = "configuration_family"
+        elif why_not == "cover_only_component":
+            role = "grate"
+        elif why_not == "accessory_only":
+            role = "accessory"
+        elif why_not == "incomplete_assembly":
+            role = "drain_body"
     txt = f"{row.get('product_name','')} {row.get('product_url','')}".lower()
     classification_reason = str(row.get("classification_reason") or "").strip().lower()
-    if role in ACO_COVER_ROLES or any(t in txt for t in ("designrost", "design-rost", "rost", "abdeckung")):
+    if role in ACO_COVER_ROLES or any(t in txt for t in ("designrost", "design-rost", "design-roste", "design roste", "rost", "abdeckung")):
         return "grate"
-    if role in ACO_ACCESSORY_ROLES or any(t in txt for t in ("showerstep", "gefällekeil", "gefaellekeil", "aufsatzstück", "aufsatzstueck", "adapter")):
+    if role in ACO_ACCESSORY_ROLES or any(t in txt for t in ("showerstep", "gefällekeil", "gefaellekeil", "aufsatzstück", "aufsatzstueck", "aufsatzstücke", "aufsatzstuecke", "adapter")):
         return "accessory"
     if role in ACO_DRAIN_BODY_ROLES or any(t in txt for t in ("rinnenkörper", "rinnenkoerper", "ablaufkörper", "ablaufkoerper", "einzelablauf")):
         if role == "drain_unit" and classification_reason == "article_row_variant":
@@ -803,6 +816,33 @@ def run_update(
         "sample_unpaired_tempoplex_cover_variants": [],
         "sample_tray_variant_pairings": [],
         "sample_unpaired_tray_cover_variants": [],
+    }
+    tray_pairings_by_base_id: Dict[str, List[Dict[str, Any]]] = {}
+    tray_pairing_reason_by_base_id: Dict[str, str] = {}
+    tray_paired_cover_ids: Set[str] = set()
+    cover_variants_by_cover_id: Dict[str, List[Dict[str, Any]]] = {}
+    viega_params_by_id: Dict[str, Dict[str, Any]] = {}
+    aco_debug = {
+        "candidates_by_role": {},
+        "products_by_role": {},
+        "components_by_role": {},
+        "complete_systems_promoted_count": 0,
+        "complete_systems_promoted_sample": [],
+        "components_demoted_by_role_count": 0,
+        "components_with_promote_yes_count": 0,
+        "promotion_reason_counts": {},
+        "sample_aco_products": [],
+        "sample_aco_components": [],
+        "bom_options_count": 0,
+        "bom_options_by_family": {},
+        "bom_options_by_type": {},
+        "easyflow_bom_count": 0,
+        "showerdrain_bom_count": 0,
+        "assembled_products_created_count": 0,
+        "sample_aco_bom_options": [],
+        "sample_aco_unmatched_base_sets": [],
+        "sample_aco_unmatched_grates": [],
+        "sample_aco_assembly_candidates_rejected": [],
     }
     tray_pairings_by_base_id: Dict[str, List[Dict[str, Any]]] = {}
     tray_pairing_reason_by_base_id: Dict[str, str] = {}
@@ -2269,11 +2309,28 @@ def run_update(
             "source": "promotion_stage",
         })
 
-    if any(str(x).strip().lower() == "aco" for x in registry_df.get("manufacturer", pd.Series(dtype=str)).tolist()):
-        aco_rows = [
+    has_aco_in_registry = any(str(x).strip().lower() == "aco" for x in registry_df.get("manufacturer", pd.Series(dtype=str)).tolist())
+    has_aco_in_products = any(str(r.get("manufacturer") or "").strip().lower() == "aco" for r in products_rows)
+    if has_aco_in_registry or has_aco_in_products:
+        aco_registry_rows = [
             r.to_dict() if hasattr(r, "to_dict") else dict(r)
             for _, r in registry_df[registry_df["manufacturer"] == "aco"].iterrows()
         ] if "manufacturer" in registry_df.columns else []
+        aco_products_rows = [dict(r) for r in products_rows if str(r.get("manufacturer") or "").strip().lower() == "aco"]
+        merged_by_id: Dict[str, Dict[str, Any]] = {}
+        for row in aco_products_rows:
+            pid = str(row.get("product_id") or "").strip()
+            if pid:
+                merged_by_id[pid] = dict(row)
+        for row in aco_registry_rows:
+            pid = str(row.get("product_id") or "").strip()
+            if not pid:
+                continue
+            if pid in merged_by_id:
+                merged_by_id[pid].update({k: v for k, v in row.items() if k not in (None, "")})
+            else:
+                merged_by_id[pid] = dict(row)
+        aco_rows = list(merged_by_id.values()) if merged_by_id else aco_registry_rows
         by_family: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
         for row in aco_rows:
             fam = _aco_family_hint(row)
