@@ -531,6 +531,55 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue(excluded.empty)
         self.assertTrue(bom.empty)
 
+    def test_viega_cleanup_preserves_products_and_cleans_bom_and_accessories(self):
+        class _FakeCleanupConnector(_FakeViegaConnector):
+            @staticmethod
+            def extract_parameters(url):
+                base = _FakeViegaConnector.extract_parameters(url)
+                if "abdeckhaube-6964-0" in url.lower():
+                    base["article_rows_json"] = (
+                        '[{"article_no":"649 982","variant_label":"Kunststoff verchromt","_row_text":"Kunststoff verchromt 649 982"},'
+                        '{"article_no":"806 132","variant_label":"Kunststoff schwarz matt","_row_text":"Kunststoff schwarz matt 806 132"}]'
+                    )
+                return base
+
+            @staticmethod
+            def get_bom_options(url, params=None):
+                return [
+                    {"option_group": "cover_variant", "option_label": "Kunststoff verchromt", "option_sku": "649 982", "option_meta": "clean row 649 982"},
+                    {"option_group": "cover_variant", "option_label": "Kunststoff verchromt", "option_sku": "649982", "option_meta": "clean row 649 982"},
+                    {"option_group": "cover_variant", "option_label": "wishlist plus minus", "option_sku": "775 070", "option_meta": "in den warenkorb menge wishlist " * 20},
+                ]
+
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "viega", "product_id": "viega-69631", "product_name": "Tempoplex-Ablauf 6963.1", "product_url": "https://v.example/Tempoplex-Ablauf-6963-1.html", "candidate_type": "component", "complete_system": "yes", "system_role": "base_set", "discovery_seed_family": "tempoplex"},
+                {"manufacturer": "viega", "product_id": "viega-69640", "product_name": "Tempoplex-Abdeckhaube 6964.0", "product_url": "https://v.example/Tempoplex-Abdeckhaube-6964-0.html", "candidate_type": "component", "complete_system": "yes", "system_role": "cover", "discovery_seed_family": "tempoplex"},
+                {"manufacturer": "viega", "product_id": "viega-acc-1", "product_name": "Montageset 123", "product_url": "https://v.example/Montageset-123.html", "candidate_type": "component", "complete_system": "yes", "system_role": "component", "discovery_seed_family": "tempoplex"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"viega": _FakeCleanupConnector()}, clear=True):
+            products, _comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
+
+        paired_ids = set(products[products["promotion_reason"] == "tray_base_with_cover_pairing"]["product_id"].tolist())
+        self.assertIn("viega-69631__649982", paired_ids)
+        self.assertIn("viega-69631__806132", paired_ids)
+        self.assertIn("viega-69631__775070", paired_ids)
+        self.assertIn("viega-69631__775087", paired_ids)
+        self.assertIn("viega-69631__775094", paired_ids)
+
+        acc = products[products["product_id"] == "viega-acc-1"].iloc[0]
+        self.assertEqual(acc["system_role"], "accessory")
+        self.assertEqual(acc["promote_to_product"], "no")
+
+        self.assertEqual(len(bom[(bom["product_id"] == "viega-69640") & (bom["option_sku"] == "649982")]), 1)
+        self.assertFalse(any("warenkorb" in str(x).lower() for x in bom["option_meta"].tolist()))
+        dedup = evidence[evidence["label"] == "bom_options_deduplicated_count"]["snippet"].tolist()
+        removed = evidence[evidence["label"] == "malformed_bom_options_removed_count"]["snippet"].tolist()
+        self.assertTrue(dedup and int(dedup[0]) >= 1)
+        self.assertTrue(removed and int(removed[0]) >= 1)
+        self.assertTrue(excluded.empty)
+
     def test_domoplex_and_tempoplex_plus_variant_rows_emit_per_variant_products(self):
         class _FakeMultiFamilyVariantConnector(_FakeViegaConnector):
             @staticmethod

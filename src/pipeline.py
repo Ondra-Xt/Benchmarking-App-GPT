@@ -693,6 +693,16 @@ def run_update(
         "explicit_tempoplex_6964_seed_products_created": 0,
         "explicit_tempoplex_6964_seed_components_created": 0,
         "sample_explicit_tempoplex_6964_seed_rows": [],
+        "components_before_cleanup_count": 0,
+        "components_after_cleanup_count": 0,
+        "accessory_components_count": 0,
+        "bom_options_before_cleanup_count": 0,
+        "bom_options_after_cleanup_count": 0,
+        "bom_options_deduplicated_count": 0,
+        "malformed_bom_options_removed_count": 0,
+        "sample_clean_bom_options": [],
+        "sample_removed_malformed_bom_options": [],
+        "sample_accessory_components": [],
         "sample_tempoplex_variant_pairings": [],
         "sample_unpaired_tempoplex_cover_variants": [],
         "sample_tray_variant_pairings": [],
@@ -1500,6 +1510,69 @@ def run_update(
                         existing_bom_keys.add(bom_key)
 
     if any(str(x).strip().lower() == "viega" for x in registry_df.get("manufacturer", pd.Series(dtype=str)).tolist()):
+        # --- Late cleanup pass (Viega-only): keep Products stable, make Components/BOM_Options cleaner ---
+        viega_debug["components_before_cleanup_count"] = sum(
+            1 for r in products_rows if str(r.get("manufacturer") or "").lower() == "viega" and str(r.get("candidate_type") or "").lower() == "component"
+        )
+        accessory_kw = re.compile(
+            r"montagekleber|abdichtungsband|reduzier|reinigungshilfe|verbindungsst[üu]ck|dichtung|o-?ring|stopfen|tauchrohr|schraubenset|montageset|sicherungsverschluss|verstellfu[ßs]set",
+            re.IGNORECASE,
+        )
+        for r in products_rows:
+            if str(r.get("manufacturer") or "").lower() != "viega":
+                continue
+            if str(r.get("candidate_type") or "").lower() != "component":
+                continue
+            txt = f"{r.get('product_name','')} {r.get('product_url','')}"
+            role = str(r.get("system_role") or "")
+            if accessory_kw.search(txt) and role not in {"base_set", "cover", "profile"}:
+                r["system_role"] = "accessory"
+                r["promote_to_product"] = "no"
+                r["promotion_reason"] = "non_promotable_accessory"
+                r["why_not_product_reason"] = "accessory_only"
+                viega_debug["accessory_components_count"] += 1
+                if len(viega_debug["sample_accessory_components"]) < 20:
+                    viega_debug["sample_accessory_components"].append(str(r.get("product_id") or r.get("product_name") or ""))
+        viega_debug["components_after_cleanup_count"] = sum(
+            1 for r in products_rows if str(r.get("manufacturer") or "").lower() == "viega" and str(r.get("candidate_type") or "").lower() == "component"
+        )
+
+        viega_bom = [r for r in bom_rows if str(r.get("manufacturer") or "").lower() == "viega"]
+        other_bom = [r for r in bom_rows if str(r.get("manufacturer") or "").lower() != "viega"]
+        viega_debug["bom_options_before_cleanup_count"] = len(viega_bom)
+        seen_bom_keys: Set[Tuple[str, str, str]] = set()
+        cleaned_viega_bom: List[Dict[str, Any]] = []
+        for r in viega_bom:
+            meta = re.sub(r"\s+", " ", str(r.get("option_meta") or "")).strip()
+            label = re.sub(r"\s+", " ", str(r.get("option_label") or "")).strip()
+            sku = re.sub(r"\D", "", str(r.get("option_sku") or "")) or str(r.get("option_sku") or "").strip()
+            group = str(r.get("option_group") or "").strip() or "cover_variant"
+            malformed = (
+                len(meta) > 220
+                or bool(re.search(r"warenkorb|wishlist|menge|empfehl|navigation|plus|minus", f"{meta} {label}", re.IGNORECASE))
+                or (not sku and not label)
+            )
+            if malformed:
+                viega_debug["malformed_bom_options_removed_count"] += 1
+                if len(viega_debug["sample_removed_malformed_bom_options"]) < 20:
+                    viega_debug["sample_removed_malformed_bom_options"].append((meta or label)[:120])
+                continue
+            key = (str(r.get("product_id") or ""), sku, group)
+            if key in seen_bom_keys:
+                viega_debug["bom_options_deduplicated_count"] += 1
+                continue
+            seen_bom_keys.add(key)
+            rr = dict(r)
+            rr["option_group"] = group
+            rr["option_label"] = label[:100]
+            rr["option_sku"] = sku
+            rr["option_meta"] = meta[:180]
+            cleaned_viega_bom.append(rr)
+            if len(viega_debug["sample_clean_bom_options"]) < 20:
+                viega_debug["sample_clean_bom_options"].append(f"{rr.get('product_id')}|{rr.get('option_sku')}|{rr.get('option_label')}")
+        bom_rows = other_bom + cleaned_viega_bom
+        viega_debug["bom_options_after_cleanup_count"] = len(cleaned_viega_bom)
+
         evidence_rows.append({
             "manufacturer": "viega",
             "product_id": "__summary__",
@@ -1926,6 +1999,76 @@ def run_update(
             "label": "sample_explicit_tempoplex_6964_seed_rows",
             "snippet": str(viega_debug["sample_explicit_tempoplex_6964_seed_rows"][:10]),
             "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "components_before_cleanup_count",
+            "snippet": str(viega_debug["components_before_cleanup_count"]),
+            "source": "cleanup_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "components_after_cleanup_count",
+            "snippet": str(viega_debug["components_after_cleanup_count"]),
+            "source": "cleanup_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "accessory_components_count",
+            "snippet": str(viega_debug["accessory_components_count"]),
+            "source": "cleanup_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "bom_options_before_cleanup_count",
+            "snippet": str(viega_debug["bom_options_before_cleanup_count"]),
+            "source": "cleanup_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "bom_options_after_cleanup_count",
+            "snippet": str(viega_debug["bom_options_after_cleanup_count"]),
+            "source": "cleanup_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "bom_options_deduplicated_count",
+            "snippet": str(viega_debug["bom_options_deduplicated_count"]),
+            "source": "cleanup_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "malformed_bom_options_removed_count",
+            "snippet": str(viega_debug["malformed_bom_options_removed_count"]),
+            "source": "cleanup_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_clean_bom_options",
+            "snippet": str(viega_debug["sample_clean_bom_options"][:10]),
+            "source": "cleanup_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_removed_malformed_bom_options",
+            "snippet": str(viega_debug["sample_removed_malformed_bom_options"][:10]),
+            "source": "cleanup_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "viega",
+            "product_id": "__summary__",
+            "label": "sample_accessory_components",
+            "snippet": str(viega_debug["sample_accessory_components"][:10]),
+            "source": "cleanup_stage",
         })
         evidence_rows.append({
             "manufacturer": "viega",
