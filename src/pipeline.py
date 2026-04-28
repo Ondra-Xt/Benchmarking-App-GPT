@@ -92,6 +92,42 @@ def _is_accessory_like(text: str) -> bool:
     return any(k in t for k in ("zubehoer", "zubehör", "rost", "abdeckung", "einleger", "profil", "rahmen", "siphon", "geruch"))
 
 
+ACO_COMPLETE_SYSTEM_ROLES = {"complete_system", "complete_drain"}
+ACO_CONFIGURATION_FAMILY_ROLES = {"configuration_family"}
+ACO_DRAIN_BODY_ROLES = {"drain_body", "base_set", "drain_unit", "body", "rinnenkörper", "rinnenkoerper", "ablaufkörper", "ablaufkoerper", "einzelablauf"}
+ACO_COVER_ROLES = {"grate", "cover", "design_grate", "rost", "abdeckung"}
+ACO_ACCESSORY_ROLES = {"accessory", "service_part", "adapter", "showerstep", "gefällekeil", "gefaellekeil", "aufsatzstück", "aufsatzstueck"}
+
+
+def _classify_aco_promotion(row: Dict[str, Any], candidate_type: str) -> Tuple[str, bool, str]:
+    role = str(row.get("system_role") or "").strip().lower()
+    txt = f"{row.get('product_name','')} {row.get('product_url','')}".lower()
+    classification_reason = str(row.get("classification_reason") or "").strip().lower()
+
+    complete_signal = role in ACO_COMPLETE_SYSTEM_ROLES or any(
+        token in txt for token in ("komplettablauf", "showerpoint", "passino", "passavant")
+    )
+    if "public" in txt and "showerdrain" in txt:
+        complete_signal = True
+
+    if complete_signal:
+        return "drain", True, "complete_system"
+    if role in ACO_CONFIGURATION_FAMILY_ROLES:
+        return "component", False, "configuration_family"
+    if role in ACO_COVER_ROLES:
+        return "component", False, "cover_only_component"
+    if role in ACO_ACCESSORY_ROLES:
+        return "component", False, "accessory_only"
+    if role in ACO_DRAIN_BODY_ROLES:
+        # preserve accepted ACO article-row variants as product drains
+        if candidate_type == "drain" and classification_reason == "article_row_variant":
+            return "drain", True, "article_row_variant"
+        return "component", False, "incomplete_assembly"
+    if candidate_type == "drain":
+        return "drain", True, "default"
+    return "component", False, "not_complete_system"
+
+
 def _select_connector_keys(selected_connectors: Optional[Iterable[str]]) -> Set[str]:
     if not selected_connectors:
         return set(CONNECTORS.keys())
@@ -713,6 +749,23 @@ def run_update(
     tray_paired_cover_ids: Set[str] = set()
     cover_variants_by_cover_id: Dict[str, List[Dict[str, Any]]] = {}
     viega_params_by_id: Dict[str, Dict[str, Any]] = {}
+    aco_debug = {
+        "candidates_by_role": {},
+        "products_by_role": {},
+        "components_by_role": {},
+        "complete_systems_promoted_count": 0,
+        "complete_systems_promoted_sample": [],
+        "components_demoted_by_role_count": 0,
+        "components_with_promote_yes_count": 0,
+        "promotion_reason_counts": {},
+        "sample_aco_products": [],
+        "sample_aco_components": [],
+    }
+    tray_pairings_by_base_id: Dict[str, List[Dict[str, Any]]] = {}
+    tray_pairing_reason_by_base_id: Dict[str, str] = {}
+    tray_paired_cover_ids: Set[str] = set()
+    cover_variants_by_cover_id: Dict[str, List[Dict[str, Any]]] = {}
+    viega_params_by_id: Dict[str, Dict[str, Any]] = {}
 
     if "manufacturer" in registry_df.columns:
         for _, rv in registry_df[registry_df["manufacturer"] == "viega"].iterrows():
@@ -865,13 +918,33 @@ def run_update(
                 "source": str(source),
             })
 
-        # Viega promotion-by-assembly: promote only complete assemblies with required parts
-        promote_to_product = True
-        promotion_reason = "default"
+        # default promotion flags
+        promote_to_product = (candidate_type == "drain")
+        promotion_reason = "default" if promote_to_product else "not_complete_system"
         missing_required_parts: List[str] = []
         matched_component_ids: List[str] = []
         tray_cover_variants: List[Dict[str, Any]] = []
         role = ""
+        if manufacturer == "aco":
+            rowd = r.to_dict() if hasattr(r, "to_dict") else dict(r)
+            role = str(rowd.get("system_role") or "").strip().lower()
+            aco_debug["candidates_by_role"][role or "unknown"] = aco_debug["candidates_by_role"].get(role or "unknown", 0) + 1
+            candidate_type, promote_to_product, promotion_reason = _classify_aco_promotion(rowd, candidate_type)
+            aco_debug["promotion_reason_counts"][promotion_reason] = aco_debug["promotion_reason_counts"].get(promotion_reason, 0) + 1
+            if candidate_type == "drain":
+                aco_debug["products_by_role"][role or "unknown"] = aco_debug["products_by_role"].get(role or "unknown", 0) + 1
+                if promotion_reason == "complete_system":
+                    aco_debug["complete_systems_promoted_count"] += 1
+                    if len(aco_debug["complete_systems_promoted_sample"]) < 20:
+                        aco_debug["complete_systems_promoted_sample"].append(url)
+                if len(aco_debug["sample_aco_products"]) < 20:
+                    aco_debug["sample_aco_products"].append(f"{product_id}|{role}|{promotion_reason}")
+            else:
+                aco_debug["components_by_role"][role or "unknown"] = aco_debug["components_by_role"].get(role or "unknown", 0) + 1
+                aco_debug["components_demoted_by_role_count"] += 1
+                if len(aco_debug["sample_aco_components"]) < 20:
+                    aco_debug["sample_aco_components"].append(f"{product_id}|{role}|{promotion_reason}")
+
         if manufacturer == "viega":
             rowd = r.to_dict() if hasattr(r, "to_dict") else dict(r)
             fam = _viega_family_hint(rowd)
@@ -1044,6 +1117,10 @@ def run_update(
         system_score = compute_system_score(candidate_type, has_bom_options=bool(options))
         final_score = compute_final_score(param_score, system_score, equiv_score, cfg)
 
+        why_not_product_reason = "" if promote_to_product else promotion_reason
+        if manufacturer == "aco" and (not promote_to_product) and promotion_reason == "configuration_family":
+            why_not_product_reason = "configuration_family_not_final_product"
+
         prod_row = {
             "manufacturer": manufacturer,
             "product_id": product_id,
@@ -1055,7 +1132,7 @@ def run_update(
             "missing_required_parts": ",".join(missing_required_parts),
             "matched_component_ids": ",".join(str(x) for x in matched_component_ids),
             "pairing_reason": "",
-            "why_not_product_reason": "" if promote_to_product else promotion_reason,
+            "why_not_product_reason": why_not_product_reason,
 
             # vytažené parametry:
             **{k: v for k, v in params.items() if k != "evidence"},
@@ -1066,6 +1143,8 @@ def run_update(
             "system_score": system_score,
             "final_score": final_score,
         }
+        if manufacturer == "aco" and candidate_type == "component" and promote_to_product:
+            aco_debug["components_with_promote_yes_count"] += 1
         products_rows.append(prod_row)
         if manufacturer == "viega":
             if candidate_type == "drain":
@@ -2117,6 +2196,78 @@ def run_update(
             "product_id": "__summary__",
             "label": "sample_unpaired_tray_cover_variants",
             "snippet": str(viega_debug["sample_unpaired_tray_cover_variants"][:10]),
+            "source": "promotion_stage",
+        })
+
+    if any(str(x).strip().lower() == "aco" for x in registry_df.get("manufacturer", pd.Series(dtype=str)).tolist()):
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_candidates_by_role",
+            "snippet": str(aco_debug["candidates_by_role"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_products_by_role",
+            "snippet": str(aco_debug["products_by_role"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_components_by_role",
+            "snippet": str(aco_debug["components_by_role"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_complete_systems_promoted_count",
+            "snippet": str(aco_debug["complete_systems_promoted_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_complete_systems_promoted_sample",
+            "snippet": str(aco_debug["complete_systems_promoted_sample"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_components_demoted_by_role_count",
+            "snippet": str(aco_debug["components_demoted_by_role_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_components_with_promote_yes_count",
+            "snippet": str(aco_debug["components_with_promote_yes_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_promotion_reason_counts",
+            "snippet": str(aco_debug["promotion_reason_counts"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "sample_aco_products",
+            "snippet": str(aco_debug["sample_aco_products"][:10]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "sample_aco_components",
+            "snippet": str(aco_debug["sample_aco_components"][:10]),
             "source": "promotion_stage",
         })
 

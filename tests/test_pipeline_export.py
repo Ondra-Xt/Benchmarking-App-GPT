@@ -43,6 +43,39 @@ class _FakeViegaConnector:
         return []
 
 
+class _FakeAcoConnector:
+    @staticmethod
+    def extract_parameters(url):
+        u = str(url or "").lower()
+        if "showerdrain-c" in u and "901085" in u:
+            return {
+                "flow_rate_lps": 0.8,
+                "outlet_dn": "DN50",
+                "height_adj_min_mm": 57,
+                "height_adj_max_mm": 128,
+                "din_en_1253_cert": True,
+                "evidence": [("ACO", "row variant", url)],
+            }
+        if any(k in u for k in ("komplettablauf", "showerpoint", "passino", "passavant", "public-80")):
+            return {
+                "flow_rate_lps": 0.6,
+                "outlet_dn": "DN50",
+                "height_adj_min_mm": 65,
+                "height_adj_max_mm": 95,
+                "din_en_1253_cert": True,
+                "evidence": [("ACO", "complete system", url)],
+            }
+        return {
+            "flow_rate_lps": 0.4,
+            "outlet_dn": "DN50",
+            "evidence": [("ACO", "component", url)],
+        }
+
+    @staticmethod
+    def get_bom_options(url, params=None):
+        return []
+
+
 class PipelineExportTests(unittest.TestCase):
     def _make_template(self, path: Path):
         wb = openpyxl.Workbook()
@@ -166,6 +199,49 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue(excluded.empty)
         self.assertTrue((evidence["manufacturer"] == "hansgrohe").all())
         self.assertTrue(bom.empty)
+
+    def test_aco_role_based_promotion_splits_products_and_components(self):
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "aco", "product_id": "aco-90108544", "product_name": "ACO ShowerDrain C 1200 mm (Artikel-Nr. 90108544)", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-90108544/", "candidate_type": "drain", "complete_system": "yes", "system_role": "drain_unit", "classification_reason": "article_row_variant"},
+                {"manufacturer": "aco", "product_id": "aco-90108554", "product_name": "ACO ShowerDrain C 1200 mm (Artikel-Nr. 90108554)", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-90108554/", "candidate_type": "drain", "complete_system": "yes", "system_role": "drain_unit", "classification_reason": "article_row_variant"},
+                {"manufacturer": "aco", "product_id": "aco-90108524", "product_name": "ACO ShowerDrain C 1000 mm (Artikel-Nr. 90108524)", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-90108524/", "candidate_type": "drain", "complete_system": "yes", "system_role": "drain_unit", "classification_reason": "article_row_variant"},
+                {"manufacturer": "aco", "product_id": "aco-90108534", "product_name": "ACO ShowerDrain C 1000 mm (Artikel-Nr. 90108534)", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-90108534/", "candidate_type": "drain", "complete_system": "yes", "system_role": "drain_unit", "classification_reason": "article_row_variant"},
+                {"manufacturer": "aco", "product_id": "aco-comp-showerpoint", "product_name": "ACO ShowerPoint", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-showerpoint/", "candidate_type": "component", "complete_system": "component", "system_role": "complete_system"},
+                {"manufacturer": "aco", "product_id": "aco-comp-family", "product_name": "ACO ShowerDrain S+", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/", "candidate_type": "component", "complete_system": "component", "system_role": "configuration_family"},
+                {"manufacturer": "aco", "product_id": "aco-comp-grate", "product_name": "ACO ShowerDrain C Designrost", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/designrost/", "candidate_type": "component", "complete_system": "component", "system_role": "grate"},
+                {"manufacturer": "aco", "product_id": "aco-comp-accessory", "product_name": "ACO ShowerStep", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/zubehoer/aco-showerstep/", "candidate_type": "component", "complete_system": "component", "system_role": "accessory"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"aco": _FakeAcoConnector()}, clear=True):
+            products, comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
+
+        drains = products[products["candidate_type"] == "drain"]
+        components = products[products["candidate_type"] == "component"]
+        self.assertTrue({"aco-90108544", "aco-90108554", "aco-90108524", "aco-90108534"}.issubset(set(drains["product_id"].tolist())))
+        self.assertIn("aco-comp-showerpoint", set(drains["product_id"].tolist()))
+        self.assertIn("aco-comp-family", set(components["product_id"].tolist()))
+        self.assertIn("aco-comp-grate", set(components["product_id"].tolist()))
+        self.assertIn("aco-comp-accessory", set(components["product_id"].tolist()))
+        self.assertEqual(
+            components.set_index("product_id").loc["aco-comp-family", "why_not_product_reason"],
+            "configuration_family_not_final_product",
+        )
+        self.assertEqual(
+            components.set_index("product_id").loc["aco-comp-grate", "why_not_product_reason"],
+            "cover_only_component",
+        )
+        self.assertEqual(
+            components.set_index("product_id").loc["aco-comp-accessory", "why_not_product_reason"],
+            "accessory_only",
+        )
+        self.assertFalse(((components["promote_to_product"] == "yes") & (components["promotion_reason"] == "default")).any())
+        self.assertTrue(excluded.empty)
+        self.assertTrue(bom.empty)
+        aco_summary_labels = set(evidence[evidence["manufacturer"] == "aco"]["label"].tolist())
+        self.assertIn("aco_candidates_by_role", aco_summary_labels)
+        self.assertIn("aco_products_by_role", aco_summary_labels)
+        self.assertIn("aco_components_by_role", aco_summary_labels)
 
     def test_viega_lone_entities_remain_components_not_products(self):
         registry = pd.DataFrame(
