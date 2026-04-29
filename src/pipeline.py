@@ -2470,6 +2470,41 @@ def run_update(
         aco_debug["reference_v2_cross_family_rejected_count"] += len(by_family.get("easyflowplus", {}).get("base_set", [])) * len(ef_opts)
         aco_debug["reference_v2_cross_family_rejected_count"] += len(by_family.get("easyflow", {}).get("base_set", [])) * len(efp_opts)
 
+        # reference v2 force-path: if easyflow family still has no emitted BOM rows,
+        # use easyflow complete-system product(s) as BOM parents for easyflow option components.
+        def _is_plain_easyflow_text(t: str) -> bool:
+            return bool(re.search(r"easyflow(?!\+|-plus)", t or ""))
+
+        current_easyflow_bom_rows = [
+            r for r in bom_rows
+            if str(r.get("manufacturer") or "").lower() == "aco" and str(r.get("parent_family") or "") == "easyflow"
+        ]
+        if not current_easyflow_bom_rows:
+            easyflow_complete_parents = []
+            easyflow_option_rows = []
+            for rr in aco_rows:
+                txt_rr = f"{rr.get('product_name','')} {rr.get('product_url','')}".lower()
+                if not _is_plain_easyflow_text(txt_rr):
+                    continue
+                rb = _aco_role_bucket(rr)
+                is_complete_parent = (
+                    str(rr.get("candidate_type") or "").lower() == "drain"
+                    and str(rr.get("promotion_reason") or "").lower() == "complete_system"
+                    and ("komplettablauf" in txt_rr or "komplettabläufe" in txt_rr or "komplettablaeufe" in txt_rr)
+                )
+                if is_complete_parent:
+                    easyflow_complete_parents.append(rr)
+                    continue
+                if rb in {"grate", "accessory"}:
+                    easyflow_option_rows.append((rr, rb))
+
+            for p in easyflow_complete_parents:
+                for rr, rb in easyflow_option_rows:
+                    if rb == "grate":
+                        _add_aco_bom(p, rr, "compatible_grate", "grate")
+                    elif rb == "accessory":
+                        _add_aco_bom(p, rr, "optional_accessory", "accessory")
+
         aco_bom_rows = [r for r in bom_rows if str(r.get("manufacturer") or "").lower() == "aco"]
         aco_debug["reference_v2_easyflowplus_bom_count"] = sum(1 for r in aco_bom_rows if str(r.get("parent_family") or "") == "easyflowplus")
         aco_debug["reference_v2_easyflow_bom_count"] = sum(1 for r in aco_bom_rows if str(r.get("parent_family") or "") == "easyflow")
