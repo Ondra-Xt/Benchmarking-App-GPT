@@ -314,20 +314,29 @@ class PipelineExportTests(unittest.TestCase):
     def test_aco_bom_family_aware_matching_for_easyflow_and_showerdrain(self):
         registry = pd.DataFrame(
             [
-                {"manufacturer": "aco", "product_id": "aco-easyflowplus-complete", "product_name": "ACO EasyFlow+ Komplettablauf DN50", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-plus-komplettablauf-dn50/", "candidate_type": "component", "complete_system": "component", "system_role": "complete_system"},
+                {"manufacturer": "aco", "product_id": "aco-90108544", "product_name": "ACO ShowerDrain C 1200 mm (Artikel-Nr. 90108544)", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-90108544/", "candidate_type": "drain", "complete_system": "yes", "system_role": "drain_unit", "classification_reason": "article_row_variant"},
+                {"manufacturer": "aco", "product_id": "aco-90108554", "product_name": "ACO ShowerDrain C 1200 mm (Artikel-Nr. 90108554)", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-90108554/", "candidate_type": "drain", "complete_system": "yes", "system_role": "drain_unit", "classification_reason": "article_row_variant"},
+                {"manufacturer": "aco", "product_id": "aco-90108524", "product_name": "ACO ShowerDrain C 1000 mm (Artikel-Nr. 90108524)", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-90108524/", "candidate_type": "drain", "complete_system": "yes", "system_role": "drain_unit", "classification_reason": "article_row_variant"},
+                {"manufacturer": "aco", "product_id": "aco-90108534", "product_name": "ACO ShowerDrain C 1000 mm (Artikel-Nr. 90108534)", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-90108534/", "candidate_type": "drain", "complete_system": "yes", "system_role": "drain_unit", "classification_reason": "article_row_variant"},
+                {"manufacturer": "aco", "product_id": "aco-easyflowplus-complete", "product_name": "ACO EasyFlow+ Komplettablauf DN50", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-plus-komplettablauf-dn50/", "candidate_type": "component", "complete_system": "component", "system_role": "configuration_family"},
                 {"manufacturer": "aco", "product_id": "aco-easyflowplus-body", "product_name": "ACO EasyFlow+ Einzelablauf DN50", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-plus-einzelablauf-dn50/", "candidate_type": "component", "complete_system": "component", "system_role": "drain_body"},
                 {"manufacturer": "aco", "product_id": "aco-easyflowplus-grate", "product_name": "ACO EasyFlow+ Designrost", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-plus-designrost/", "candidate_type": "component", "complete_system": "component", "system_role": "grate"},
                 {"manufacturer": "aco", "product_id": "aco-easyflow-body", "product_name": "ACO Easyflow Einzelablauf DN50", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-einzelablauf-dn50/", "candidate_type": "component", "complete_system": "component", "system_role": "drain_body"},
+                {"manufacturer": "aco", "product_id": "aco-easyflow-complete", "product_name": "ACO Easyflow Komplettablauf DN50", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-komplettablauf-dn50/", "candidate_type": "component", "complete_system": "component", "system_role": "configuration_family"},
                 {"manufacturer": "aco", "product_id": "aco-easyflowplus-adapter", "product_name": "ACO Easyflow Aufsatzstück", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-aufsatzstueck/", "candidate_type": "component", "complete_system": "component", "system_role": "accessory"},
                 {"manufacturer": "aco", "product_id": "aco-showerdrainc-body", "product_name": "ACO ShowerDrain C Rinnenkörper", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper/", "candidate_type": "component", "complete_system": "component", "system_role": "drain_body"},
                 {"manufacturer": "aco", "product_id": "aco-showerdrainc-grate", "product_name": "ACO ShowerDrain C Design-Rost", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/design-rost/", "candidate_type": "component", "complete_system": "component", "system_role": "grate"},
+                {"manufacturer": "aco", "product_id": "aco-showerdraine-grate", "product_name": "ACO ShowerDrain E+ Design-Rost", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-eplus/design-rost/", "candidate_type": "component", "complete_system": "component", "system_role": "grate"},
+                {"manufacturer": "aco", "product_id": "aco-showerdrainm-grate", "product_name": "ACO ShowerDrain M+ Design-Rost", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/design-rost/", "candidate_type": "component", "complete_system": "component", "system_role": "grate"},
             ]
         )
         with patch.dict(pipeline.CONNECTORS, {"aco": _FakeAcoConnector()}, clear=True):
-            products, _comparison, _excluded, _evidence, bom = pipeline.run_update(registry, default_config())
+            products, _comparison, _excluded, evidence, bom = pipeline.run_update(registry, default_config())
 
         drains = products[products["candidate_type"] == "drain"]
         self.assertIn("aco-easyflowplus-complete", set(drains["product_id"].tolist()))
+        self.assertIn("aco-easyflow-complete", set(drains["product_id"].tolist()))
+        self.assertTrue({"aco-90108544", "aco-90108554", "aco-90108524", "aco-90108534"}.issubset(set(drains["product_id"].tolist())))
         components = products[products["candidate_type"] == "component"].set_index("product_id")
         self.assertEqual(components.loc["aco-easyflowplus-grate", "why_not_product_reason"], "cover_only_component")
         self.assertEqual(components.loc["aco-easyflowplus-adapter", "why_not_product_reason"], "accessory_only")
@@ -335,12 +344,20 @@ class PipelineExportTests(unittest.TestCase):
         self.assertEqual(components.loc["aco-easyflow-body", "why_not_product_reason"], "incomplete_assembly")
 
         aco_bom = bom[bom["manufacturer"] == "aco"]
+        self.assertTrue(((aco_bom["product_id"] == "aco-90108544") & (aco_bom["component_id"] == "aco-showerdrainc-grate") & (aco_bom["option_type"] == "compatible_grate")).any())
         self.assertTrue(((aco_bom["product_id"] == "aco-easyflowplus-body") & (aco_bom["component_id"] == "aco-easyflowplus-grate") & (aco_bom["option_type"] == "compatible_grate")).any())
         self.assertTrue(((aco_bom["product_id"] == "aco-easyflow-body") & (aco_bom["component_id"] == "aco-easyflowplus-adapter") & (aco_bom["option_type"] == "optional_accessory")).any())
         self.assertTrue(((aco_bom["product_id"] == "aco-showerdrainc-body") & (aco_bom["component_id"] == "aco-showerdrainc-grate") & (aco_bom["option_type"] == "compatible_grate")).any())
         # no cross-family pairings
         self.assertFalse(((aco_bom["product_id"] == "aco-easyflowplus-body") & (aco_bom["component_id"] == "aco-showerdrainc-grate")).any())
         self.assertFalse(((aco_bom["product_id"] == "aco-easyflowplus-body") & (aco_bom["component_id"] == "aco-easyflowplus-adapter")).any())
+        self.assertFalse(((aco_bom["product_id"] == "aco-90108544") & (aco_bom["component_id"] == "aco-showerdraine-grate")).any())
+        self.assertFalse(((aco_bom["product_id"] == "aco-90108544") & (aco_bom["component_id"] == "aco-showerdrainm-grate")).any())
+        labels = set(evidence[evidence["manufacturer"] == "aco"]["label"].tolist())
+        self.assertIn("aco_reference_v2_showerdrain_c_bom_count", labels)
+        self.assertIn("aco_reference_v2_easyflowplus_products_count", labels)
+        self.assertIn("aco_reference_v2_easyflow_products_count", labels)
+        self.assertIn("aco_reference_v2_cross_family_rejected_count", labels)
 
     def test_viega_complete_assembly_promotes_body_to_product(self):
         registry = pd.DataFrame(
