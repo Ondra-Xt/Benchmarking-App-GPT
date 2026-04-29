@@ -2505,6 +2505,47 @@ def run_update(
                     elif rb == "accessory":
                         _add_aco_bom(p, rr, "optional_accessory", "accessory")
 
+        # deterministic late-stage seed for real export shape:
+        # if easyflow BOM is still empty, use emitted easyflow complete-system product
+        # and emitted easyflow component rows (grates + aufsatz accessories).
+        current_easyflow_bom_rows = [
+            r for r in bom_rows
+            if str(r.get("manufacturer") or "").lower() == "aco" and str(r.get("parent_family") or "") == "easyflow"
+        ]
+        if not current_easyflow_bom_rows:
+            aco_emitted = [r for r in products_rows if str(r.get("manufacturer") or "").lower() == "aco"]
+            easyflow_parent_rows = []
+            easyflow_option_rows: List[Tuple[Dict[str, Any], str]] = []
+            for rr in aco_emitted:
+                txt_rr = f"{rr.get('product_name','')} {rr.get('product_url','')}".lower()
+                if not _is_plain_easyflow_text(txt_rr):
+                    continue
+                fam_rr = _aco_family_hint(rr)
+                if fam_rr != "easyflow":
+                    continue
+                is_parent = (
+                    str(rr.get("candidate_type") or "").lower() == "drain"
+                    and str(rr.get("system_role") or "").lower() == "complete_system"
+                    and str(rr.get("promotion_reason") or "").lower() == "complete_system"
+                    and ("komplettablauf" in txt_rr or "komplettabläufe" in txt_rr or "komplettablaeufe" in txt_rr)
+                )
+                if is_parent:
+                    easyflow_parent_rows.append(rr)
+                    continue
+                role = str(rr.get("system_role") or "").lower()
+                prom = str(rr.get("promotion_reason") or "").lower()
+                if (role == "grate") or (prom == "cover_only_component") or any(t in txt_rr for t in ("design-roste", "design-rost", "designrost")):
+                    easyflow_option_rows.append((rr, "grate"))
+                elif (role in {"accessory", "adapter"}) or (prom in {"accessory_only", "adapter_component"}) or any(t in txt_rr for t in ("aufsatzstücke", "aufsatzstuecke", "aufsatzstück", "aufsatzstueck")):
+                    easyflow_option_rows.append((rr, "accessory"))
+
+            for p in easyflow_parent_rows:
+                for rr, rb in easyflow_option_rows:
+                    if rb == "grate":
+                        _add_aco_bom(p, rr, "compatible_grate", "grate")
+                    else:
+                        _add_aco_bom(p, rr, "optional_accessory", "accessory")
+
         aco_bom_rows = [r for r in bom_rows if str(r.get("manufacturer") or "").lower() == "aco"]
         aco_debug["reference_v2_easyflowplus_bom_count"] = sum(1 for r in aco_bom_rows if str(r.get("parent_family") or "") == "easyflowplus")
         aco_debug["reference_v2_easyflow_bom_count"] = sum(1 for r in aco_bom_rows if str(r.get("parent_family") or "") == "easyflow")
