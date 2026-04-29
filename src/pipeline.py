@@ -104,6 +104,11 @@ def _classify_aco_promotion(row: Dict[str, Any], candidate_type: str) -> Tuple[s
     txt = f"{row.get('product_name','')} {row.get('product_url','')}".lower()
     classification_reason = str(row.get("classification_reason") or "").strip().lower()
     is_article_row_variant = candidate_type == "drain" and classification_reason == "article_row_variant"
+    has_easyflow_family = any(tok in txt for tok in ("easyflow+", "easyflow-plus", " easyflow "))
+    has_complete_tokens = any(tok in txt for tok in ("komplettablauf", "komplettabläufe", "komplettablaeufe", "complete drain"))
+
+    if role == "configuration_family" and has_easyflow_family and has_complete_tokens:
+        return "drain", True, "complete_system"
 
     # strict role-first guardrails: component roles must never be promoted by broad complete-system tokens
     if role in ACO_CONFIGURATION_FAMILY_ROLES:
@@ -843,33 +848,16 @@ def run_update(
         "sample_aco_unmatched_base_sets": [],
         "sample_aco_unmatched_grates": [],
         "sample_aco_assembly_candidates_rejected": [],
-    }
-    tray_pairings_by_base_id: Dict[str, List[Dict[str, Any]]] = {}
-    tray_pairing_reason_by_base_id: Dict[str, str] = {}
-    tray_paired_cover_ids: Set[str] = set()
-    cover_variants_by_cover_id: Dict[str, List[Dict[str, Any]]] = {}
-    viega_params_by_id: Dict[str, Dict[str, Any]] = {}
-    aco_debug = {
-        "candidates_by_role": {},
-        "products_by_role": {},
-        "components_by_role": {},
-        "complete_systems_promoted_count": 0,
-        "complete_systems_promoted_sample": [],
-        "components_demoted_by_role_count": 0,
-        "components_with_promote_yes_count": 0,
-        "promotion_reason_counts": {},
-        "sample_aco_products": [],
-        "sample_aco_components": [],
-        "bom_options_count": 0,
-        "bom_options_by_family": {},
-        "bom_options_by_type": {},
-        "easyflow_bom_count": 0,
-        "showerdrain_bom_count": 0,
-        "assembled_products_created_count": 0,
-        "sample_aco_bom_options": [],
-        "sample_aco_unmatched_base_sets": [],
-        "sample_aco_unmatched_grates": [],
-        "sample_aco_assembly_candidates_rejected": [],
+        "reference_v2_showerdrain_c_bom_count": 0,
+        "reference_v2_easyflowplus_products_count": 0,
+        "reference_v2_easyflow_products_count": 0,
+        "reference_v2_easyflowplus_bom_count": 0,
+        "reference_v2_easyflow_bom_count": 0,
+        "reference_v2_cross_family_rejected_count": 0,
+        "sample_reference_v2_showerdrain_c_bom": [],
+        "sample_reference_v2_easyflow_bom": [],
+        "sample_reference_v2_easyflowplus_bom": [],
+        "sample_reference_v2_role_corrections": [],
     }
     tray_pairings_by_base_id: Dict[str, List[Dict[str, Any]]] = {}
     tray_pairing_reason_by_base_id: Dict[str, str] = {}
@@ -1038,11 +1026,19 @@ def run_update(
         if manufacturer == "aco":
             rowd = r.to_dict() if hasattr(r, "to_dict") else dict(r)
             role = str(rowd.get("system_role") or "").strip().lower()
+            fam_hint = _aco_family_hint(rowd)
             aco_debug["candidates_by_role"][role or "unknown"] = aco_debug["candidates_by_role"].get(role or "unknown", 0) + 1
             candidate_type, promote_to_product, promotion_reason = _classify_aco_promotion(rowd, candidate_type)
+            if role == "configuration_family" and promotion_reason == "complete_system":
+                if len(aco_debug["sample_reference_v2_role_corrections"]) < 20:
+                    aco_debug["sample_reference_v2_role_corrections"].append(f"{product_id}|{fam_hint}|configuration_family->complete_system")
             aco_debug["promotion_reason_counts"][promotion_reason] = aco_debug["promotion_reason_counts"].get(promotion_reason, 0) + 1
             if candidate_type == "drain":
                 aco_debug["products_by_role"][role or "unknown"] = aco_debug["products_by_role"].get(role or "unknown", 0) + 1
+                if fam_hint == "easyflowplus":
+                    aco_debug["reference_v2_easyflowplus_products_count"] += 1
+                elif fam_hint == "easyflow":
+                    aco_debug["reference_v2_easyflow_products_count"] += 1
                 if promotion_reason == "complete_system":
                     aco_debug["complete_systems_promoted_count"] += 1
                     if len(aco_debug["complete_systems_promoted_sample"]) < 20:
@@ -1243,6 +1239,7 @@ def run_update(
             "matched_component_ids": ",".join(str(x) for x in matched_component_ids),
             "pairing_reason": "",
             "why_not_product_reason": why_not_product_reason,
+            "system_role": str(r.get("system_role") or ""),
 
             # vytažené parametry:
             **{k: v for k, v in params.items() if k != "evidence"},
@@ -2335,7 +2332,7 @@ def run_update(
         for row in aco_rows:
             fam = _aco_family_hint(row)
             bucket = _aco_role_bucket(row)
-            grp = by_family.setdefault(fam, {"base_set": [], "grate": [], "accessory": [], "complete_system": []})
+            grp = by_family.setdefault(fam, {"base_set": [], "grate": [], "accessory": [], "complete_system": [], "article_variant": []})
             if bucket in grp:
                 grp[bucket].append(row)
 
@@ -2382,6 +2379,7 @@ def run_update(
             grates = grp.get("grate", [])
             accessories = grp.get("accessory", [])
             complete = grp.get("complete_system", [])
+            article_variants = grp.get("article_variant", [])
 
             for b in bases:
                 if not grates and len(aco_debug["sample_aco_unmatched_base_sets"]) < 20:
@@ -2394,6 +2392,15 @@ def run_update(
                     if str(b.get("product_id") or "") != str(b2.get("product_id") or ""):
                         _add_aco_bom(b, b2, "related_body_component", "base_set")
 
+            # reference v2: validated ShowerDrain C article variants should link to ShowerDrain C design grates
+            if fam == "showerdrain_c":
+                for av in article_variants:
+                    for g in grates:
+                        _add_aco_bom(av, g, "compatible_grate", "grate")
+                        aco_debug["reference_v2_showerdrain_c_bom_count"] += 1
+                        if len(aco_debug["sample_reference_v2_showerdrain_c_bom"]) < 20:
+                            aco_debug["sample_reference_v2_showerdrain_c_bom"].append(f"{av.get('product_id')}->{g.get('product_id')}")
+
             for cs in complete:
                 for g in grates:
                     _add_aco_bom(cs, g, "compatible_grate", "grate")
@@ -2404,6 +2411,22 @@ def run_update(
                 for g in grates:
                     if len(aco_debug["sample_aco_unmatched_grates"]) < 20:
                         aco_debug["sample_aco_unmatched_grates"].append(str(g.get("product_url") or g.get("product_id") or ""))
+
+        # reference v2: explicit cross-family rejects for easyflow/easyflowplus
+        efp_opts = by_family.get("easyflowplus", {}).get("grate", []) + by_family.get("easyflowplus", {}).get("accessory", [])
+        ef_opts = by_family.get("easyflow", {}).get("grate", []) + by_family.get("easyflow", {}).get("accessory", [])
+        aco_debug["reference_v2_cross_family_rejected_count"] += len(by_family.get("easyflowplus", {}).get("base_set", [])) * len(ef_opts)
+        aco_debug["reference_v2_cross_family_rejected_count"] += len(by_family.get("easyflow", {}).get("base_set", [])) * len(efp_opts)
+
+        aco_bom_rows = [r for r in bom_rows if str(r.get("manufacturer") or "").lower() == "aco"]
+        aco_debug["reference_v2_easyflowplus_bom_count"] = sum(1 for r in aco_bom_rows if str(r.get("parent_family") or "") == "easyflowplus")
+        aco_debug["reference_v2_easyflow_bom_count"] = sum(1 for r in aco_bom_rows if str(r.get("parent_family") or "") == "easyflow")
+        for r in [r for r in aco_bom_rows if str(r.get("parent_family") or "") == "easyflowplus"][:10]:
+            if len(aco_debug["sample_reference_v2_easyflowplus_bom"]) < 20:
+                aco_debug["sample_reference_v2_easyflowplus_bom"].append(f"{r.get('product_id')}->{r.get('component_id')}:{r.get('option_type')}")
+        for r in [r for r in aco_bom_rows if str(r.get("parent_family") or "") == "easyflow"][:10]:
+            if len(aco_debug["sample_reference_v2_easyflow_bom"]) < 20:
+                aco_debug["sample_reference_v2_easyflow_bom"].append(f"{r.get('product_id')}->{r.get('component_id')}:{r.get('option_type')}")
 
         aco_debug["bom_options_count"] = max(0, len(bom_rows) - pre_bom_count)
 
@@ -2546,6 +2569,76 @@ def run_update(
             "label": "sample_aco_assembly_candidates_rejected",
             "snippet": str(aco_debug["sample_aco_assembly_candidates_rejected"][:10]),
             "source": "assembly_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_reference_v2_showerdrain_c_bom_count",
+            "snippet": str(aco_debug["reference_v2_showerdrain_c_bom_count"]),
+            "source": "assembly_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_reference_v2_easyflowplus_products_count",
+            "snippet": str(aco_debug["reference_v2_easyflowplus_products_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_reference_v2_easyflow_products_count",
+            "snippet": str(aco_debug["reference_v2_easyflow_products_count"]),
+            "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_reference_v2_easyflowplus_bom_count",
+            "snippet": str(aco_debug["reference_v2_easyflowplus_bom_count"]),
+            "source": "assembly_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_reference_v2_easyflow_bom_count",
+            "snippet": str(aco_debug["reference_v2_easyflow_bom_count"]),
+            "source": "assembly_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_reference_v2_cross_family_rejected_count",
+            "snippet": str(aco_debug["reference_v2_cross_family_rejected_count"]),
+            "source": "assembly_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "sample_aco_reference_v2_showerdrain_c_bom",
+            "snippet": str(aco_debug["sample_reference_v2_showerdrain_c_bom"][:10]),
+            "source": "assembly_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "sample_aco_reference_v2_easyflow_bom",
+            "snippet": str(aco_debug["sample_reference_v2_easyflow_bom"][:10]),
+            "source": "assembly_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "sample_aco_reference_v2_easyflowplus_bom",
+            "snippet": str(aco_debug["sample_reference_v2_easyflowplus_bom"][:10]),
+            "source": "assembly_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "sample_aco_reference_v2_role_corrections",
+            "snippet": str(aco_debug["sample_reference_v2_role_corrections"][:10]),
+            "source": "promotion_stage",
         })
 
     products_df = pd.DataFrame(products_rows)
