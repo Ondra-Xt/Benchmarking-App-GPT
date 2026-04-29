@@ -880,80 +880,6 @@ def run_update(
     tray_paired_cover_ids: Set[str] = set()
     cover_variants_by_cover_id: Dict[str, List[Dict[str, Any]]] = {}
     viega_params_by_id: Dict[str, Dict[str, Any]] = {}
-    aco_debug = {
-        "candidates_by_role": {},
-        "products_by_role": {},
-        "components_by_role": {},
-        "complete_systems_promoted_count": 0,
-        "complete_systems_promoted_sample": [],
-        "components_demoted_by_role_count": 0,
-        "components_with_promote_yes_count": 0,
-        "promotion_reason_counts": {},
-        "sample_aco_products": [],
-        "sample_aco_components": [],
-        "bom_options_count": 0,
-        "bom_options_by_family": {},
-        "bom_options_by_type": {},
-        "easyflow_bom_count": 0,
-        "showerdrain_bom_count": 0,
-        "assembled_products_created_count": 0,
-        "sample_aco_bom_options": [],
-        "sample_aco_unmatched_base_sets": [],
-        "sample_aco_unmatched_grates": [],
-        "sample_aco_assembly_candidates_rejected": [],
-        "reference_v2_showerdrain_c_bom_count": 0,
-        "reference_v2_easyflowplus_products_count": 0,
-        "reference_v2_easyflow_products_count": 0,
-        "reference_v2_easyflowplus_bom_count": 0,
-        "reference_v2_easyflow_bom_count": 0,
-        "reference_v2_cross_family_rejected_count": 0,
-        "sample_reference_v2_showerdrain_c_bom": [],
-        "sample_reference_v2_easyflow_bom": [],
-        "sample_reference_v2_easyflowplus_bom": [],
-        "sample_reference_v2_role_corrections": [],
-    }
-    tray_pairings_by_base_id: Dict[str, List[Dict[str, Any]]] = {}
-    tray_pairing_reason_by_base_id: Dict[str, str] = {}
-    tray_paired_cover_ids: Set[str] = set()
-    cover_variants_by_cover_id: Dict[str, List[Dict[str, Any]]] = {}
-    viega_params_by_id: Dict[str, Dict[str, Any]] = {}
-    aco_debug = {
-        "candidates_by_role": {},
-        "products_by_role": {},
-        "components_by_role": {},
-        "complete_systems_promoted_count": 0,
-        "complete_systems_promoted_sample": [],
-        "components_demoted_by_role_count": 0,
-        "components_with_promote_yes_count": 0,
-        "promotion_reason_counts": {},
-        "sample_aco_products": [],
-        "sample_aco_components": [],
-        "bom_options_count": 0,
-        "bom_options_by_family": {},
-        "bom_options_by_type": {},
-        "easyflow_bom_count": 0,
-        "showerdrain_bom_count": 0,
-        "assembled_products_created_count": 0,
-        "sample_aco_bom_options": [],
-        "sample_aco_unmatched_base_sets": [],
-        "sample_aco_unmatched_grates": [],
-        "sample_aco_assembly_candidates_rejected": [],
-        "reference_v2_showerdrain_c_bom_count": 0,
-        "reference_v2_easyflowplus_products_count": 0,
-        "reference_v2_easyflow_products_count": 0,
-        "reference_v2_easyflowplus_bom_count": 0,
-        "reference_v2_easyflow_bom_count": 0,
-        "reference_v2_cross_family_rejected_count": 0,
-        "sample_reference_v2_showerdrain_c_bom": [],
-        "sample_reference_v2_easyflow_bom": [],
-        "sample_reference_v2_easyflowplus_bom": [],
-        "sample_reference_v2_role_corrections": [],
-    }
-    tray_pairings_by_base_id: Dict[str, List[Dict[str, Any]]] = {}
-    tray_pairing_reason_by_base_id: Dict[str, str] = {}
-    tray_paired_cover_ids: Set[str] = set()
-    cover_variants_by_cover_id: Dict[str, List[Dict[str, Any]]] = {}
-    viega_params_by_id: Dict[str, Dict[str, Any]] = {}
 
     if "manufacturer" in registry_df.columns:
         for _, rv in registry_df[registry_df["manufacturer"] == "viega"].iterrows():
@@ -1119,6 +1045,14 @@ def run_update(
             fam_hint = _aco_family_hint(rowd)
             aco_debug["candidates_by_role"][role or "unknown"] = aco_debug["candidates_by_role"].get(role or "unknown", 0) + 1
             candidate_type, promote_to_product, promotion_reason = _classify_aco_promotion(rowd, candidate_type)
+            txt_hint = f"{rowd.get('product_name','')} {rowd.get('product_url','')}".lower()
+            # reference-v2 correction: Easyflow Aufsatzstücke are adapter/accessory components.
+            if (fam_hint == "easyflow") and any(t in txt_hint for t in ("aufsatzstück", "aufsatzstueck", "aufsatzstücke", "aufsatzstuecke")):
+                candidate_type = "component"
+                promote_to_product = False
+                promotion_reason = "accessory_only"
+                if len(aco_debug["sample_reference_v2_role_corrections"]) < 20:
+                    aco_debug["sample_reference_v2_role_corrections"].append(f"{product_id}|easyflow|aufsatz->accessory")
             if role == "configuration_family" and promotion_reason == "complete_system":
                 if len(aco_debug["sample_reference_v2_role_corrections"]) < 20:
                     aco_debug["sample_reference_v2_role_corrections"].append(f"{product_id}|{fam_hint}|configuration_family->complete_system")
@@ -1320,6 +1254,11 @@ def run_update(
         system_role_out = str(r.get("system_role") or "")
         if manufacturer == "aco" and promote_to_product and promotion_reason == "complete_system":
             system_role_out = "complete_system"
+        if manufacturer == "aco" and (not promote_to_product):
+            txt_role = f"{r.get('product_name','')} {r.get('product_url','')}".lower()
+            fam_role = _aco_family_hint(r.to_dict() if hasattr(r, "to_dict") else dict(r))
+            if fam_role == "easyflow" and any(t in txt_role for t in ("aufsatzstück", "aufsatzstueck", "aufsatzstücke", "aufsatzstuecke")):
+                system_role_out = "accessory"
 
         prod_row = {
             "manufacturer": manufacturer,

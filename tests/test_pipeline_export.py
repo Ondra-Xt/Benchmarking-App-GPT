@@ -348,13 +348,16 @@ class PipelineExportTests(unittest.TestCase):
         aco_bom = bom[bom["manufacturer"] == "aco"]
         self.assertTrue(((aco_bom["product_id"] == "aco-90108544") & (aco_bom["component_id"] == "aco-showerdrainc-grate") & (aco_bom["option_type"] == "compatible_grate")).any())
         self.assertTrue(((aco_bom["product_id"] == "aco-easyflowplus-body") & (aco_bom["component_id"] == "aco-easyflowplus-grate") & (aco_bom["option_type"] == "compatible_grate")).any())
-        self.assertTrue(((aco_bom["product_id"] == "aco-easyflow-body") & (aco_bom["component_id"] == "aco-easyflowplus-adapter") & (aco_bom["option_type"] == "optional_accessory")).any())
+        self.assertTrue(((aco_bom["product_id"] == "aco-easyflow-complete") & (aco_bom["component_id"] == "aco-easyflowplus-adapter") & (aco_bom["option_type"] == "optional_accessory")).any())
+        self.assertTrue(((aco_bom["product_id"] == "aco-easyflow-complete") & (aco_bom["component_id"] == "aco-easyflowplus-grate") & (aco_bom["option_type"] == "compatible_grate")).any())
         self.assertTrue(((aco_bom["product_id"] == "aco-showerdrainc-body") & (aco_bom["component_id"] == "aco-showerdrainc-grate") & (aco_bom["option_type"] == "compatible_grate")).any())
         # no cross-family pairings
         self.assertFalse(((aco_bom["product_id"] == "aco-easyflowplus-body") & (aco_bom["component_id"] == "aco-showerdrainc-grate")).any())
         self.assertFalse(((aco_bom["product_id"] == "aco-easyflowplus-body") & (aco_bom["component_id"] == "aco-easyflowplus-adapter")).any())
+        self.assertFalse(((aco_bom["product_id"] == "aco-easyflow-complete") & (aco_bom["component_id"] == "aco-easyflowplus-grate") & (aco_bom["parent_family"] == "easyflowplus")).any())
         self.assertFalse(((aco_bom["product_id"] == "aco-90108544") & (aco_bom["component_id"] == "aco-showerdraine-grate")).any())
         self.assertFalse(((aco_bom["product_id"] == "aco-90108544") & (aco_bom["component_id"] == "aco-showerdrainm-grate")).any())
+        self.assertEqual(components.loc["aco-easyflowplus-adapter", "system_role"], "accessory")
         labels = set(evidence[evidence["manufacturer"] == "aco"]["label"].tolist())
         self.assertIn("aco_reference_v2_showerdrain_c_bom_count", labels)
         self.assertIn("aco_reference_v2_easyflowplus_products_count", labels)
