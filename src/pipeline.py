@@ -181,7 +181,7 @@ def _aco_family_targets(row: Dict[str, Any], base_family: str, bucket: str) -> L
     # keep strict no-cross pairing by duplicating shared option rows into both families explicitly.
     if bucket in {"grate", "accessory"}:
         has_plus = ("easyflow+" in txt) or ("easyflow-plus" in txt)
-        has_plain = ("easyflow" in txt)
+        has_plain = bool(re.search(r"easyflow(?!\+|-plus)", txt))
         if has_plus and has_plain:
             if "easyflowplus" not in out:
                 out.append("easyflowplus")
@@ -2420,11 +2420,12 @@ def run_update(
             if fam == "easyflow" and (not grates and not accessories):
                 for rr in aco_rows:
                     txt_rr = f"{rr.get('product_name','')} {rr.get('product_url','')}".lower()
-                    if "easyflow" not in txt_rr:
+                    has_plain_easyflow = bool(re.search(r"easyflow(?!\+|-plus)", txt_rr))
+                    if not has_plain_easyflow:
                         continue
                     if ("easyflow+" in txt_rr) or ("easyflow-plus" in txt_rr):
-                        # mixed/shared pages are acceptable only if plain easyflow is also present.
-                        if "easyflow" not in txt_rr:
+                        # mixed/shared pages are acceptable only when plain easyflow is explicitly present too.
+                        if not has_plain_easyflow:
                             continue
                     rb = _aco_role_bucket(rr)
                     if rb == "grate":
