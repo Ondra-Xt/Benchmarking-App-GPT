@@ -337,6 +337,8 @@ class PipelineExportTests(unittest.TestCase):
         self.assertIn("aco-easyflowplus-complete", set(drains["product_id"].tolist()))
         self.assertIn("aco-easyflow-complete", set(drains["product_id"].tolist()))
         self.assertTrue({"aco-90108544", "aco-90108554", "aco-90108524", "aco-90108534"}.issubset(set(drains["product_id"].tolist())))
+        self.assertEqual(drains.set_index("product_id").loc["aco-easyflowplus-complete", "system_role"], "complete_system")
+        self.assertEqual(drains.set_index("product_id").loc["aco-easyflow-complete", "system_role"], "complete_system")
         components = products[products["candidate_type"] == "component"].set_index("product_id")
         self.assertEqual(components.loc["aco-easyflowplus-grate", "why_not_product_reason"], "cover_only_component")
         self.assertEqual(components.loc["aco-easyflowplus-adapter", "why_not_product_reason"], "accessory_only")
@@ -358,6 +360,7 @@ class PipelineExportTests(unittest.TestCase):
         self.assertIn("aco_reference_v2_easyflowplus_products_count", labels)
         self.assertIn("aco_reference_v2_easyflow_products_count", labels)
         self.assertIn("aco_reference_v2_cross_family_rejected_count", labels)
+        self.assertIn("sample_aco_reference_v2_easyflow_bom", labels)
 
     def test_viega_complete_assembly_promotes_body_to_product(self):
         registry = pd.DataFrame(

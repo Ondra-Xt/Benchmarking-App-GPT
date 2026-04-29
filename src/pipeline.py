@@ -174,6 +174,22 @@ def _aco_family_hint(row: Dict[str, Any]) -> str:
     return "unknown"
 
 
+def _aco_family_targets(row: Dict[str, Any], base_family: str, bucket: str) -> List[str]:
+    txt = f"{row.get('product_name','')} {row.get('product_url','')}".lower()
+    out = [base_family]
+    # some catalog option pages are shared between EasyFlow+ and Easyflow (typically grates/adapters)
+    # keep strict no-cross pairing by duplicating shared option rows into both families explicitly.
+    if bucket in {"grate", "accessory"}:
+        has_plus = ("easyflow+" in txt) or ("easyflow-plus" in txt)
+        has_plain = ("easyflow" in txt)
+        if has_plus and has_plain:
+            if "easyflowplus" not in out:
+                out.append("easyflowplus")
+            if "easyflow" not in out:
+                out.append("easyflow")
+    return list(dict.fromkeys([x for x in out if x]))
+
+
 def _aco_role_bucket(row: Dict[str, Any]) -> str:
     role = str(row.get("system_role") or "").strip().lower()
     if not role:
@@ -901,6 +917,43 @@ def run_update(
     tray_paired_cover_ids: Set[str] = set()
     cover_variants_by_cover_id: Dict[str, List[Dict[str, Any]]] = {}
     viega_params_by_id: Dict[str, Dict[str, Any]] = {}
+    aco_debug = {
+        "candidates_by_role": {},
+        "products_by_role": {},
+        "components_by_role": {},
+        "complete_systems_promoted_count": 0,
+        "complete_systems_promoted_sample": [],
+        "components_demoted_by_role_count": 0,
+        "components_with_promote_yes_count": 0,
+        "promotion_reason_counts": {},
+        "sample_aco_products": [],
+        "sample_aco_components": [],
+        "bom_options_count": 0,
+        "bom_options_by_family": {},
+        "bom_options_by_type": {},
+        "easyflow_bom_count": 0,
+        "showerdrain_bom_count": 0,
+        "assembled_products_created_count": 0,
+        "sample_aco_bom_options": [],
+        "sample_aco_unmatched_base_sets": [],
+        "sample_aco_unmatched_grates": [],
+        "sample_aco_assembly_candidates_rejected": [],
+        "reference_v2_showerdrain_c_bom_count": 0,
+        "reference_v2_easyflowplus_products_count": 0,
+        "reference_v2_easyflow_products_count": 0,
+        "reference_v2_easyflowplus_bom_count": 0,
+        "reference_v2_easyflow_bom_count": 0,
+        "reference_v2_cross_family_rejected_count": 0,
+        "sample_reference_v2_showerdrain_c_bom": [],
+        "sample_reference_v2_easyflow_bom": [],
+        "sample_reference_v2_easyflowplus_bom": [],
+        "sample_reference_v2_role_corrections": [],
+    }
+    tray_pairings_by_base_id: Dict[str, List[Dict[str, Any]]] = {}
+    tray_pairing_reason_by_base_id: Dict[str, str] = {}
+    tray_paired_cover_ids: Set[str] = set()
+    cover_variants_by_cover_id: Dict[str, List[Dict[str, Any]]] = {}
+    viega_params_by_id: Dict[str, Dict[str, Any]] = {}
 
     if "manufacturer" in registry_df.columns:
         for _, rv in registry_df[registry_df["manufacturer"] == "viega"].iterrows():
@@ -1264,6 +1317,10 @@ def run_update(
         if manufacturer == "aco" and (not promote_to_product) and promotion_reason == "configuration_family":
             why_not_product_reason = "configuration_family_not_final_product"
 
+        system_role_out = str(r.get("system_role") or "")
+        if manufacturer == "aco" and promote_to_product and promotion_reason == "complete_system":
+            system_role_out = "complete_system"
+
         prod_row = {
             "manufacturer": manufacturer,
             "product_id": product_id,
@@ -1276,7 +1333,7 @@ def run_update(
             "matched_component_ids": ",".join(str(x) for x in matched_component_ids),
             "pairing_reason": "",
             "why_not_product_reason": why_not_product_reason,
-            "system_role": str(r.get("system_role") or ""),
+            "system_role": system_role_out,
 
             # vytažené parametry:
             **{k: v for k, v in params.items() if k != "evidence"},
@@ -2369,9 +2426,10 @@ def run_update(
         for row in aco_rows:
             fam = _aco_family_hint(row)
             bucket = _aco_role_bucket(row)
-            grp = by_family.setdefault(fam, {"base_set": [], "grate": [], "accessory": [], "complete_system": [], "article_variant": []})
-            if bucket in grp:
-                grp[bucket].append(row)
+            for tfam in _aco_family_targets(row, fam, bucket):
+                grp = by_family.setdefault(tfam, {"base_set": [], "grate": [], "accessory": [], "complete_system": [], "article_variant": []})
+                if bucket in grp:
+                    grp[bucket].append(row)
 
         seen_aco_bom_keys: Set[Tuple[str, str, str]] = set()
         pre_bom_count = len(bom_rows)
