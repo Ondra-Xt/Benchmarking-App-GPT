@@ -2415,6 +2415,23 @@ def run_update(
             complete = grp.get("complete_system", [])
             article_variants = grp.get("article_variant", [])
 
+            # Easyflow fallback: when no explicit easyflow option rows survived bucketing,
+            # recover shared option rows that mention easyflow text and keep them in easyflow family only.
+            if fam == "easyflow" and (not grates and not accessories):
+                for rr in aco_rows:
+                    txt_rr = f"{rr.get('product_name','')} {rr.get('product_url','')}".lower()
+                    if "easyflow" not in txt_rr:
+                        continue
+                    if ("easyflow+" in txt_rr) or ("easyflow-plus" in txt_rr):
+                        # mixed/shared pages are acceptable only if plain easyflow is also present.
+                        if "easyflow" not in txt_rr:
+                            continue
+                    rb = _aco_role_bucket(rr)
+                    if rb == "grate":
+                        grates.append(rr)
+                    elif rb == "accessory":
+                        accessories.append(rr)
+
             for b in bases:
                 if not grates and len(aco_debug["sample_aco_unmatched_base_sets"]) < 20:
                     aco_debug["sample_aco_unmatched_base_sets"].append(str(b.get("product_url") or b.get("product_id") or ""))
