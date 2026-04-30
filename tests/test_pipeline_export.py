@@ -390,6 +390,16 @@ class PipelineExportTests(unittest.TestCase):
         self.assertEqual(set(comparison["product_id"].tolist()), aco_ids)
         aco_ev = evidence[evidence["manufacturer"] == "aco"].set_index("label")
         self.assertGreaterEqual(int(aco_ev.loc["aco_stable_id_migration_count", "snippet"]), 1)
+        self.assertEqual(str(aco_ev.loc["aco_hash_like_ids_after_count", "snippet"]), "0")
+        self.assertEqual(str(aco_ev.loc["aco_hash_like_product_ids_after_count", "snippet"]), "0")
+        self.assertEqual(str(aco_ev.loc["aco_hash_like_component_ids_after_count", "snippet"]), "0")
+        self.assertIn("aco_hash_like_bom_product_refs_after_count", set(aco_ev.index))
+        self.assertIn("aco_hash_like_bom_component_refs_after_count", set(aco_ev.index))
+
+        with patch.dict(pipeline.CONNECTORS, {"aco": _FakeAcoConnector()}, clear=True):
+            products2, comparison2, _excluded2, _evidence2, _bom2 = pipeline.run_update(registry, default_config())
+        self.assertEqual(set(products2["product_id"].tolist()), aco_ids)
+        self.assertEqual(set(comparison2["product_id"].tolist()), set(comparison["product_id"].tolist()))
 
     def test_viega_complete_assembly_promotes_body_to_product(self):
         registry = pd.DataFrame(
