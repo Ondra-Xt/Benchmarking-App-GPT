@@ -131,6 +131,41 @@ def _extract_title(html: str, fallback_url: str) -> str:
 def _digits_only(article_no: str) -> str:
     return re.sub(r"\D", "", article_no or "")
 
+def _normalize_id_token(s: str) -> str:
+    txt = (s or "").lower()
+    repl = {
+        "ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss",
+        "č": "c", "ř": "r", "š": "s", "ž": "z", "ý": "y", "á": "a", "í": "i", "é": "e", "ů": "u", "ú": "u", "ň": "n", "ť": "t", "ď": "d",
+    }
+    for k, v in repl.items():
+        txt = txt.replace(k, v)
+    txt = re.sub(r"[^a-z0-9]+", "-", txt)
+    txt = re.sub(r"-{2,}", "-", txt).strip("-")
+    return txt
+
+def _slug_from_url(url: str) -> str:
+    p = urlparse(url)
+    parts = [x for x in (p.path or "").split("/") if x]
+    for seg in reversed(parts):
+        seg_n = _normalize_id_token(seg)
+        if seg_n and seg_n not in {"produkte", "produkty", "badentwaesserung", "badablaeufe", "duschrinnen", "reihenduschrinnen", "odvodneni-koupelen", "zubehoer"}:
+            return seg_n
+    return ""
+
+def _stable_aco_id(final_url: str, family: str, role: str, title: str, article_digits: str = "") -> str:
+    if article_digits:
+        return f"aco-{article_digits}"
+    fam = _normalize_id_token(family if family and family != "unknown" else "showerdrain")
+    role_n = _normalize_id_token(role or "product")
+    slug = _slug_from_url(final_url)
+    if not slug:
+        slug = _normalize_id_token(title)[:48]
+    generic = {"designrost", "design-rost", "design-roste", "aufsatzstuecke", "aufsatzstueck", "komplettablauf", "komplettablaeufe", "einzelablauf", "rinnenkoerper"}
+    if slug in generic:
+        name_token = _normalize_id_token(title).split("-")
+        name_token = "-".join([t for t in name_token if t][:3]) or "item"
+        return f"aco-{fam}-{role_n}-{slug}-{name_token}"
+    return f"aco-{fam}-{slug}"
 
 def _nominal_length_from_l1(l1_mm: int) -> int:
     return (l1_mm + 15) if (l1_mm % 100 == 85) else l1_mm
@@ -479,7 +514,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             # row-based product variants only; no page-level drain fallback rows
             if not pairs:
                 # keep family-level candidate instead of dropping entire family due missing row table
-                pid = f"aco-fam-{abs(hash(final_c))}"
+                pid = _stable_aco_id(final_c, family, "configuration_family", title_base)
                 if pid not in seen_ids:
                     seen_ids.add(pid)
                     kept += 1
@@ -561,7 +596,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                     continue
                 if not (min_len <= nominal_length_mm <= max_len):
                     continue
-                pid = f"aco-{article_digits}" if article_digits else f"aco-{abs(hash(final_c + article_no))}"
+                pid = _stable_aco_id(final_c, family, "drain_unit", title_base, article_digits)
                 if pid in seen_ids:
                     continue
                 seen_ids.add(pid)
@@ -593,7 +628,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                 product_urls.append(final_c)
                 emitted_rows += 1
         elif cand_type == "component":
-            pid = f"aco-comp-{abs(hash(final_c))}"
+            pid = _stable_aco_id(final_c, family, role, title_base)
             if pid not in seen_ids:
                 seen_ids.add(pid)
                 kept += 1

@@ -6,6 +6,24 @@ from src.connectors import aco
 
 
 class AcoConnectorDiscoveryTests(unittest.TestCase):
+    def test_stable_aco_id_helpers_are_deterministic_and_ascii_safe(self):
+        id1 = aco._stable_aco_id(
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-aufsatzstuecke-standard/",
+            "easyflow",
+            "accessory",
+            "ACO Easyflow Aufsatzstücke Standard",
+        )
+        id2 = aco._stable_aco_id(
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-aufsatzstuecke-standard/",
+            "easyflow",
+            "accessory",
+            "ACO Easyflow Aufsatzstücke Standard",
+        )
+        self.assertEqual(id1, id2)
+        self.assertEqual(id1, "aco-easyflow-aco-easyflow-aufsatzstuecke-standard")
+        self.assertTrue(id1.islower())
+        self.assertNotRegex(id1, r"[^a-z0-9-]")
+
     def test_in_scope_accepts_de_and_cz_bathroom_scopes(self):
         self.assertTrue(aco._in_scope("https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/"))
         self.assertTrue(aco._in_scope("https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/"))
@@ -79,4 +97,3 @@ class AcoConnectorDiscoveryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
