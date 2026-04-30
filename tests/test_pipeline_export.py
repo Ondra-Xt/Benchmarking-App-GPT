@@ -361,6 +361,24 @@ class PipelineExportTests(unittest.TestCase):
         self.assertFalse(((aco_bom["product_id"] == "aco-90108544") & (aco_bom["component_id"] == "aco-showerdrainm-grate")).any())
         self.assertEqual(components.loc["aco-easyflow-adapter", "system_role"], "accessory")
         self.assertTrue(((aco_bom["parent_family"] == "easyflow") & (aco_bom["option_family"] == "easyflow")).any())
+        assembled = products[
+            (products["manufacturer"] == "aco")
+            & (products["promotion_reason"] == "assembled_from_bom")
+        ]
+        self.assertFalse(assembled.empty)
+        self.assertTrue((assembled["system_role"] == "assembled_system").all())
+        self.assertTrue((assembled["assembly_reason"] == "aco_bom_body_grate_assembly").all())
+        self.assertTrue((assembled["product_id"].astype(str).str.startswith("aco-assembled-")).all())
+        # allowed families only
+        self.assertTrue(set(assembled["parent_family"].dropna().tolist()).issubset({"easyflow", "easyflowplus", "showerdrain_c"}))
+        # accessory rows must not create assembled variants
+        self.assertFalse(assembled["matched_component_ids"].astype(str).str.contains("adapter|aufsatz", case=False, regex=True).any())
+        # cross-family forbidden
+        self.assertFalse(((assembled["parent_family"] == "easyflow") & assembled["matched_component_ids"].astype(str).str.contains("easyflowplus")).any())
+        self.assertFalse(((assembled["parent_family"] == "easyflowplus") & assembled["matched_component_ids"].astype(str).str.contains("easyflow-")).any())
+        # technical inheritance (present in base connector fixtures)
+        self.assertTrue((assembled["flow_rate_lps"].notna()).any())
+
         labels = set(evidence[evidence["manufacturer"] == "aco"]["label"].tolist())
         self.assertIn("aco_reference_v2_showerdrain_c_bom_count", labels)
         self.assertIn("aco_reference_v2_easyflowplus_products_count", labels)
@@ -370,6 +388,9 @@ class PipelineExportTests(unittest.TestCase):
         self.assertIn("aco_hash_like_ids_before_count", labels)
         self.assertIn("aco_hash_like_ids_after_count", labels)
         self.assertIn("aco_orphan_bom_references_count", labels)
+        self.assertIn("aco_assembled_products_by_family", labels)
+        self.assertIn("sample_aco_assembled_products", labels)
+        self.assertIn("aco_assembled_products_accessory_combinations_skipped_count", labels)
         aco_ev = evidence[evidence["manufacturer"] == "aco"].set_index("label")
         self.assertEqual(str(aco_ev.loc["aco_hash_like_ids_after_count", "snippet"]), "0")
         self.assertEqual(str(aco_ev.loc["aco_orphan_bom_references_count", "snippet"]), "0")

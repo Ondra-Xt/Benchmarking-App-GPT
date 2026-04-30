@@ -2617,6 +2617,102 @@ def run_update(
                     else:
                         _add_aco_bom(p, rr, "optional_accessory", "accessory")
 
+        # first safe ACO assembled products (restricted families, grate-only BOM links)
+        allowed_assembled_families = {"easyflow", "easyflowplus", "showerdrain_c"}
+        aco_debug.setdefault("assembled_products_by_family", {})
+        aco_debug.setdefault("sample_aco_assembled_products", [])
+        aco_debug.setdefault("assembled_products_skipped_count", 0)
+        aco_debug.setdefault("sample_aco_assembly_skipped_reasons", [])
+        aco_debug.setdefault("assembled_product_duplicate_skipped_count", 0)
+        aco_debug.setdefault("assembled_products_accessory_combinations_skipped_count", 0)
+
+        aco_by_id: Dict[str, Dict[str, Any]] = {}
+        for rr in aco_rows + [r for r in products_rows if str(r.get("manufacturer") or "").lower() == "aco"]:
+            pid = str(rr.get("product_id") or "").strip()
+            if pid and pid not in aco_by_id:
+                aco_by_id[pid] = rr
+        existing_ids = {str(r.get("product_id") or "") for r in products_rows}
+        seen_assembled_keys: Set[Tuple[str, str, str]] = set()
+        tech_keys = [
+            "flow_rate_lps", "flow_rate_raw_text", "flow_rate_unit", "outlet_dn",
+            "outlet_dn_default", "outlet_dn_options_json", "height_adj_min_mm",
+            "height_adj_max_mm", "din_en_1253_cert",
+        ]
+        for br in [r for r in bom_rows if str(r.get("manufacturer") or "").lower() == "aco"]:
+            fam = str(br.get("parent_family") or "")
+            if fam not in allowed_assembled_families:
+                continue
+            opt_type = str(br.get("option_type") or "").lower()
+            opt_role = str(br.get("option_role") or "").lower()
+            if opt_type != "compatible_grate" or opt_role != "grate":
+                if opt_type in {"optional_accessory", "compatible_adapter"}:
+                    aco_debug["assembled_products_accessory_combinations_skipped_count"] += 1
+                continue
+            pid = str(br.get("product_id") or "").strip()
+            cid = str(br.get("component_id") or "").strip()
+            parent = aco_by_id.get(pid, {})
+            grate = aco_by_id.get(cid, {})
+            if not parent or not grate:
+                aco_debug["assembled_products_skipped_count"] += 1
+                if len(aco_debug["sample_aco_assembly_skipped_reasons"]) < 20:
+                    aco_debug["sample_aco_assembly_skipped_reasons"].append(f"{fam}:{pid}->{cid}:missing_parent_or_grate")
+                continue
+            ofam = str(br.get("option_family") or "")
+            if fam != ofam:
+                aco_debug["assembled_products_skipped_count"] += 1
+                if len(aco_debug["sample_aco_assembly_skipped_reasons"]) < 20:
+                    aco_debug["sample_aco_assembly_skipped_reasons"].append(f"{fam}:{pid}->{cid}:cross_family")
+                continue
+            k = (fam, pid, cid)
+            if k in seen_assembled_keys:
+                aco_debug["assembled_product_duplicate_skipped_count"] += 1
+                continue
+            seen_assembled_keys.add(k)
+            assembled_id = f"aco-assembled-{fam.replace('_','-')}-{pid}__{cid}".lower()
+            if assembled_id in existing_ids:
+                aco_debug["assembled_product_duplicate_skipped_count"] += 1
+                continue
+            row = dict(parent)
+            row.update({
+                "manufacturer": "aco",
+                "product_id": assembled_id,
+                "product_name": f"{parent.get('product_name','')} + {grate.get('product_name','')}".strip(" +"),
+                "candidate_type": "drain",
+                "system_role": "assembled_system",
+                "promote_to_product": "yes",
+                "promotion_reason": "assembled_from_bom",
+                "assembly_reason": "aco_bom_body_grate_assembly",
+                "assembled_from_bom": "true",
+                "parent_family": fam,
+                "option_family": ofam,
+                "base_product_id": pid,
+                "grate_component_id": cid,
+                "matched_component_ids": ",".join([pid, cid]),
+                "source_url": str(br.get("source_url") or parent.get("product_url") or ""),
+                "sources": ",".join([str(parent.get("product_url") or ""), str(grate.get("product_url") or "")]).strip(","),
+            })
+            row["option_label"] = str(br.get("option_label") or grate.get("product_name") or "")
+            for tk in tech_keys:
+                if tk in parent:
+                    row[tk] = parent.get(tk)
+            products_rows.append(row)
+            comparison_rows.append({
+                "manufacturer": "aco",
+                "product_id": assembled_id,
+                "product_name": row.get("product_name"),
+                "candidate_type": "drain",
+                "complete_system": "yes",
+                "promote_to_product": "yes",
+                "promotion_reason": "assembled_from_bom",
+                "why_not_product_reason": "",
+                "matched_component_ids": row.get("matched_component_ids"),
+            })
+            existing_ids.add(assembled_id)
+            aco_debug["assembled_products_created_count"] += 1
+            aco_debug["assembled_products_by_family"][fam] = aco_debug["assembled_products_by_family"].get(fam, 0) + 1
+            if len(aco_debug["sample_aco_assembled_products"]) < 20:
+                aco_debug["sample_aco_assembled_products"].append(f"{assembled_id}|{pid}|{cid}")
+
         aco_bom_rows = [r for r in bom_rows if str(r.get("manufacturer") or "").lower() == "aco"]
         aco_all_ids_after = [str(r.get("product_id") or "") for r in registry_rows if str(r.get("manufacturer") or "").lower() == "aco"]
         aco_debug["aco_hash_like_ids_after_count"] = sum(1 for pid in aco_all_ids_after if aco_hash_like_re.match(pid))
@@ -2774,6 +2870,48 @@ def run_update(
             "product_id": "__summary__",
             "label": "aco_assembled_products_created_count",
             "snippet": str(aco_debug["assembled_products_created_count"]),
+            "source": "assembly_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_assembled_products_by_family",
+            "snippet": str(aco_debug.get("assembled_products_by_family", {})),
+            "source": "assembly_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "sample_aco_assembled_products",
+            "snippet": str(aco_debug.get("sample_aco_assembled_products", [])[:10]),
+            "source": "assembly_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_assembled_products_skipped_count",
+            "snippet": str(aco_debug.get("assembled_products_skipped_count", 0)),
+            "source": "assembly_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "sample_aco_assembly_skipped_reasons",
+            "snippet": str(aco_debug.get("sample_aco_assembly_skipped_reasons", [])[:10]),
+            "source": "assembly_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_assembled_product_duplicate_skipped_count",
+            "snippet": str(aco_debug.get("assembled_product_duplicate_skipped_count", 0)),
+            "source": "assembly_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_assembled_products_accessory_combinations_skipped_count",
+            "snippet": str(aco_debug.get("assembled_products_accessory_combinations_skipped_count", 0)),
             "source": "assembly_stage",
         })
         evidence_rows.append({
