@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -372,6 +373,23 @@ class PipelineExportTests(unittest.TestCase):
         aco_ev = evidence[evidence["manufacturer"] == "aco"].set_index("label")
         self.assertEqual(str(aco_ev.loc["aco_hash_like_ids_after_count", "snippet"]), "0")
         self.assertEqual(str(aco_ev.loc["aco_orphan_bom_references_count", "snippet"]), "0")
+
+    def test_aco_hash_like_registry_ids_are_migrated_before_export(self):
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "aco", "product_id": "aco-comp-7288454562667788658", "product_name": "ACO Easyflow Design-Roste", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-design-roste/", "candidate_type": "component", "complete_system": "component", "system_role": "grate"},
+                {"manufacturer": "aco", "product_id": "aco-comp-4293387199132084100", "product_name": "ACO Easyflow Aufsatzstücke Standard", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-aufsatzstuecke-standard/", "candidate_type": "component", "complete_system": "component", "system_role": "accessory"},
+                {"manufacturer": "aco", "product_id": "aco-90108544", "product_name": "ACO ShowerDrain C 1200 mm (Artikel-Nr. 90108544)", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-90108544/", "candidate_type": "drain", "complete_system": "yes", "system_role": "drain_unit", "classification_reason": "article_row_variant"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"aco": _FakeAcoConnector()}, clear=True):
+            products, comparison, _excluded, evidence, _bom = pipeline.run_update(registry, default_config())
+        aco_ids = set(products[products["manufacturer"] == "aco"]["product_id"].tolist())
+        self.assertIn("aco-90108544", aco_ids)
+        self.assertFalse(any(re.match(r"^aco-(?:comp|fam)-\\d+$", pid) for pid in aco_ids))
+        self.assertEqual(set(comparison["product_id"].tolist()), aco_ids)
+        aco_ev = evidence[evidence["manufacturer"] == "aco"].set_index("label")
+        self.assertGreaterEqual(int(aco_ev.loc["aco_stable_id_migration_count", "snippet"]), 1)
 
     def test_viega_complete_assembly_promotes_body_to_product(self):
         registry = pd.DataFrame(
