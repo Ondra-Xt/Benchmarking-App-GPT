@@ -366,6 +366,12 @@ class PipelineExportTests(unittest.TestCase):
         self.assertIn("aco_reference_v2_easyflow_products_count", labels)
         self.assertIn("aco_reference_v2_cross_family_rejected_count", labels)
         self.assertIn("sample_aco_reference_v2_easyflow_bom", labels)
+        self.assertIn("aco_hash_like_ids_before_count", labels)
+        self.assertIn("aco_hash_like_ids_after_count", labels)
+        self.assertIn("aco_orphan_bom_references_count", labels)
+        aco_ev = evidence[evidence["manufacturer"] == "aco"].set_index("label")
+        self.assertEqual(str(aco_ev.loc["aco_hash_like_ids_after_count", "snippet"]), "0")
+        self.assertEqual(str(aco_ev.loc["aco_orphan_bom_references_count", "snippet"]), "0")
 
     def test_viega_complete_assembly_promotes_body_to_product(self):
         registry = pd.DataFrame(

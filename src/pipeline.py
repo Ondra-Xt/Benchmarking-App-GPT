@@ -874,14 +874,18 @@ def run_update(
         "sample_reference_v2_easyflow_bom": [],
         "sample_reference_v2_easyflowplus_bom": [],
         "sample_reference_v2_role_corrections": [],
+        "aco_stable_id_migration_count": 0,
+        "aco_hash_like_ids_before_count": 0,
+        "aco_hash_like_ids_after_count": 0,
+        "sample_aco_stable_id_migrations": [],
+        "sample_aco_bom_id_reference_checks": [],
+        "aco_orphan_bom_references_count": 0,
     }
-    tray_pairings_by_base_id: Dict[str, List[Dict[str, Any]]] = {}
-    tray_pairing_reason_by_base_id: Dict[str, str] = {}
-    tray_paired_cover_ids: Set[str] = set()
-    cover_variants_by_cover_id: Dict[str, List[Dict[str, Any]]] = {}
-    viega_params_by_id: Dict[str, Dict[str, Any]] = {}
+    aco_hash_like_re = re.compile(r"^aco-(?:comp|fam)-\d+$")
 
     if "manufacturer" in registry_df.columns:
+        aco_ids_before = [str(x) for x in registry_df[registry_df["manufacturer"] == "aco"]["product_id"].fillna("").tolist()] if "product_id" in registry_df.columns else []
+        aco_debug["aco_hash_like_ids_before_count"] = sum(1 for pid in aco_ids_before if aco_hash_like_re.match(pid))
         for _, rv in registry_df[registry_df["manufacturer"] == "viega"].iterrows():
             rr = rv.to_dict()
             fam = _viega_family_hint(rr)
@@ -2547,6 +2551,23 @@ def run_update(
                         _add_aco_bom(p, rr, "optional_accessory", "accessory")
 
         aco_bom_rows = [r for r in bom_rows if str(r.get("manufacturer") or "").lower() == "aco"]
+        aco_all_ids_after = [str(r.get("product_id") or "") for r in registry_rows if str(r.get("manufacturer") or "").lower() == "aco"]
+        aco_debug["aco_hash_like_ids_after_count"] = sum(1 for pid in aco_all_ids_after if aco_hash_like_re.match(pid))
+        aco_debug["aco_stable_id_migration_count"] = max(0, aco_debug["aco_hash_like_ids_before_count"] - aco_debug["aco_hash_like_ids_after_count"])
+        if aco_debug["aco_hash_like_ids_before_count"] > 0 and aco_debug["aco_hash_like_ids_after_count"] == 0:
+            aco_debug["sample_aco_stable_id_migrations"].append("hash_like_ids_removed_from_aco_registry_output")
+        aco_component_ids = {str(r.get("product_id") or "") for r in registry_rows if str(r.get("manufacturer") or "").lower() == "aco" and str(r.get("candidate_type") or "").lower() == "component"}
+        aco_all_registry_ids = {str(r.get("product_id") or "") for r in registry_rows if str(r.get("manufacturer") or "").lower() == "aco"}
+        orphan_count = 0
+        for br in aco_bom_rows:
+            pid = str(br.get("product_id") or "")
+            cid = str(br.get("component_id") or "")
+            ok = bool(pid in aco_all_registry_ids and cid in aco_component_ids)
+            if not ok:
+                orphan_count += 1
+            if len(aco_debug["sample_aco_bom_id_reference_checks"]) < 20:
+                aco_debug["sample_aco_bom_id_reference_checks"].append(f"{pid}->{cid}|ok={str(ok).lower()}")
+        aco_debug["aco_orphan_bom_references_count"] = orphan_count
         aco_debug["reference_v2_easyflowplus_bom_count"] = sum(1 for r in aco_bom_rows if str(r.get("parent_family") or "") == "easyflowplus")
         aco_debug["reference_v2_easyflow_bom_count"] = sum(1 for r in aco_bom_rows if str(r.get("parent_family") or "") == "easyflow")
         for r in [r for r in aco_bom_rows if str(r.get("parent_family") or "") == "easyflowplus"][:10]:
@@ -2767,6 +2788,48 @@ def run_update(
             "label": "sample_aco_reference_v2_role_corrections",
             "snippet": str(aco_debug["sample_reference_v2_role_corrections"][:10]),
             "source": "promotion_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_stable_id_migration_count",
+            "snippet": str(aco_debug["aco_stable_id_migration_count"]),
+            "source": "id_stability",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_hash_like_ids_before_count",
+            "snippet": str(aco_debug["aco_hash_like_ids_before_count"]),
+            "source": "id_stability",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_hash_like_ids_after_count",
+            "snippet": str(aco_debug["aco_hash_like_ids_after_count"]),
+            "source": "id_stability",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "sample_aco_stable_id_migrations",
+            "snippet": str(aco_debug["sample_aco_stable_id_migrations"][:10]),
+            "source": "id_stability",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "sample_aco_bom_id_reference_checks",
+            "snippet": str(aco_debug["sample_aco_bom_id_reference_checks"][:10]),
+            "source": "id_stability",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_orphan_bom_references_count",
+            "snippet": str(aco_debug["aco_orphan_bom_references_count"]),
+            "source": "id_stability",
         })
 
     products_df = pd.DataFrame(products_rows)
