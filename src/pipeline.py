@@ -70,6 +70,38 @@ def _make_product_id(manufacturer: str, url: str) -> str:
     return f"{m}-{abs(hash(u))}"
 
 
+def _normalize_aco_token(s: str) -> str:
+    t = (s or "").lower()
+    repl = {"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss", "č": "c", "ř": "r", "š": "s", "ž": "z", "ý": "y", "á": "a", "í": "i", "é": "e", "ů": "u", "ú": "u", "ň": "n", "ť": "t", "ď": "d"}
+    for a, b in repl.items():
+        t = t.replace(a, b)
+    t = re.sub(r"[^a-z0-9]+", "-", t)
+    return re.sub(r"-{2,}", "-", t).strip("-")
+
+
+def _stable_aco_id_from_row(row: Dict[str, Any]) -> str:
+    pid = str(row.get("product_id") or "").strip().lower()
+    m = re.search(r"\b(\d{8})\b", f"{row.get('article_no','')} {row.get('product_name','')} {row.get('product_url','')}")
+    if m:
+        return f"aco-{m.group(1)}"
+    url = str(row.get("product_url") or "")
+    parts = [p for p in url.split("/") if p]
+    stop = {"produkte", "produkty", "badentwaesserung", "badablaeufe", "duschrinnen", "reihenduschrinnen", "odvodneni-koupelen", "zubehoer"}
+    slug = ""
+    for p in reversed(parts):
+        pn = _normalize_aco_token(p)
+        if pn and pn not in stop:
+            slug = pn
+            break
+    fam = _normalize_aco_token(str(_aco_family_hint(row) or "showerdrain").replace("_", "-"))
+    role = _normalize_aco_token(str(row.get("system_role") or row.get("candidate_type") or "product"))
+    if not slug:
+        slug = _normalize_aco_token(str(row.get("product_name") or ""))[:48]
+    if not slug:
+        return pid or "aco-unknown"
+    return f"aco-{fam}-{slug}" if fam not in slug else f"aco-{slug}"
+
+
 def _pick_connector(manufacturer: str, url: str):
     """
     Prefer manufacturer key, fallback to URL-based detection.
@@ -752,6 +784,36 @@ def run_update(
         if registry_df.empty:
             empty = pd.DataFrame()
             return empty, empty, empty, empty, empty
+    aco_hash_like_re = re.compile(r"^aco-(?:comp|fam)-\d+$")
+    aco_stable_id_migrations: List[str] = []
+    aco_hash_like_ids_before_migration = 0
+    if {"manufacturer", "product_id"}.issubset(set(registry_df.columns)):
+        aco_hash_like_ids_before_migration = sum(
+            1
+            for _idx, row in registry_df.iterrows()
+            if str(row.get("manufacturer") or "").lower() == "aco" and aco_hash_like_re.match(str(row.get("product_id") or "").strip())
+        )
+        used_ids = set(str(x) for x in registry_df["product_id"].fillna("").tolist())
+        for idx, row in registry_df.iterrows():
+            if str(row.get("manufacturer") or "").lower() != "aco":
+                continue
+            old_id = str(row.get("product_id") or "").strip()
+            if not aco_hash_like_re.match(old_id):
+                continue
+            new_id = _stable_aco_id_from_row(row.to_dict())
+            if (not new_id) or new_id == old_id:
+                continue
+            if new_id in used_ids and new_id != old_id:
+                base = new_id
+                n = 2
+                while f"{base}-{n}" in used_ids:
+                    n += 1
+                new_id = f"{base}-{n}"
+            used_ids.discard(old_id)
+            used_ids.add(new_id)
+            registry_df.at[idx, "product_id"] = new_id
+            if len(aco_stable_id_migrations) < 20:
+                aco_stable_id_migrations.append(f"{old_id}->{new_id}")
 
     products_rows: List[Dict[str, Any]] = []
     comparison_rows: List[Dict[str, Any]] = []
@@ -881,11 +943,12 @@ def run_update(
         "sample_aco_bom_id_reference_checks": [],
         "aco_orphan_bom_references_count": 0,
     }
+    if aco_stable_id_migrations:
+        aco_debug["sample_aco_stable_id_migrations"] = aco_stable_id_migrations[:20]
     aco_hash_like_re = re.compile(r"^aco-(?:comp|fam)-\d+$")
 
     if "manufacturer" in registry_df.columns:
-        aco_ids_before = [str(x) for x in registry_df[registry_df["manufacturer"] == "aco"]["product_id"].fillna("").tolist()] if "product_id" in registry_df.columns else []
-        aco_debug["aco_hash_like_ids_before_count"] = sum(1 for pid in aco_ids_before if aco_hash_like_re.match(pid))
+        aco_debug["aco_hash_like_ids_before_count"] = int(aco_hash_like_ids_before_migration)
         for _, rv in registry_df[registry_df["manufacturer"] == "viega"].iterrows():
             rr = rv.to_dict()
             fam = _viega_family_hint(rr)
