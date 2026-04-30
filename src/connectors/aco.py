@@ -18,16 +18,34 @@ HEADERS = {
 }
 
 BASE = "https://www.aco-haustechnik.de"
+BASE_CZ = "https://www.aco.cz"
 DUSCHRINNEN_SCOPE = "/produkte/badentwaesserung/duschrinnen/"
+BADENTWAESSERUNG_SCOPE = "/produkte/badentwaesserung/"
+REIHENDUSCH_SCOPE = "/produkte/badentwaesserung/reihenduschrinnen/"
+BADABLAEUFE_SCOPE = "/produkte/badentwaesserung/badablaeufe/"
+CZ_SCOPE = "/produkty/odvodneni-koupelen/"
 SEED_PAGES = [
+    f"{BASE}{BADENTWAESSERUNG_SCOPE}",
     f"{BASE}{DUSCHRINNEN_SCOPE}",
+    f"{BASE}{REIHENDUSCH_SCOPE}",
+    f"{BASE}{BADABLAEUFE_SCOPE}",
     f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-b/",
+    f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-cplus/",
     f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-c/",
     f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-eplus/",
     f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-mplus/",
     f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-splus/",
+    f"{BASE}{REIHENDUSCH_SCOPE}aco-showerdrain-public-80/",
+    f"{BASE}{REIHENDUSCH_SCOPE}aco-showerdrain-public-110/",
+    f"{BASE}{REIHENDUSCH_SCOPE}aco-showerdrain-public-x/",
+    f"{BASE}{BADABLAEUFE_SCOPE}aco-easyflow-plus/",
+    f"{BASE}{BADABLAEUFE_SCOPE}aco-easyflow/",
+    f"{BASE}{BADABLAEUFE_SCOPE}aco-showerpoint/",
+    f"{BASE}{BADABLAEUFE_SCOPE}aco-renovierungsablauf-passino/",
+    f"{BASE}{BADABLAEUFE_SCOPE}aco-bodenablauf-passavant/",
     f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-c/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm-200-mm/",
     f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-eplus/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm/",
+    f"{BASE_CZ}{CZ_SCOPE}",
 ]
 
 ARTICLE_RE = re.compile(r"\b(?:\d{4}\.?\d{2}\.?\d{2}|\d{8})\b")
@@ -44,13 +62,31 @@ DN_CONTEXT_RE = re.compile(r"ablaufstutzen|ablauf|anschluss|stutzen|\bdn\b", re.
 FLOW_REJECT_RE = re.compile(r"reduziert|reduzieren|reduziert\s+die\s+abflussleistung", re.IGNORECASE)
 ABFLUSS_PREF_RE = re.compile(r"abflusswert|ablaufleistung", re.IGNORECASE)
 CATEGORY_PATHS_EXACT = {
+    BADENTWAESSERUNG_SCOPE.rstrip("/"),
     DUSCHRINNEN_SCOPE.rstrip("/"),
-    f"{DUSCHRINNEN_SCOPE}aco-showerdrain-b".rstrip("/"),
-    f"{DUSCHRINNEN_SCOPE}aco-showerdrain-c".rstrip("/"),
-    f"{DUSCHRINNEN_SCOPE}aco-showerdrain-eplus".rstrip("/"),
-    f"{DUSCHRINNEN_SCOPE}aco-showerdrain-mplus".rstrip("/"),
-    f"{DUSCHRINNEN_SCOPE}aco-showerdrain-splus".rstrip("/"),
+    REIHENDUSCH_SCOPE.rstrip("/"),
+    BADABLAEUFE_SCOPE.rstrip("/"),
 }
+ALLOWED_DOMAINS = {"aco-haustechnik.de", "www.aco-haustechnik.de", "aco.cz", "www.aco.cz"}
+ALLOWED_PREFIXES = [BADENTWAESSERUNG_SCOPE, CZ_SCOPE]
+
+FAMILY_PATTERNS: List[Tuple[str, str]] = [
+    ("showerdrain_public_x", r"public[-\s]?x|w[aä]rmetauscher"),
+    ("showerdrain_public_110", r"public[-\s]?110"),
+    ("showerdrain_public_80", r"public[-\s]?80"),
+    ("showerdrain_splus", r"showerdrain[-\s]?s\+|showerdrain-splus"),
+    ("showerdrain_cplus", r"showerdrain[-\s]?c\+|showerdrain-cplus"),
+    ("showerdrain_c", r"showerdrain[-\s]?c"),
+    ("showerdrain_b", r"showerdrain[-\s]?b"),
+    ("showerdrain_eplus", r"showerdrain[-\s]?e\+|showerdrain-eplus"),
+    ("showerdrain_mplus", r"showerdrain[-\s]?m\+|showerdrain-mplus"),
+    ("easyflowplus", r"easyflow\+|easyflow-plus"),
+    ("easyflow", r"\beasyflow\b"),
+    ("showerpoint", r"showerpoint"),
+    ("mg", r"vpusti\s*mg|koupelnov[ée]\s*vpusti"),
+    ("passino", r"passino"),
+    ("passavant", r"passavant"),
+]
 
 
 def _safe_get_text(url: str, timeout: int = 35) -> Tuple[Optional[int], str, str, str]:
@@ -95,6 +131,41 @@ def _extract_title(html: str, fallback_url: str) -> str:
 def _digits_only(article_no: str) -> str:
     return re.sub(r"\D", "", article_no or "")
 
+def _normalize_id_token(s: str) -> str:
+    txt = (s or "").lower()
+    repl = {
+        "ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss",
+        "č": "c", "ř": "r", "š": "s", "ž": "z", "ý": "y", "á": "a", "í": "i", "é": "e", "ů": "u", "ú": "u", "ň": "n", "ť": "t", "ď": "d",
+    }
+    for k, v in repl.items():
+        txt = txt.replace(k, v)
+    txt = re.sub(r"[^a-z0-9]+", "-", txt)
+    txt = re.sub(r"-{2,}", "-", txt).strip("-")
+    return txt
+
+def _slug_from_url(url: str) -> str:
+    p = urlparse(url)
+    parts = [x for x in (p.path or "").split("/") if x]
+    for seg in reversed(parts):
+        seg_n = _normalize_id_token(seg)
+        if seg_n and seg_n not in {"produkte", "produkty", "badentwaesserung", "badablaeufe", "duschrinnen", "reihenduschrinnen", "odvodneni-koupelen", "zubehoer"}:
+            return seg_n
+    return ""
+
+def _stable_aco_id(final_url: str, family: str, role: str, title: str, article_digits: str = "") -> str:
+    if article_digits:
+        return f"aco-{article_digits}"
+    fam = _normalize_id_token(family if family and family != "unknown" else "showerdrain")
+    role_n = _normalize_id_token(role or "product")
+    slug = _slug_from_url(final_url)
+    if not slug:
+        slug = _normalize_id_token(title)[:48]
+    generic = {"designrost", "design-rost", "design-roste", "aufsatzstuecke", "aufsatzstueck", "komplettablauf", "komplettablaeufe", "einzelablauf", "rinnenkoerper"}
+    if slug in generic:
+        name_token = _normalize_id_token(title).split("-")
+        name_token = "-".join([t for t in name_token if t][:3]) or "item"
+        return f"aco-{fam}-{role_n}-{slug}-{name_token}"
+    return f"aco-{fam}-{slug}"
 
 def _nominal_length_from_l1(l1_mm: int) -> int:
     return (l1_mm + 15) if (l1_mm % 100 == 85) else l1_mm
@@ -226,9 +297,36 @@ def _abs(href: str, base: str) -> str:
 def _in_scope(url: str) -> bool:
     try:
         p = urlparse(url)
-        return p.netloc.endswith("aco-haustechnik.de") and (p.path or "").startswith(DUSCHRINNEN_SCOPE)
+        host = (p.netloc or "").lower()
+        if host not in ALLOWED_DOMAINS:
+            return False
+        path = (p.path or "").lower()
+        return any(path.startswith(pref) for pref in ALLOWED_PREFIXES)
     except Exception:
         return False
+
+
+def _detect_family(url: str, title: str = "") -> str:
+    txt = f"{url} {title}".lower()
+    for fam, pat in FAMILY_PATTERNS:
+        if re.search(pat, txt, re.IGNORECASE):
+            return fam
+    return "unknown"
+
+
+def _classify_role(url: str, title: str, html: str, family: str) -> Tuple[str, str]:
+    txt = f"{url} {title}".lower()
+    if any(k in txt for k in ("designrost", "rost", "abdeckung", "grate")):
+        return "grate", "grate_or_cover_tokens"
+    if any(k in txt for k in ("rinnenkoerper", "rinnenkörper", "ablaufkoerper", "ablaufkörper", "einzelablauf")):
+        return "drain_body", "drain_body_tokens"
+    if any(k in txt for k in ("komplettablauf", "public", "showerpoint", "bodenablauf passavant", "renovierungsablauf")):
+        return "complete_system", "complete_system_tokens"
+    if any(k in txt for k in ("aufsatz", "zubehoer", "zubehör", "keil", "showerstep", "adapter", "rahmen")):
+        return "accessory", "accessory_tokens"
+    if family != "unknown":
+        return "configuration_family", "family_detected"
+    return "accessory", "fallback_accessory"
 
 
 def _is_accessory_page(url: str, title: str = "") -> bool:
@@ -294,6 +392,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     detail_pages = set()
     canonical_seen = set()
     dropped_fragments = 0
+    dropped_out_of_scope_count = 0
 
     # Crawl category/list pages in scope to discover more ranges and detail pages
     while queue and len(seen_pages) < 250:
@@ -318,6 +417,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         for a in soup.select("a[href]"):
             cand = _abs(a.get("href") or "", final)
             if not _in_scope(cand):
+                dropped_out_of_scope_count += 1
                 continue
             cand_c = _canonicalize_url(cand)
             if cand_c != cand:
@@ -346,8 +446,38 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     emitted_rows = 0
     dropped_missing_product_id = 0
     dropped_missing_url = 0
+    total_urls_seen = 0
+    dropped_overview_page_count = 0
+    urls_by_scope: Dict[str, int] = {}
+    candidates_by_family: Dict[str, int] = {}
+    candidates_by_role: Dict[str, int] = {}
+    accepted_system_family_count = 0
+    accepted_article_variant_count = 0
+    expected_families = [
+        "showerdrain_splus", "showerdrain_cplus", "showerdrain_c", "showerdrain_b",
+        "showerdrain_eplus", "showerdrain_mplus", "showerdrain_public_80",
+        "showerdrain_public_110", "showerdrain_public_x", "easyflowplus", "easyflow",
+        "showerpoint", "mg", "passino", "passavant",
+    ]
+    sample_accepted_aco_candidates: List[str] = []
 
     for page in sorted(detail_pages):
+        total_urls_seen += 1
+        pp = urlparse(page)
+        ppath = (pp.path or "").lower()
+        if ppath.startswith(DUSCHRINNEN_SCOPE):
+            urls_by_scope["duschrinnen"] = urls_by_scope.get("duschrinnen", 0) + 1
+        elif ppath.startswith(REIHENDUSCH_SCOPE):
+            urls_by_scope["reihenduschrinnen"] = urls_by_scope.get("reihenduschrinnen", 0) + 1
+        elif ppath.startswith(BADABLAEUFE_SCOPE):
+            urls_by_scope["badablaeufe"] = urls_by_scope.get("badablaeufe", 0) + 1
+        elif ppath.startswith(BADENTWAESSERUNG_SCOPE):
+            urls_by_scope["badentwaesserung"] = urls_by_scope.get("badentwaesserung", 0) + 1
+        elif ppath.startswith(CZ_SCOPE):
+            urls_by_scope["cz_odvodneni_koupelen"] = urls_by_scope.get("cz_odvodneni_koupelen", 0) + 1
+        else:
+            urls_by_scope["other"] = urls_by_scope.get("other", 0) + 1
+
         # reject category/landing pages from candidates
         if _is_category_page(page):
             dropped_category_pages += 1
@@ -361,13 +491,18 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
         final_c = _canonicalize_url(final)
         title_base = _extract_title(html, final_c)
+        family = _detect_family(final_c, title_base)
+        role, role_reason = _classify_role(final_c, title_base, html, family)
 
         # route candidate type
         if _is_accessory_page(final_c, title_base):
             cand_type = "component"
         elif _looks_like_detail_drain_page(final_c, title_base, html):
             cand_type = "drain"
+        elif family != "unknown":
+            cand_type = "component"
         else:
+            dropped_overview_page_count += 1
             debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": "dropped_overview_page", "candidates_found": 0, "method": "detail", "is_index": None})
             continue
 
@@ -378,7 +513,31 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         if cand_type == "drain":
             # row-based product variants only; no page-level drain fallback rows
             if not pairs:
-                debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": "no_article_rows", "candidates_found": 0, "method": method, "is_index": None})
+                # keep family-level candidate instead of dropping entire family due missing row table
+                pid = _stable_aco_id(final_c, family, "configuration_family", title_base)
+                if pid not in seen_ids:
+                    seen_ids.add(pid)
+                    kept += 1
+                    kept_total += 1
+                    out.append({
+                        "manufacturer": "aco",
+                        "product_id": pid,
+                        "product_family": family if family != "unknown" else "ShowerDrain",
+                        "product_name": title_base,
+                        "product_url": final_c,
+                        "sources": final_c,
+                        "candidate_type": "component",
+                        "system_role": "configuration_family",
+                        "classification_reason": "no_article_rows_keep_family",
+                        "complete_system": "component",
+                        "selected_length_mm": want,
+                        "length_mode": "unknown",
+                        "length_delta_mm": None,
+                    })
+                    accepted_system_family_count += 1
+                    candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                    candidates_by_role["configuration_family"] = candidates_by_role.get("configuration_family", 0) + 1
+                debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": "no_article_rows", "candidates_found": kept, "method": method, "is_index": None})
                 continue
 
             accepted_product_pages += 1
@@ -437,7 +596,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                     continue
                 if not (min_len <= nominal_length_mm <= max_len):
                     continue
-                pid = f"aco-{article_digits}" if article_digits else f"aco-{abs(hash(final_c + article_no))}"
+                pid = _stable_aco_id(final_c, family, "drain_unit", title_base, article_digits)
                 if pid in seen_ids:
                     continue
                 seen_ids.add(pid)
@@ -446,11 +605,13 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                 out.append({
                     "manufacturer": "aco",
                     "product_id": pid,
-                    "product_family": "ShowerDrain",
+                    "product_family": family if family != "unknown" else "ShowerDrain",
                     "product_name": f"{title_base} {nominal_length_mm} mm (Artikel-Nr. {article_no})",
                     "product_url": final_c,
                     "sources": final_c,
                     "candidate_type": "drain",
+                    "system_role": "drain_unit",
+                    "classification_reason": "article_row_variant",
                     "complete_system": "yes",
                     "selected_length_mm": want,
                     "length_mode": "L1_nominal_heuristic",
@@ -459,10 +620,15 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                     "row_length_raw_mm": l1_mm,
                     "row_length_nominal_mm": nominal_length_mm,
                 })
+                accepted_article_variant_count += 1
+                candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                candidates_by_role["drain_unit"] = candidates_by_role.get("drain_unit", 0) + 1
+                if len(sample_accepted_aco_candidates) < 20:
+                    sample_accepted_aco_candidates.append(f"{pid}|{family}|drain_unit")
                 product_urls.append(final_c)
                 emitted_rows += 1
         elif cand_type == "component":
-            pid = f"aco-comp-{abs(hash(final_c))}"
+            pid = _stable_aco_id(final_c, family, role, title_base)
             if pid not in seen_ids:
                 seen_ids.add(pid)
                 kept += 1
@@ -470,16 +636,24 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                 out.append({
                     "manufacturer": "aco",
                     "product_id": pid,
-                    "product_family": "ShowerDrain",
+                    "product_family": family if family != "unknown" else "ShowerDrain",
                     "product_name": title_base,
                     "product_url": final_c,
                     "sources": final_c,
                     "candidate_type": "component",
+                    "system_role": role,
+                    "classification_reason": role_reason,
                     "complete_system": "component",
                     "selected_length_mm": want,
                     "length_mode": "unknown",
                     "length_delta_mm": None,
                 })
+                candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                candidates_by_role[role] = candidates_by_role.get(role, 0) + 1
+                if role == "configuration_family":
+                    accepted_system_family_count += 1
+                if len(sample_accepted_aco_candidates) < 20:
+                    sample_accepted_aco_candidates.append(f"{pid}|{family}|{role}")
                 component_urls.append(final_c)
                 emitted_rows += 1
 
@@ -524,6 +698,17 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "sample_product_urls": json.dumps(product_urls[:10], ensure_ascii=False),
         "sample_components_urls": json.dumps(component_urls[:10], ensure_ascii=False),
         "total_urls": len(detail_pages),
+        "total_urls_seen": total_urls_seen,
+        "urls_by_scope": json.dumps(urls_by_scope, ensure_ascii=False),
+        "candidates_by_family": json.dumps(candidates_by_family, ensure_ascii=False),
+        "candidates_by_role": json.dumps(candidates_by_role, ensure_ascii=False),
+        "dropped_out_of_scope_count": dropped_out_of_scope_count,
+        "dropped_overview_page_count": dropped_overview_page_count,
+        "accepted_system_family_count": accepted_system_family_count,
+        "accepted_article_variant_count": accepted_article_variant_count,
+        "expected_family_coverage": json.dumps({f: (candidates_by_family.get(f, 0) > 0) for f in expected_families}, ensure_ascii=False),
+        "sample_missing_expected_families": json.dumps([f for f in expected_families if candidates_by_family.get(f, 0) <= 0][:10], ensure_ascii=False),
+        "sample_accepted_aco_candidates": json.dumps(sample_accepted_aco_candidates[:10], ensure_ascii=False),
         "after_canonicalize": len(canonical_seen),
         "dropped_fragments": dropped_fragments,
         "dropped_category_pages": dropped_category_pages,
