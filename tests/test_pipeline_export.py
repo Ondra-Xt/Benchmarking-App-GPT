@@ -378,6 +378,9 @@ class PipelineExportTests(unittest.TestCase):
         self.assertFalse(((assembled["parent_family"] == "easyflowplus") & assembled["matched_component_ids"].astype(str).str.contains("easyflow-")).any())
         # technical inheritance (present in base connector fixtures)
         self.assertTrue((assembled["flow_rate_lps"].notna()).any())
+        components_all = products[(products["manufacturer"] == "aco") & (products["candidate_type"] == "component")]
+        self.assertFalse((components_all["promotion_reason"] == "assembled_from_bom").any())
+        self.assertFalse((components_all["assembled_from_bom"].astype(str).str.lower() == "true").any())
 
         labels = set(evidence[evidence["manufacturer"] == "aco"]["label"].tolist())
         self.assertIn("aco_reference_v2_showerdrain_c_bom_count", labels)
@@ -391,9 +394,12 @@ class PipelineExportTests(unittest.TestCase):
         self.assertIn("aco_assembled_products_by_family", labels)
         self.assertIn("sample_aco_assembled_products", labels)
         self.assertIn("aco_assembled_products_accessory_combinations_skipped_count", labels)
+        self.assertIn("aco_assembled_products_emitted_to_products_count", labels)
+        self.assertIn("aco_assembled_products_left_in_components_count", labels)
         aco_ev = evidence[evidence["manufacturer"] == "aco"].set_index("label")
         self.assertEqual(str(aco_ev.loc["aco_hash_like_ids_after_count", "snippet"]), "0")
         self.assertEqual(str(aco_ev.loc["aco_orphan_bom_references_count", "snippet"]), "0")
+        self.assertEqual(str(aco_ev.loc["aco_assembled_products_left_in_components_count", "snippet"]), "0")
 
     def test_aco_hash_like_registry_ids_are_migrated_before_export(self):
         registry = pd.DataFrame(
