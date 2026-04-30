@@ -2625,6 +2625,8 @@ def run_update(
         aco_debug.setdefault("sample_aco_assembly_skipped_reasons", [])
         aco_debug.setdefault("assembled_product_duplicate_skipped_count", 0)
         aco_debug.setdefault("assembled_products_accessory_combinations_skipped_count", 0)
+        aco_debug.setdefault("assembled_products_emitted_to_products_count", 0)
+        aco_debug.setdefault("assembled_products_left_in_components_count", 0)
 
         aco_by_id: Dict[str, Dict[str, Any]] = {}
         for rr in aco_rows + [r for r in products_rows if str(r.get("manufacturer") or "").lower() == "aco"]:
@@ -2678,9 +2680,11 @@ def run_update(
                 "product_id": assembled_id,
                 "product_name": f"{parent.get('product_name','')} + {grate.get('product_name','')}".strip(" +"),
                 "candidate_type": "drain",
+                "complete_system": "yes",
                 "system_role": "assembled_system",
                 "promote_to_product": "yes",
                 "promotion_reason": "assembled_from_bom",
+                "why_not_product_reason": "",
                 "assembly_reason": "aco_bom_body_grate_assembly",
                 "assembled_from_bom": "true",
                 "parent_family": fam,
@@ -2712,6 +2716,23 @@ def run_update(
             aco_debug["assembled_products_by_family"][fam] = aco_debug["assembled_products_by_family"].get(fam, 0) + 1
             if len(aco_debug["sample_aco_assembled_products"]) < 20:
                 aco_debug["sample_aco_assembled_products"].append(f"{assembled_id}|{pid}|{cid}")
+
+        assembled_rows_now = [
+            r for r in products_rows
+            if str(r.get("manufacturer") or "").lower() == "aco"
+            and str(r.get("promotion_reason") or "").lower() == "assembled_from_bom"
+        ]
+        aco_debug["assembled_products_emitted_to_products_count"] = sum(
+            1 for r in assembled_rows_now
+            if str(r.get("candidate_type") or "").lower() == "drain"
+            and str(r.get("promote_to_product") or "").lower() == "yes"
+            and str(r.get("system_role") or "").lower() in {"assembled_system", "complete_system"}
+        )
+        aco_debug["assembled_products_left_in_components_count"] = sum(
+            1 for r in assembled_rows_now
+            if str(r.get("candidate_type") or "").lower() != "drain"
+            or str(r.get("promote_to_product") or "").lower() != "yes"
+        )
 
         aco_bom_rows = [r for r in bom_rows if str(r.get("manufacturer") or "").lower() == "aco"]
         aco_all_ids_after = [str(r.get("product_id") or "") for r in registry_rows if str(r.get("manufacturer") or "").lower() == "aco"]
@@ -2912,6 +2933,20 @@ def run_update(
             "product_id": "__summary__",
             "label": "aco_assembled_products_accessory_combinations_skipped_count",
             "snippet": str(aco_debug.get("assembled_products_accessory_combinations_skipped_count", 0)),
+            "source": "assembly_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_assembled_products_emitted_to_products_count",
+            "snippet": str(aco_debug.get("assembled_products_emitted_to_products_count", 0)),
+            "source": "assembly_stage",
+        })
+        evidence_rows.append({
+            "manufacturer": "aco",
+            "product_id": "__summary__",
+            "label": "aco_assembled_products_left_in_components_count",
+            "snippet": str(aco_debug.get("assembled_products_left_in_components_count", 0)),
             "source": "assembly_stage",
         })
         evidence_rows.append({
