@@ -14,7 +14,8 @@ class KaldeweiConnectorTests(unittest.TestCase):
             'kaldewei-flowdrain-horizontal-regular', 'kaldewei-flowdrain-horizontal-flat',
             'kaldewei-nexsys', 'kaldewei-ka-90-horizontal', 'kaldewei-ka-120-horizontal',
             'kaldewei-ka-300-horizontal', 'kaldewei-ka-125-legacy', 'kaldewei-xetis-ka-200',
-            'kaldewei-ka-4121', 'kaldewei-ka-4122'
+            'kaldewei-ka-4121', 'kaldewei-ka-4122', 'kaldewei-nexsys-design-cover-brushed',
+            'kaldewei-nexsys-design-cover-polished', 'kaldewei-nexsys-design-cover-coated-white'
         }
         self.assertTrue(expected.issubset(ids))
         self.assertFalse(any('hash' in x or x.endswith(')') for x in ids))
@@ -39,6 +40,7 @@ class KaldeweiConnectorTests(unittest.TestCase):
         nex_opts = kaldewei.get_bom_options(kaldewei.SEEDS['nexsys'] + "#kaldewei-nexsys")
         self.assertTrue(any(o['component_id'] == 'kaldewei-ka-4121' for o in nex_opts))
         self.assertTrue(any(o['component_id'] == 'kaldewei-ka-4122' for o in nex_opts))
+        self.assertTrue(any(o['component_id'] == 'kaldewei-nexsys-design-cover-brushed' for o in nex_opts))
 
 if __name__ == '__main__':
     unittest.main()

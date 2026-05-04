@@ -11,7 +11,7 @@ SEEDS = {
 }
 
 CATALOG: List[Dict[str, Any]] = [
-    {"product_id": "kaldewei-nexsys", "product_name": "KALDEWEI NEXSYS", "product_url": SEEDS["nexsys"], "family": "nexsys", "candidate_type": "drain", "system_role": "complete_system", "complete_system": "yes", "promotion_reason": "integrated_shower_surface_system", "height_adj_min_mm": 84},
+    {"product_id": "kaldewei-nexsys", "product_name": "KALDEWEI NEXSYS", "product_url": SEEDS["nexsys"], "family": "nexsys", "candidate_type": "drain", "system_role": "complete_system", "complete_system": "yes", "promotion_reason": "integrated_shower_surface_system", "height_adj_min_mm": 84, "cover_lengths_mm": "750,800,900,1000,1200", "shower_sizes_mm": "800x800..900x1700", "system_meta": "integrated_4in1"},
     {"product_id": "kaldewei-flowline-zero", "product_name": "KALDEWEI FLOWLINE ZERO", "product_url": SEEDS["flow"], "family": "flowline_zero", "candidate_type": "component", "system_role": "visible_linear_profile", "complete_system": "component", "available_lengths_mm": "900,1200,1500"},
     {"product_id": "kaldewei-flowpoint-zero", "product_name": "KALDEWEI FLOWPOINT ZERO", "product_url": SEEDS["flow"], "family": "flowpoint_zero", "candidate_type": "component", "system_role": "visible_point_cover", "complete_system": "component"},
     {"product_id": "kaldewei-flowdrain-horizontal-regular", "product_name": "KALDEWEI FLOWDRAIN horizontal regular", "product_url": SEEDS["waste"], "family": "flowdrain", "candidate_type": "component", "system_role": "trap_set", "complete_system": "component", "outlet_dn": "DN50", "flow_rate_lps": 0.8, "height_adj_min_mm": 78, "height_adj_max_mm": 179, "water_seal_mm": 50},
@@ -24,8 +24,11 @@ CATALOG: List[Dict[str, Any]] = [
     {"product_id": "kaldewei-ka-120-vertical", "product_name": "KALDEWEI KA 120 vertical", "product_url": SEEDS["conoflat"], "family": "ka_120", "candidate_type": "component", "system_role": "waste_fitting", "complete_system": "component", "current_status": "current", "compatibility_caution": "superplan_plus_unclear"},
     {"product_id": "kaldewei-ka-300-horizontal", "product_name": "KALDEWEI KA 300 horizontal", "product_url": SEEDS["calima"], "family": "ka_300", "candidate_type": "component", "system_role": "waste_fitting", "complete_system": "component", "flow_rate_lps": 0.61, "height_adj_min_mm": 112, "height_adj_max_mm": 112},
     {"product_id": "kaldewei-ka-300-flat", "product_name": "KALDEWEI KA 300 flat", "product_url": SEEDS["calima"], "family": "ka_300", "candidate_type": "component", "system_role": "waste_fitting", "complete_system": "component", "flow_rate_lps": 0.57, "height_adj_min_mm": 92, "height_adj_max_mm": 92},
-    {"product_id": "kaldewei-ka-4121", "product_name": "KALDEWEI KA 4121 NEXSYS drain set", "product_url": SEEDS["nexsys"], "family": "nexsys", "candidate_type": "component", "system_role": "drain_set", "complete_system": "component"},
-    {"product_id": "kaldewei-ka-4122", "product_name": "KALDEWEI KA 4122 NEXSYS drain set", "product_url": SEEDS["nexsys"], "family": "nexsys", "candidate_type": "component", "system_role": "drain_set", "complete_system": "component"},
+    {"product_id": "kaldewei-ka-4121", "product_name": "KALDEWEI KA 4121 NEXSYS drain set", "product_url": SEEDS["nexsys"], "family": "nexsys", "candidate_type": "component", "system_role": "drain_set", "complete_system": "component", "promotion_reason": "drain_set_component", "current_status": "performance_data_unclear", "compatibility_caution": "requires_table_cell_validation"},
+    {"product_id": "kaldewei-ka-4122", "product_name": "KALDEWEI KA 4122 NEXSYS drain set", "product_url": SEEDS["nexsys"], "family": "nexsys", "candidate_type": "component", "system_role": "drain_set", "complete_system": "component", "promotion_reason": "drain_set_component", "current_status": "performance_data_unclear", "compatibility_caution": "requires_table_cell_validation"},
+    {"product_id": "kaldewei-nexsys-design-cover-brushed", "product_name": "KALDEWEI NEXSYS design cover brushed", "product_url": SEEDS["nexsys"], "family": "nexsys", "candidate_type": "component", "system_role": "design_cover", "complete_system": "component", "promotion_reason": "cover_only_component"},
+    {"product_id": "kaldewei-nexsys-design-cover-polished", "product_name": "KALDEWEI NEXSYS design cover polished", "product_url": SEEDS["nexsys"], "family": "nexsys", "candidate_type": "component", "system_role": "design_cover", "complete_system": "component", "promotion_reason": "cover_only_component"},
+    {"product_id": "kaldewei-nexsys-design-cover-coated-white", "product_name": "KALDEWEI NEXSYS design cover coated white", "product_url": SEEDS["nexsys"], "family": "nexsys", "candidate_type": "component", "system_role": "design_cover", "complete_system": "component", "promotion_reason": "cover_only_component"},
     {"product_id": "kaldewei-ka-125-legacy", "product_name": "KALDEWEI KA 125", "product_url": SEEDS["waste"], "family": "ka_125", "candidate_type": "component", "system_role": "waste_fitting_legacy", "complete_system": "component", "current_status": "legacy_or_current_unclear"},
     {"product_id": "kaldewei-xetis-ka-200", "product_name": "KALDEWEI XETIS / KA 200", "product_url": SEEDS["xetis"], "family": "xetis", "candidate_type": "drain", "system_role": "complete_system", "complete_system": "yes", "current_status": "current_unclear", "promotion_reason": "current_status_unclear"},
 ]
@@ -33,7 +36,7 @@ CATALOG: List[Dict[str, Any]] = [
 BOM = {
     "kaldewei-flowline-zero": [("kaldewei-flowdrain-horizontal-regular", "required_trap_set"), ("kaldewei-flowdrain-horizontal-flat", "required_trap_set")],
     "kaldewei-flowpoint-zero": [("kaldewei-flowdrain-horizontal-regular", "required_trap_set"), ("kaldewei-flowdrain-horizontal-flat", "required_trap_set")],
-    "kaldewei-nexsys": [("kaldewei-ka-4121", "compatible_drain_set"), ("kaldewei-ka-4122", "compatible_drain_set")],
+    "kaldewei-nexsys": [("kaldewei-ka-4121", "compatible_drain_set"), ("kaldewei-ka-4122", "compatible_drain_set"), ("kaldewei-nexsys-design-cover-brushed", "compatible_cover"), ("kaldewei-nexsys-design-cover-polished", "compatible_cover"), ("kaldewei-nexsys-design-cover-coated-white", "compatible_cover")],
 }
 
 

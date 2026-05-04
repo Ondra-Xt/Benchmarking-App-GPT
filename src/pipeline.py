@@ -3272,6 +3272,11 @@ def run_update(
             if str(r.get("promotion_reason") or "") == "assembled_from_bom"
             and str(r.get("candidate_type") or "") != "drain"
         )
+        nexsys_rows = [r for r in kal_rows if str(r.get("product_family") or r.get("family") or "") == "nexsys"]
+        nexsys_drain_sets = [r for r in nexsys_rows if str(r.get("system_role") or "") in {"drain_set", "trap_set"}]
+        nexsys_covers = [r for r in nexsys_rows if "cover" in str(r.get("system_role") or "")]
+        nexsys_bom = [r for r in kal_bom if str(r.get("parent_family") or "") == "nexsys"]
+        nexsys_unclear = [r for r in nexsys_rows if "performance_data_unclear" in str(r.get("current_status") or "")]
         for label, snippet in [
             ("kaldewei_registry_candidates_count", str(kal_registry_candidates)),
             ("kaldewei_final_rows_count", str(len(kal_rows))),
@@ -3300,6 +3305,15 @@ def run_update(
             ("kaldewei_assembled_products_left_in_components_count", str(kaldewei_debug["kaldewei_assembled_products_left_in_components_count"])),
             ("kaldewei_literal_nan_values_cleaned_count", str(kal_nan_clean_count)),
             ("sample_kaldewei_literal_nan_cleanup", str(kal_nan_clean_sample[:10])),
+            ("kaldewei_nexsys_detail_layer_applied_count", str(1 if len(nexsys_rows) > 0 else 0)),
+            ("kaldewei_nexsys_components_count", str(len([r for r in nexsys_rows if str(r.get("candidate_type") or "") == "component"]))),
+            ("kaldewei_nexsys_drain_sets_count", str(len(nexsys_drain_sets))),
+            ("kaldewei_nexsys_design_covers_count", str(len(nexsys_covers))),
+            ("kaldewei_nexsys_bom_options_count", str(len(nexsys_bom))),
+            ("sample_kaldewei_nexsys_components", str([str(r.get("product_id")) for r in nexsys_rows[:10]])),
+            ("sample_kaldewei_nexsys_bom_options", str([f"{r.get('product_id')}->{r.get('component_id')}:{r.get('option_type')}" for r in nexsys_bom[:10]])),
+            ("kaldewei_nexsys_performance_data_unclear_count", str(len(nexsys_unclear))),
+            ("sample_kaldewei_nexsys_unclear_performance_data", str([str(r.get("product_id")) for r in nexsys_unclear[:10]])),
         ]:
             evidence_rows.append({"manufacturer": "kaldewei", "product_id": "__summary__", "label": label, "snippet": snippet, "source": "kaldewei_summary"})
 
