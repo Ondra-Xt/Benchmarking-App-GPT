@@ -1,0 +1,210 @@
+from __future__ import annotations
+from typing import Any, Dict, List, Tuple
+import hashlib
+import json
+from datetime import datetime, timezone
+import re
+import requests
+
+SEEDS = {
+    "flow": "https://www.kaldewei.com/products/shower-surfaces/kaldewei-flow/",
+    "nexsys": "https://www.kaldewei.com/products/shower-surfaces/nexsys/",
+    "waste": "https://www.kaldewei.com/products/accessories/waste-fittings/",
+    "conoflat": "https://www.kaldewei.com/products/shower-surfaces/conoflat/",
+    "calima": "https://www.kaldewei.com/products/shower-surfaces/calima/",
+    "xetis": "https://www.kaldewei.com/products/shower-surfaces/xetis/",
+}
+SOURCE_REGISTRY: List[Dict[str, Any]] = [
+    {"source_id": "kaldewei-flow-page", "family": "flow", "source_url": SEEDS["flow"], "source_type": "product_page", "expected_terms": ["FLOWLINE ZERO", "FLOWPOINT ZERO", "FLOWDRAIN"], "criticality": "high", "review_area": "flow"},
+    {"source_id": "kaldewei-flowdrain-horizontal-pdf", "family": "flowdrain", "source_url": "https://files.cdn.kaldewei.com/products/downloads/flowdrain-horizontal.pdf", "source_type": "pdf", "expected_terms": ["DN 50", "DN 40", "0.8", "0.63"], "criticality": "high", "review_area": "flowdrain"},
+    {"source_id": "kaldewei-nexsys-product-page", "family": "nexsys", "source_url": SEEDS["nexsys"], "source_type": "product_page", "expected_terms": ["NEXSYS", "KA 4121", "KA 4122"], "criticality": "high", "review_area": "nexsys"},
+    {"source_id": "kaldewei-waste-systems-page", "family": "waste", "source_url": SEEDS["waste"], "source_type": "product_page", "expected_terms": ["KA 90", "KA 120", "KA 300", "KA 125"], "criticality": "medium", "review_area": "waste"},
+]
+
+BASELINE_PATH = "data/source_baselines/kaldewei_sources.json"
+
+CATALOG: List[Dict[str, Any]] = [
+    {"product_id": "kaldewei-nexsys", "product_name": "KALDEWEI NEXSYS", "product_url": SEEDS["nexsys"], "family": "nexsys", "candidate_type": "drain", "system_role": "complete_system", "complete_system": "yes", "promotion_reason": "integrated_shower_surface_system", "height_adj_min_mm": 84, "cover_lengths_mm": "750,800,900,1000,1200", "shower_sizes_mm": "800x800..900x1700", "system_meta": "integrated_4in1"},
+    {"product_id": "kaldewei-flowline-zero", "product_name": "KALDEWEI FLOWLINE ZERO", "product_url": SEEDS["flow"], "family": "flowline_zero", "candidate_type": "component", "system_role": "visible_linear_profile", "complete_system": "component", "available_lengths_mm": "900,1200,1500"},
+    {"product_id": "kaldewei-flowpoint-zero", "product_name": "KALDEWEI FLOWPOINT ZERO", "product_url": SEEDS["flow"], "family": "flowpoint_zero", "candidate_type": "component", "system_role": "visible_point_cover", "complete_system": "component"},
+    {"product_id": "kaldewei-flowline-zero-finish-brushed-steel", "product_name": "KALDEWEI FLOWLINE ZERO finish brushed steel", "product_url": SEEDS["flow"], "family": "flowline_zero", "candidate_type": "component", "system_role": "finish_cover", "complete_system": "component", "promotion_reason": "cover_only_component", "finish_name": "brushed steel", "finish_code": "930", "current_status": "current"},
+    {"product_id": "kaldewei-flowline-zero-finish-brushed-champagne", "product_name": "KALDEWEI FLOWLINE ZERO finish brushed champagne", "product_url": SEEDS["flow"], "family": "flowline_zero", "candidate_type": "component", "system_role": "finish_cover", "complete_system": "component", "promotion_reason": "cover_only_component", "finish_name": "brushed champagne", "finish_code": "931", "current_status": "current"},
+    {"product_id": "kaldewei-flowline-zero-finish-brushed-graphite", "product_name": "KALDEWEI FLOWLINE ZERO finish brushed graphite", "product_url": SEEDS["flow"], "family": "flowline_zero", "candidate_type": "component", "system_role": "finish_cover", "complete_system": "component", "promotion_reason": "cover_only_component", "finish_name": "brushed graphite", "finish_code": "932", "current_status": "current"},
+    {"product_id": "kaldewei-flowline-zero-finish-alpine-white-matt", "product_name": "KALDEWEI FLOWLINE ZERO finish alpine white matt", "product_url": SEEDS["flow"], "family": "flowline_zero", "candidate_type": "component", "system_role": "finish_cover", "complete_system": "component", "promotion_reason": "cover_only_component", "finish_name": "alpine white matt", "finish_code": "711", "current_status": "current"},
+    {"product_id": "kaldewei-flowline-zero-finish-black-matt-100", "product_name": "KALDEWEI FLOWLINE ZERO finish black matt 100", "product_url": SEEDS["flow"], "family": "flowline_zero", "candidate_type": "component", "system_role": "finish_cover", "complete_system": "component", "promotion_reason": "cover_only_component", "finish_name": "black matt 100", "finish_code": "676", "current_status": "current"},
+    {"product_id": "kaldewei-flowpoint-zero-finish-brushed-steel", "product_name": "KALDEWEI FLOWPOINT ZERO finish brushed steel", "product_url": SEEDS["flow"], "family": "flowpoint_zero", "candidate_type": "component", "system_role": "finish_cover", "complete_system": "component", "promotion_reason": "cover_only_component", "finish_name": "brushed steel", "finish_code": "930", "current_status": "current"},
+    {"product_id": "kaldewei-flowpoint-zero-finish-brushed-champagne", "product_name": "KALDEWEI FLOWPOINT ZERO finish brushed champagne", "product_url": SEEDS["flow"], "family": "flowpoint_zero", "candidate_type": "component", "system_role": "finish_cover", "complete_system": "component", "promotion_reason": "cover_only_component", "finish_name": "brushed champagne", "finish_code": "931", "current_status": "current"},
+    {"product_id": "kaldewei-flowpoint-zero-finish-brushed-graphite", "product_name": "KALDEWEI FLOWPOINT ZERO finish brushed graphite", "product_url": SEEDS["flow"], "family": "flowpoint_zero", "candidate_type": "component", "system_role": "finish_cover", "complete_system": "component", "promotion_reason": "cover_only_component", "finish_name": "brushed graphite", "finish_code": "932", "current_status": "current"},
+    {"product_id": "kaldewei-flowpoint-zero-finish-alpine-white-matt", "product_name": "KALDEWEI FLOWPOINT ZERO finish alpine white matt", "product_url": SEEDS["flow"], "family": "flowpoint_zero", "candidate_type": "component", "system_role": "finish_cover", "complete_system": "component", "promotion_reason": "cover_only_component", "finish_name": "alpine white matt", "finish_code": "711", "current_status": "current"},
+    {"product_id": "kaldewei-flowpoint-zero-finish-black-matt-100", "product_name": "KALDEWEI FLOWPOINT ZERO finish black matt 100", "product_url": SEEDS["flow"], "family": "flowpoint_zero", "candidate_type": "component", "system_role": "finish_cover", "complete_system": "component", "promotion_reason": "cover_only_component", "finish_name": "black matt 100", "finish_code": "676", "current_status": "current"},
+    {"product_id": "kaldewei-flowdrain-horizontal-regular", "product_name": "KALDEWEI FLOWDRAIN horizontal regular", "product_url": SEEDS["waste"], "family": "flowdrain", "candidate_type": "component", "system_role": "trap_set", "complete_system": "component", "outlet_dn": "DN50", "flow_rate_lps": 0.8, "height_adj_min_mm": 78, "height_adj_max_mm": 179, "water_seal_mm": 50},
+    {"product_id": "kaldewei-flowdrain-horizontal-flat", "product_name": "KALDEWEI FLOWDRAIN horizontal flat", "product_url": SEEDS["waste"], "family": "flowdrain", "candidate_type": "component", "system_role": "trap_set", "complete_system": "component", "outlet_dn": "DN40", "flow_rate_lps": 0.63, "height_adj_min_mm": 58, "height_adj_max_mm": 78, "water_seal_mm": 30},
+    {"product_id": "kaldewei-ka-90-horizontal", "product_name": "KALDEWEI KA 90 horizontal", "product_url": SEEDS["waste"], "family": "ka_90", "candidate_type": "component", "system_role": "waste_fitting", "complete_system": "component", "flow_rate_lps": 0.71, "height_adj_min_mm": 80, "height_adj_max_mm": 80},
+    {"product_id": "kaldewei-ka-90-flat", "product_name": "KALDEWEI KA 90 flat", "product_url": SEEDS["waste"], "family": "ka_90", "candidate_type": "component", "system_role": "waste_fitting", "complete_system": "component", "flow_rate_lps": 0.68, "height_adj_min_mm": 60, "height_adj_max_mm": 60},
+    {"product_id": "kaldewei-ka-90-vertical", "product_name": "KALDEWEI KA 90 vertical", "product_url": SEEDS["waste"], "family": "ka_90", "candidate_type": "component", "system_role": "waste_fitting", "complete_system": "component", "flow_rate_lps": 1.22, "height_adj_min_mm": 80, "height_adj_max_mm": 80},
+    {"product_id": "kaldewei-ka-120-horizontal", "product_name": "KALDEWEI KA 120 horizontal", "product_url": SEEDS["conoflat"], "family": "ka_120", "candidate_type": "component", "system_role": "waste_fitting", "complete_system": "component", "current_status": "current", "compatibility_caution": "superplan_plus_unclear"},
+    {"product_id": "kaldewei-ka-120-flat", "product_name": "KALDEWEI KA 120 flat", "product_url": SEEDS["conoflat"], "family": "ka_120", "candidate_type": "component", "system_role": "waste_fitting", "complete_system": "component", "current_status": "current", "compatibility_caution": "superplan_plus_unclear"},
+    {"product_id": "kaldewei-ka-120-vertical", "product_name": "KALDEWEI KA 120 vertical", "product_url": SEEDS["conoflat"], "family": "ka_120", "candidate_type": "component", "system_role": "waste_fitting", "complete_system": "component", "current_status": "current", "compatibility_caution": "superplan_plus_unclear"},
+    {"product_id": "kaldewei-ka-300-horizontal", "product_name": "KALDEWEI KA 300 horizontal", "product_url": SEEDS["calima"], "family": "ka_300", "candidate_type": "component", "system_role": "waste_fitting", "complete_system": "component", "flow_rate_lps": 0.61, "height_adj_min_mm": 112, "height_adj_max_mm": 112},
+    {"product_id": "kaldewei-ka-300-flat", "product_name": "KALDEWEI KA 300 flat", "product_url": SEEDS["calima"], "family": "ka_300", "candidate_type": "component", "system_role": "waste_fitting", "complete_system": "component", "flow_rate_lps": 0.57, "height_adj_min_mm": 92, "height_adj_max_mm": 92},
+    {"product_id": "kaldewei-ka-4121", "product_name": "KALDEWEI KA 4121 NEXSYS drain set", "product_url": SEEDS["nexsys"], "family": "nexsys", "candidate_type": "component", "system_role": "drain_set", "complete_system": "component", "promotion_reason": "drain_set_component", "current_status": "performance_data_unclear", "compatibility_caution": "requires_table_cell_validation"},
+    {"product_id": "kaldewei-ka-4122", "product_name": "KALDEWEI KA 4122 NEXSYS drain set", "product_url": SEEDS["nexsys"], "family": "nexsys", "candidate_type": "component", "system_role": "drain_set", "complete_system": "component", "promotion_reason": "drain_set_component", "current_status": "performance_data_unclear", "compatibility_caution": "requires_table_cell_validation"},
+    {"product_id": "kaldewei-nexsys-design-cover-brushed", "product_name": "KALDEWEI NEXSYS design cover brushed", "product_url": SEEDS["nexsys"], "family": "nexsys", "candidate_type": "component", "system_role": "design_cover", "complete_system": "component", "promotion_reason": "cover_only_component"},
+    {"product_id": "kaldewei-nexsys-design-cover-polished", "product_name": "KALDEWEI NEXSYS design cover polished", "product_url": SEEDS["nexsys"], "family": "nexsys", "candidate_type": "component", "system_role": "design_cover", "complete_system": "component", "promotion_reason": "cover_only_component"},
+    {"product_id": "kaldewei-nexsys-design-cover-coated-white", "product_name": "KALDEWEI NEXSYS design cover coated white", "product_url": SEEDS["nexsys"], "family": "nexsys", "candidate_type": "component", "system_role": "design_cover", "complete_system": "component", "promotion_reason": "cover_only_component"},
+    {"product_id": "kaldewei-ka-125-legacy", "product_name": "KALDEWEI KA 125", "product_url": SEEDS["waste"], "family": "ka_125", "candidate_type": "component", "system_role": "waste_fitting_legacy", "complete_system": "component", "current_status": "legacy_or_current_unclear"},
+    {"product_id": "kaldewei-xetis-ka-200", "product_name": "KALDEWEI XETIS / KA 200", "product_url": SEEDS["xetis"], "family": "xetis", "candidate_type": "drain", "system_role": "complete_system", "complete_system": "yes", "current_status": "current_unclear", "promotion_reason": "current_status_unclear"},
+]
+
+BOM = {
+    "kaldewei-flowline-zero": [("kaldewei-flowdrain-horizontal-regular", "required_trap_set"), ("kaldewei-flowdrain-horizontal-flat", "required_trap_set")],
+    "kaldewei-flowpoint-zero": [("kaldewei-flowdrain-horizontal-regular", "required_trap_set"), ("kaldewei-flowdrain-horizontal-flat", "required_trap_set")],
+    "kaldewei-nexsys": [("kaldewei-ka-4121", "compatible_drain_set"), ("kaldewei-ka-4122", "compatible_drain_set"), ("kaldewei-nexsys-design-cover-brushed", "compatible_cover"), ("kaldewei-nexsys-design-cover-polished", "compatible_cover"), ("kaldewei-nexsys-design-cover-coated-white", "compatible_cover")],
+}
+BOM["kaldewei-flowline-zero"].extend([
+    ("kaldewei-flowline-zero-finish-brushed-steel", "compatible_finish"),
+    ("kaldewei-flowline-zero-finish-brushed-champagne", "compatible_finish"),
+    ("kaldewei-flowline-zero-finish-brushed-graphite", "compatible_finish"),
+    ("kaldewei-flowline-zero-finish-alpine-white-matt", "compatible_finish"),
+    ("kaldewei-flowline-zero-finish-black-matt-100", "compatible_finish"),
+])
+BOM["kaldewei-flowpoint-zero"].extend([
+    ("kaldewei-flowpoint-zero-finish-brushed-steel", "compatible_finish"),
+    ("kaldewei-flowpoint-zero-finish-brushed-champagne", "compatible_finish"),
+    ("kaldewei-flowpoint-zero-finish-brushed-graphite", "compatible_finish"),
+    ("kaldewei-flowpoint-zero-finish-alpine-white-matt", "compatible_finish"),
+    ("kaldewei-flowpoint-zero-finish-black-matt-100", "compatible_finish"),
+])
+
+
+def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    rows = []
+    for r in CATALOG:
+        row = dict(r)
+        row["manufacturer"] = "kaldewei"
+        row["product_family"] = str(row.get("family") or "unknown")
+        base_url = str(row.get("product_url") or "")
+        row["product_url"] = f"{base_url}#{row.get('product_id')}"
+        row.setdefault("selected_length_mm", target_length_mm)
+        rows.append(row)
+    debug = [{"site": "kaldewei", "method": "seed_catalog", "candidates_found": len(rows), "seed_count": len(SEEDS)}]
+    return rows, debug
+
+
+def extract_parameters(url: str) -> Dict[str, Any]:
+    u = (url or "").lower()
+    frag = u.split("#")[-1] if "#" in u else ""
+    if frag:
+        row = next((r for r in CATALOG if str(r.get("product_id") or "").lower() == frag), None)
+        if row:
+            return {k: v for k, v in row.items() if k in {"flow_rate_lps", "outlet_dn", "height_adj_min_mm", "height_adj_max_mm", "water_seal_mm", "current_status", "compatibility_caution", "finish_name", "finish_code"}}
+    for r in CATALOG:
+        if str(r.get("product_url") or "").lower() == u:
+            return {k: v for k, v in r.items() if k in {"flow_rate_lps", "outlet_dn", "height_adj_min_mm", "height_adj_max_mm", "water_seal_mm", "current_status", "compatibility_caution", "finish_name", "finish_code"}}
+    return {}
+
+
+def get_bom_options(url: str, params: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
+    u = (url or "").lower()
+    frag = u.split("#")[-1] if "#" in u else ""
+    parent = next((r for r in CATALOG if str(r.get("product_id") or "").lower() == frag), None) if frag else None
+    if not parent:
+        parent = next((r for r in CATALOG if str(r.get("product_url") or "").lower() == u), None)
+    if not parent:
+        return []
+    pid = str(parent.get("product_id") or "")
+    out = []
+    for cid, opt_type in BOM.get(pid, []):
+        comp = next((r for r in CATALOG if r.get("product_id") == cid), {})
+        out.append({
+            "component_id": cid,
+            "option_type": opt_type,
+            "option_label": str(comp.get("product_name") or cid),
+            "option_sku": str(comp.get("finish_code") or ""),
+            "option_family": str(comp.get("family") or ""),
+            "option_role": str(comp.get("system_role") or "component"),
+            "parent_family": str(parent.get("family") or ""),
+            "source_url": str(parent.get("product_url") or ""),
+            "option_meta": f"{pid}:{opt_type}:{str(comp.get('finish_name') or comp.get('product_id') or '')}",
+        })
+    return out
+
+
+def _fetch_source(url: str, timeout: int = 20) -> Dict[str, Any]:
+    try:
+        r = requests.get(url, timeout=timeout, allow_redirects=True, headers={"User-Agent": "Mozilla/5.0"})
+        content = r.content or b""
+        ctype = str(r.headers.get("Content-Type") or "")
+        mode = "binary_hash_only" if "pdf" in ctype.lower() or url.lower().endswith(".pdf") else "html_text"
+        text = ""
+        if mode == "html_text":
+            try:
+                text = content.decode(r.encoding or "utf-8", errors="ignore")
+            except Exception:
+                text = ""
+        return {"status_code": r.status_code, "final_url": str(r.url), "content": content, "text": text, "content_type": ctype, "mode": mode}
+    except Exception as e:
+        return {"status_code": None, "final_url": url, "content": b"", "text": "", "content_type": "", "mode": "error", "error": str(e)}
+
+
+def validate_kaldewei_sources(baseline_path: str = BASELINE_PATH) -> List[Dict[str, Any]]:
+    try:
+        with open(baseline_path, "r", encoding="utf-8") as f:
+            baseline = {x["source_id"]: x for x in json.load(f)}
+    except Exception:
+        baseline = {}
+    known_urls = {x["source_url"] for x in SOURCE_REGISTRY}
+    rows: List[Dict[str, Any]] = []
+    for src in SOURCE_REGISTRY:
+        fetched = _fetch_source(src["source_url"])
+        content = fetched.get("content") or b""
+        text = (fetched.get("text") or "")
+        h = hashlib.sha256(content).hexdigest() if content else ""
+        ln = len(content)
+        base = baseline.get(src["source_id"], {})
+        exp = src.get("expected_terms") or []
+        missing = [t for t in exp if t.lower() not in text.lower()] if fetched.get("mode") == "html_text" else []
+        new_candidates = []
+        if fetched.get("mode") == "html_text":
+            for m in re.findall(r'href=[\"\\\']([^\"\\\']+)[\"\\\']', text, flags=re.IGNORECASE):
+                ml = m.lower()
+                if ("kaldewei.com" in ml or ml.startswith("/")) and m not in known_urls and any(k in ml for k in ("flow", "nexsys", "waste", "ka-", "xetis", "calima", "conoflat")):
+                    new_candidates.append(m[:180])
+        review_reasons = []
+        if fetched.get("status_code") != 200:
+            review_reasons.append("unreachable_or_non_200")
+        if base and base.get("baseline_hash_sha256") and h and base.get("baseline_hash_sha256") != h:
+            review_reasons.append("hash_changed")
+        if base and base.get("baseline_content_length") not in (None, "") and ln and int(base.get("baseline_content_length")) != ln:
+            review_reasons.append("length_changed")
+        if missing:
+            review_reasons.append("expected_terms_missing")
+        if not base:
+            review_reasons.append("baseline_missing")
+        if new_candidates:
+            review_reasons.append("new_source_candidates")
+        rows.append({
+            "manufacturer": "kaldewei",
+            "source_id": src["source_id"],
+            "family": src["family"],
+            "source_url": src["source_url"],
+            "source_type": src["source_type"],
+            "status_code": fetched.get("status_code"),
+            "final_url": fetched.get("final_url"),
+            "content_hash_sha256": h,
+            "content_length": ln,
+            "baseline_hash_sha256": base.get("baseline_hash_sha256", ""),
+            "baseline_content_length": base.get("baseline_content_length", ""),
+            "hash_changed": bool(base and base.get("baseline_hash_sha256") and base.get("baseline_hash_sha256") != h),
+            "length_changed": bool(base and base.get("baseline_content_length") not in (None, "") and ln and int(base.get("baseline_content_length")) != ln),
+            "expected_terms_found": ",".join([t for t in exp if t not in missing]),
+            "expected_terms_missing": ",".join(missing),
+            "new_source_candidate_count": len(new_candidates),
+            "sample_new_source_candidates": ",".join(new_candidates[:5]),
+            "review_required": "yes" if review_reasons else "no",
+            "review_reason": ",".join(review_reasons),
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "extraction_mode": fetched.get("mode"),
+            "baseline_status": "missing" if not base else "present",
+        })
+    return rows
