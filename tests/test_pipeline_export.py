@@ -10,6 +10,7 @@ import pandas as pd
 from src.config import default_config
 from src.excel_export import export_excel
 from src import pipeline
+from src.connectors import kaldewei
 
 
 class _FakeConnectorYes:
@@ -445,6 +446,24 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue(all("rost" not in str(x).lower() for x in promoted["product_name"].tolist()))
         self.assertTrue(excluded.empty)
         self.assertTrue(bom.empty)
+
+    def test_kaldewei_baseline_products_components_bom_and_evidence(self):
+        rows, _ = kaldewei.discover_candidates()
+        registry = pd.DataFrame(rows)
+        with patch.dict(pipeline.CONNECTORS, {"kaldewei": kaldewei}, clear=True):
+            products, comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
+        self.assertFalse(products.empty)
+        self.assertTrue(excluded.empty)
+        self.assertTrue((products["manufacturer"] == "kaldewei").all())
+        self.assertIn("kaldewei-nexsys", set(products[products["candidate_type"] == "drain"]["product_id"].tolist()))
+        self.assertIn("kaldewei-flowline-zero", set(products[products["candidate_type"] == "component"]["product_id"].tolist()))
+        self.assertIn("kaldewei-flowpoint-zero", set(products[products["candidate_type"] == "component"]["product_id"].tolist()))
+        self.assertTrue(((bom["product_id"] == "kaldewei-flowline-zero") & (bom["component_id"] == "kaldewei-flowdrain-horizontal-regular")).any())
+        self.assertTrue(((bom["product_id"] == "kaldewei-nexsys") & (bom["component_id"] == "kaldewei-ka-4121")).any())
+        labels = set(evidence[evidence["manufacturer"] == "kaldewei"]["label"].tolist())
+        self.assertIn("kaldewei_candidates_count", labels)
+        self.assertIn("kaldewei_bom_options_count", labels)
+        self.assertIn("sample_kaldewei_bom_options", labels)
 
     def test_viega_badablauf_pages_are_drain_body_not_accessory(self):
         for name in [
