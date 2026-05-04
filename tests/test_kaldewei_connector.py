@@ -33,10 +33,10 @@ class KaldeweiConnectorTests(unittest.TestCase):
         self.assertIn('unclear', by_id['kaldewei-ka-125-legacy']['current_status'])
 
     def test_bom_options(self):
-        flow_opts = kaldewei.get_bom_options(kaldewei.SEEDS['flow'])
+        flow_opts = kaldewei.get_bom_options(kaldewei.SEEDS['flow'] + "#kaldewei-flowline-zero")
         self.assertTrue(any(o['component_id'] == 'kaldewei-flowdrain-horizontal-regular' for o in flow_opts))
         self.assertTrue(any(o['component_id'] == 'kaldewei-flowdrain-horizontal-flat' for o in flow_opts))
-        nex_opts = kaldewei.get_bom_options(kaldewei.SEEDS['nexsys'])
+        nex_opts = kaldewei.get_bom_options(kaldewei.SEEDS['nexsys'] + "#kaldewei-nexsys")
         self.assertTrue(any(o['component_id'] == 'kaldewei-ka-4121' for o in nex_opts))
         self.assertTrue(any(o['component_id'] == 'kaldewei-ka-4122' for o in nex_opts))
 

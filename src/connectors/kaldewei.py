@@ -42,6 +42,9 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100) -
     for r in CATALOG:
         row = dict(r)
         row["manufacturer"] = "kaldewei"
+        row["product_family"] = str(row.get("family") or "unknown")
+        base_url = str(row.get("product_url") or "")
+        row["product_url"] = f"{base_url}#{row.get('product_id')}"
         row.setdefault("selected_length_mm", target_length_mm)
         rows.append(row)
     debug = [{"site": "kaldewei", "method": "seed_catalog", "candidates_found": len(rows), "seed_count": len(SEEDS)}]
@@ -50,6 +53,11 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100) -
 
 def extract_parameters(url: str) -> Dict[str, Any]:
     u = (url or "").lower()
+    frag = u.split("#")[-1] if "#" in u else ""
+    if frag:
+        row = next((r for r in CATALOG if str(r.get("product_id") or "").lower() == frag), None)
+        if row:
+            return {k: v for k, v in row.items() if k in {"flow_rate_lps", "outlet_dn", "height_adj_min_mm", "height_adj_max_mm", "water_seal_mm", "current_status", "compatibility_caution"}}
     for r in CATALOG:
         if str(r.get("product_url") or "").lower() == u:
             return {k: v for k, v in r.items() if k in {"flow_rate_lps", "outlet_dn", "height_adj_min_mm", "height_adj_max_mm", "water_seal_mm", "current_status", "compatibility_caution"}}
@@ -58,7 +66,10 @@ def extract_parameters(url: str) -> Dict[str, Any]:
 
 def get_bom_options(url: str, params: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
     u = (url or "").lower()
-    parent = next((r for r in CATALOG if str(r.get("product_url") or "").lower() == u), None)
+    frag = u.split("#")[-1] if "#" in u else ""
+    parent = next((r for r in CATALOG if str(r.get("product_id") or "").lower() == frag), None) if frag else None
+    if not parent:
+        parent = next((r for r in CATALOG if str(r.get("product_url") or "").lower() == u), None)
     if not parent:
         return []
     pid = str(parent.get("product_id") or "")
