@@ -15,15 +15,15 @@ SEEDS = {
     "xetis": "https://www.kaldewei.com/products/showers/detail/product/xetis/",
 }
 SOURCE_REGISTRY: List[Dict[str, Any]] = [
-    {"source_id": "kaldewei-flow-page", "family": "flow", "source_url": SEEDS["flow"], "source_type": "product_page", "expected_terms": ["FLOWLINE ZERO", "FLOWPOINT ZERO", "FLOWDRAIN", "brushed steel", "brushed champagne", "brushed graphite", "alpine white matt", "black matt 100"], "criticality": "high", "review_area": "flow"},
-    {"source_id": "kaldewei-flowdrain-horizontal-pdf", "family": "flowdrain", "source_url": "https://files.cdn.kaldewei.com/data/sprachen/englisch/prospekte/installationsanleitungen/DB24_GB_DA_ZUB_FLOWDRAIN_HORIZONTAL_WEB.pdf", "source_type": "pdf", "expected_terms": ["FLOWDRAIN", "DN 50", "DN 40", "0.8", "0.63", "50 mm", "30 mm"], "criticality": "high", "review_area": "flowdrain"},
-    {"source_id": "kaldewei-nexsys-product-page", "family": "nexsys", "source_url": SEEDS["nexsys"], "source_type": "product_page", "expected_terms": ["NEXSYS", "design cover", "4-in-1"], "criticality": "high", "review_area": "nexsys"},
-    {"source_id": "kaldewei-nexsys-ka-4121-4122-pdf", "family": "nexsys", "source_url": "https://files.cdn.kaldewei.com/data/sprachen/tschechisch/techdata/DB03_21-Export_Print-CZcz_ST_AC_KA4121_KA4122_NEXSYS.pdf", "source_type": "pdf", "expected_terms": ["KA 4121", "KA 4122", "NEXSYS"], "criticality": "high", "review_area": "nexsys"},
-    {"source_id": "kaldewei-waste-systems-page", "family": "waste", "source_url": SEEDS["waste"], "source_type": "product_page", "expected_terms": ["KA 90", "KA 120", "KA 300"], "criticality": "medium", "review_area": "waste"},
-    {"source_id": "kaldewei-calima-ka-300-page", "family": "ka_300", "source_url": SEEDS["calima"], "source_type": "product_page", "expected_terms": ["CALIMA", "KA 300"], "criticality": "medium", "review_area": "ka_300"},
-    {"source_id": "kaldewei-conoflat-ka-120-techdata", "family": "ka_120", "source_url": SEEDS["conoflat"], "source_type": "product_page", "expected_terms": ["CONOFLAT", "KA 120"], "criticality": "medium", "review_area": "ka_120"},
-    {"source_id": "kaldewei-ka-120-ka-125-legacy-sheet", "family": "ka_125", "source_url": "https://files.cdn.kaldewei.com/data/sprachen/deutsch/techdata/KADBD_ABLAUFGARNITUR_KA120_und_KA125.pdf", "source_type": "pdf", "expected_terms": ["KA 120", "KA 125"], "criticality": "medium", "review_area": "legacy"},
-    {"source_id": "kaldewei-xetis-ka-200-installation-sheet", "family": "xetis", "source_url": "https://files.cdn.kaldewei.com/data/sprachen/deutsch/techdata/DB03_21-Export_Print-DEde_DW_ZB_XETIS_Installation.pdf", "source_type": "pdf", "expected_terms": ["XETIS", "KA 200"], "criticality": "medium", "review_area": "xetis"},
+    {"source_id": "kaldewei-flow-page", "family": "flow", "source_url": SEEDS["flow"], "source_type": "product_page", "critical_expected_terms": ["FLOWLINE ZERO", "FLOWPOINT ZERO", "FLOWDRAIN"], "warning_expected_terms": ["brushed steel", "brushed champagne", "brushed graphite", "alpine white matt", "black matt 100"], "criticality": "high", "review_area": "flow"},
+    {"source_id": "kaldewei-flowdrain-horizontal-pdf", "family": "flowdrain", "source_url": "https://files.cdn.kaldewei.com/data/sprachen/englisch/prospekte/installationsanleitungen/DB24_GB_DA_ZUB_FLOWDRAIN_HORIZONTAL_WEB.pdf", "source_type": "pdf", "critical_expected_terms": ["FLOWDRAIN", "DN 50", "DN 40", "0.8", "0.63", "50 mm", "30 mm"], "criticality": "high", "review_area": "flowdrain"},
+    {"source_id": "kaldewei-nexsys-product-page", "family": "nexsys", "source_url": SEEDS["nexsys"], "source_type": "product_page", "critical_expected_terms": ["NEXSYS", "design cover", "4-in-1"], "criticality": "high", "review_area": "nexsys"},
+    {"source_id": "kaldewei-nexsys-ka-4121-4122-pdf", "family": "nexsys", "source_url": "https://files.cdn.kaldewei.com/data/sprachen/tschechisch/techdata/DB03_21-Export_Print-CZcz_ST_AC_KA4121_KA4122_NEXSYS.pdf", "source_type": "pdf", "critical_expected_terms": ["KA 4121", "KA 4122", "NEXSYS"], "criticality": "high", "review_area": "nexsys"},
+    {"source_id": "kaldewei-waste-systems-page", "family": "waste", "source_url": SEEDS["waste"], "source_type": "product_page", "critical_expected_terms": ["KA 90", "KA 120", "KA 300"], "criticality": "medium", "review_area": "waste"},
+    {"source_id": "kaldewei-calima-ka-300-page", "family": "ka_300", "source_url": SEEDS["calima"], "source_type": "product_page", "critical_expected_terms": ["CALIMA", "KA 300"], "criticality": "medium", "review_area": "ka_300"},
+    {"source_id": "kaldewei-conoflat-ka-120-techdata", "family": "ka_120", "source_url": SEEDS["conoflat"], "source_type": "product_page", "critical_expected_terms": ["CONOFLAT", "KA 120"], "criticality": "medium", "review_area": "ka_120"},
+    {"source_id": "kaldewei-ka-120-ka-125-legacy-sheet", "family": "ka_125", "source_url": "https://files.cdn.kaldewei.com/data/sprachen/deutsch/techdata/KADBD_ABLAUFGARNITUR_KA120_und_KA125.pdf", "source_type": "pdf", "critical_expected_terms": ["KA 120", "KA 125"], "criticality": "medium", "review_area": "legacy"},
+    {"source_id": "kaldewei-xetis-ka-200-installation-sheet", "family": "xetis", "source_url": "https://files.cdn.kaldewei.com/data/sprachen/deutsch/techdata/DB03_21-Export_Print-DEde_DW_ZB_XETIS_Installation.pdf", "source_type": "pdf", "critical_expected_terms": ["XETIS", "KA 200"], "criticality": "medium", "review_area": "xetis"},
 ]
 
 
@@ -153,6 +153,39 @@ def _fetch_source(url: str, timeout: int = 20) -> Dict[str, Any]:
         return {"status_code": None, "final_url": url, "content": b"", "text": "", "content_type": "", "mode": "error", "error": f"{e.__class__.__name__}: {e}"}
 
 
+
+def write_kaldewei_source_baseline(source_checks: List[Dict[str, Any]], path: str = BASELINE_PATH) -> str:
+    out = []
+    for row in source_checks:
+        out.append({
+            "source_id": row.get("source_id", ""),
+            "baseline_hash_sha256": row.get("content_hash_sha256", ""),
+            "baseline_content_length": row.get("content_length", ""),
+            "source_url": row.get("source_url", ""),
+            "source_type": row.get("source_type", ""),
+            "written_at": datetime.now(timezone.utc).isoformat(),
+        })
+    from pathlib import Path as _P
+    p = _P(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=False, indent=2)
+    return str(p)
+
+def _classify_source_candidate(url: str) -> str:
+    u = (url or "").lower()
+    if not u:
+        return "ignored_asset"
+    if "images.cdn.kaldewei.com" in u or any(u.endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp", ".svg", ".css", ".js")):
+        return "ignored_asset"
+    if "files.cdn.kaldewei.com" in u and any(k in u for k in (".pdf", ".zip", "techdata", "datasheet", "flyer")):
+        return "pdf_candidate" if ".pdf" in u else "datasheet_candidate"
+    if "pricelist.kaldewei.com" in u:
+        return "pricelist_candidate" if any(k in u for k in ("/product", "article", "detail")) else "ignored_asset"
+    if "kaldewei.com/products/" in u or "/detail/product/" in u:
+        return "product_page_candidate"
+    return "ignored_asset"
+
 def validate_kaldewei_sources(baseline_path: str = BASELINE_PATH) -> List[Dict[str, Any]]:
     try:
         with open(baseline_path, "r", encoding="utf-8") as f:
@@ -168,14 +201,34 @@ def validate_kaldewei_sources(baseline_path: str = BASELINE_PATH) -> List[Dict[s
         h = hashlib.sha256(content).hexdigest() if content else ""
         ln = len(content)
         base = baseline.get(src["source_id"], {})
-        exp = src.get("expected_terms") or []
-        missing = [t for t in exp if t.lower() not in text.lower()] if fetched.get("mode") == "html_text" else []
-        new_candidates = []
+        critical_terms = src.get("critical_expected_terms") or src.get("expected_terms") or []
+        warning_terms = src.get("warning_expected_terms") or []
+        critical_missing = [t for t in critical_terms if t.lower() not in text.lower()] if fetched.get("mode") == "html_text" else []
+        warning_missing = [t for t in warning_terms if t.lower() not in text.lower()] if fetched.get("mode") == "html_text" else []
+        normalized = []
+        candidate_types = []
         if fetched.get("mode") == "html_text":
-            for m in re.findall(r'href=[\"\\\']([^\"\\\']+)[\"\\\']', text, flags=re.IGNORECASE):
-                ml = m.lower()
-                if ("kaldewei.com" in ml or ml.startswith("/")) and m not in known_urls and any(k in ml for k in ("flow", "nexsys", "waste", "ka-", "xetis", "calima", "conoflat")):
-                    new_candidates.append(m[:180])
+            for m in re.findall(r'href=["\']([^"\']+)["\']', text, flags=re.IGNORECASE):
+                u = (m or "").strip()
+                if not u or u.startswith("#"):
+                    continue
+                if u.startswith("/"):
+                    u = "https://www.kaldewei.com" + u
+                if "kaldewei" not in u.lower():
+                    continue
+                u = u.split('#')[0].split('?')[0].rstrip('/')
+                ctype = _classify_source_candidate(u)
+                if ctype == "ignored_asset" or u in known_urls:
+                    continue
+                normalized.append(u)
+                candidate_types.append((u, ctype))
+        uniq = []
+        seen = set()
+        for u, t in candidate_types:
+            if u in seen:
+                continue
+            seen.add(u)
+            uniq.append((u, t))
         review_reasons = []
         if fetched.get("mode") == "error":
             review_reasons.append("fetch_error")
@@ -185,35 +238,11 @@ def validate_kaldewei_sources(baseline_path: str = BASELINE_PATH) -> List[Dict[s
             review_reasons.append("hash_changed")
         if base and base.get("baseline_content_length") not in (None, "") and ln and int(base.get("baseline_content_length")) != ln:
             review_reasons.append("length_changed")
-        if missing:
+        if critical_missing:
             review_reasons.append("expected_terms_missing")
         if not base:
             review_reasons.append("baseline_missing")
-        if new_candidates:
+        if uniq:
             review_reasons.append("new_source_candidates")
-        rows.append({
-            "manufacturer": "kaldewei",
-            "source_id": src["source_id"],
-            "family": src["family"],
-            "source_url": src["source_url"],
-            "source_type": src["source_type"],
-            "status_code": fetched.get("status_code"),
-            "final_url": fetched.get("final_url"),
-            "content_hash_sha256": h,
-            "content_length": ln,
-            "baseline_hash_sha256": base.get("baseline_hash_sha256", ""),
-            "baseline_content_length": base.get("baseline_content_length", ""),
-            "hash_changed": bool(base and base.get("baseline_hash_sha256") and base.get("baseline_hash_sha256") != h),
-            "length_changed": bool(base and base.get("baseline_content_length") not in (None, "") and ln and int(base.get("baseline_content_length")) != ln),
-            "expected_terms_found": ",".join([t for t in exp if t not in missing]),
-            "expected_terms_missing": ",".join(missing),
-            "new_source_candidate_count": len(new_candidates),
-            "sample_new_source_candidates": ",".join(new_candidates[:5]),
-            "review_required": "yes" if review_reasons else "no",
-            "review_reason": ",".join(review_reasons),
-            "checked_at": datetime.now(timezone.utc).isoformat(),
-            "extraction_mode": fetched.get("mode"),
-            "baseline_status": "missing" if not base else "present",
-            "fetch_error": str(fetched.get("error") or ""),
-        })
+        rows.append({"manufacturer":"kaldewei","source_id":src["source_id"],"family":src["family"],"source_url":src["source_url"],"source_type":src["source_type"],"status_code":fetched.get("status_code"),"final_url":fetched.get("final_url"),"content_hash_sha256":h,"content_length":ln,"baseline_hash_sha256":base.get("baseline_hash_sha256", ""),"baseline_content_length":base.get("baseline_content_length", ""),"hash_changed":bool(base and base.get("baseline_hash_sha256") and base.get("baseline_hash_sha256") != h),"length_changed":bool(base and base.get("baseline_content_length") not in (None, "") and ln and int(base.get("baseline_content_length")) != ln),"expected_terms_found":",".join([t for t in critical_terms if t not in critical_missing]),"expected_terms_missing":",".join(critical_missing),"warning_terms_missing":",".join(warning_missing),"new_source_candidate_count":len(uniq),"sample_new_source_candidates":",".join([u for u,_ in uniq[:5]])[:900],"new_source_candidate_types":",".join([t for _,t in uniq]),"review_required":"yes" if review_reasons else "no","review_warning":"warning_terms_missing" if warning_missing else "","review_reason":",".join(review_reasons),"checked_at":datetime.now(timezone.utc).isoformat(),"extraction_mode":fetched.get("mode"),"baseline_status":"missing" if not base else "present","fetch_error":str(fetched.get("error") or "")})
     return rows

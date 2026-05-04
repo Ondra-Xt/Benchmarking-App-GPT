@@ -1,6 +1,7 @@
 # src/pipeline.py
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional, Union, Iterable, Set
 import re
 import json
@@ -3342,6 +3343,15 @@ def run_update(
             ("sample_kaldewei_source_review_required", str([f"{r.get('source_id')}:{r.get('review_reason')}" for r in kal_source_checks if str(r.get('review_required') or '') == 'yes'][:10])),
             ("sample_kaldewei_new_source_candidates", str([r.get("sample_new_source_candidates") for r in kal_source_checks if str(r.get("sample_new_source_candidates") or "")][:10])),
             ("kaldewei_source_baseline_missing_count", str(sum(1 for r in kal_source_checks if str(r.get("baseline_status") or "") == "missing"))),
+            ("kaldewei_source_warning_terms_missing_count", str(sum(1 for r in kal_source_checks if str(r.get("warning_terms_missing") or "") != ""))),
+            ("kaldewei_new_product_source_candidates_count", str(sum(1 for r in kal_source_checks for t in str(r.get("new_source_candidate_types") or "").split(",") if t == "product_page_candidate"))),
+            ("kaldewei_new_pdf_source_candidates_count", str(sum(1 for r in kal_source_checks for t in str(r.get("new_source_candidate_types") or "").split(",") if t in {"pdf_candidate","datasheet_candidate"}))),
+            ("sample_kaldewei_new_product_source_candidates", str([r.get("sample_new_source_candidates") for r in kal_source_checks if "product_page_candidate" in str(r.get("new_source_candidate_types") or "")][:10])),
+            ("sample_kaldewei_new_pdf_source_candidates", str([r.get("sample_new_source_candidates") for r in kal_source_checks if any(x in str(r.get("new_source_candidate_types") or "") for x in ["pdf_candidate","datasheet_candidate"])][:10])),
+            ("kaldewei_source_baseline_file_exists", str(Path(getattr(_kaldewei_connector, "BASELINE_PATH", "")).exists())),
+            ("kaldewei_source_baseline_can_be_initialized", "yes"),
+            ("kaldewei_source_baseline_path", str(getattr(_kaldewei_connector, "BASELINE_PATH", ""))),
+            ("kaldewei_source_checks_partial_export_rows_count", "0"),
         ]:
             evidence_rows.append({"manufacturer": "kaldewei", "product_id": "__summary__", "label": label, "snippet": snippet, "source": "kaldewei_summary"})
         for sc in kal_source_checks:
@@ -3349,7 +3359,7 @@ def run_update(
                 "manufacturer": "kaldewei",
                 "product_id": "__source_check__",
                 "label": f"source_check:{sc.get('source_id')}",
-                "snippet": json.dumps(sc, ensure_ascii=False)[:1500],
+                "snippet": json.dumps(sc, ensure_ascii=False),
                 "source": str(sc.get("source_url") or ""),
             })
 
