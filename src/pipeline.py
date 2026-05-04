@@ -3212,10 +3212,43 @@ def run_update(
             if len(kaldewei_debug["sample_kaldewei_assembled_products"]) < 20:
                 kaldewei_debug["sample_kaldewei_assembled_products"].append(f"{asm_id}|{pid}|{cid}")
 
+        kal_nan_clean_count = 0
+        kal_nan_clean_sample: List[str] = []
+        kaldewei_text_fields = {"promotion_reason", "why_not_product_reason", "assembly_reason", "current_status", "compatibility_caution", "matched_component_ids", "source_url", "sources", "option_meta"}
+        for rr in products_rows:
+            if str(rr.get("manufacturer") or "").lower() != "kaldewei":
+                continue
+            for missing_k in kaldewei_text_fields:
+                if missing_k not in rr or rr.get(missing_k) is None or (isinstance(rr.get(missing_k), float) and pd.isna(rr.get(missing_k))):
+                    rr[missing_k] = ""
+            for k, v in list(rr.items()):
+                if k not in kaldewei_text_fields:
+                    continue
+                is_nullish = (v is None) or (isinstance(v, float) and pd.isna(v)) or str(v).strip().lower() in {"nan", "none"}
+                if is_nullish:
+                    rr[k] = ""
+                    kal_nan_clean_count += 1
+                    if len(kal_nan_clean_sample) < 20:
+                        kal_nan_clean_sample.append(f"{rr.get('product_id')}:{k}")
+        for rr in bom_rows:
+            if str(rr.get("manufacturer") or "").lower() != "kaldewei":
+                continue
+            for k in ("option_meta", "source_url", "option_label", "parent_family", "option_family"):
+                v = rr.get(k)
+                is_nullish = (v is None) or (isinstance(v, float) and pd.isna(v)) or str(v).strip().lower() in {"nan", "none"}
+                if is_nullish:
+                    rr[k] = ""
+                    kal_nan_clean_count += 1
+                    if len(kal_nan_clean_sample) < 20:
+                        kal_nan_clean_sample.append(f"{rr.get('product_id')}->{rr.get('component_id')}:{k}")
+
         kal_rows = [r for r in products_rows if str(r.get("manufacturer") or "").lower() == "kaldewei"]
         kal_products = [r for r in kal_rows if str(r.get("candidate_type") or "").lower() == "drain"]
         kal_components = [r for r in kal_rows if str(r.get("candidate_type") or "").lower() == "component"]
         kal_bom = [r for r in bom_rows if str(r.get("manufacturer") or "").lower() == "kaldewei"]
+        kal_registry_candidates = 0
+        if "manufacturer" in registry_df.columns:
+            kal_registry_candidates = int((registry_df["manufacturer"] == "kaldewei").sum())
         def _by_family(rows):
             out = {}
             for r in rows:
@@ -3240,7 +3273,8 @@ def run_update(
             and str(r.get("candidate_type") or "") != "drain"
         )
         for label, snippet in [
-            ("kaldewei_candidates_count", str(len(kal_rows))),
+            ("kaldewei_registry_candidates_count", str(kal_registry_candidates)),
+            ("kaldewei_final_rows_count", str(len(kal_rows))),
             ("kaldewei_products_count", str(len(kal_products))),
             ("kaldewei_components_count", str(len(kal_components))),
             ("kaldewei_candidates_by_family", str(_by_family(kal_rows))),
@@ -3264,6 +3298,8 @@ def run_update(
             ("kaldewei_assembled_product_duplicate_skipped_count", str(kaldewei_debug["kaldewei_assembled_product_duplicate_skipped_count"])),
             ("kaldewei_assembled_products_emitted_to_products_count", str(kaldewei_debug["kaldewei_assembled_products_emitted_to_products_count"])),
             ("kaldewei_assembled_products_left_in_components_count", str(kaldewei_debug["kaldewei_assembled_products_left_in_components_count"])),
+            ("kaldewei_literal_nan_values_cleaned_count", str(kal_nan_clean_count)),
+            ("sample_kaldewei_literal_nan_cleanup", str(kal_nan_clean_sample[:10])),
         ]:
             evidence_rows.append({"manufacturer": "kaldewei", "product_id": "__summary__", "label": label, "snippet": snippet, "source": "kaldewei_summary"})
 
