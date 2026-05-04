@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 from src.connectors import kaldewei
 from src.connectors import CONNECTORS
 
@@ -44,6 +45,19 @@ class KaldeweiConnectorTests(unittest.TestCase):
         flowline_opts = kaldewei.get_bom_options(kaldewei.SEEDS['flow'] + "#kaldewei-flowline-zero")
         finish_ids = {o['component_id'] for o in flowline_opts if o['option_type'] == 'compatible_finish'}
         self.assertEqual(len(finish_ids), 5)
+
+    def test_source_validation_flags_review_required_cases(self):
+        def fake_fetch(url, timeout=20):
+            if "flowdrain-horizontal.pdf" in url:
+                return {"status_code": 404, "final_url": url, "content": b"", "text": "", "content_type": "application/pdf", "mode": "binary_hash_only"}
+            html = "<html><a href='/products/shower-surfaces/new-flow-item/'>new</a> FLOWLINE ZERO FLOWPOINT ZERO FLOWDRAIN NEXSYS KA 4121 KA 4122 KA 90 KA 120 KA 300 KA 125</html>"
+            return {"status_code": 200, "final_url": url, "content": html.encode(), "text": html, "content_type": "text/html", "mode": "html_text"}
+        with patch("src.connectors.kaldewei._fetch_source", side_effect=fake_fetch):
+            rows = kaldewei.validate_kaldewei_sources(baseline_path="/tmp/does-not-exist.json")
+        self.assertTrue(rows)
+        self.assertTrue(any(r["review_required"] == "yes" for r in rows))
+        self.assertTrue(any("baseline_missing" in r["review_reason"] for r in rows))
+        self.assertTrue(any(r["status_code"] == 404 and r["review_required"] == "yes" for r in rows))
 
 if __name__ == '__main__':
     unittest.main()

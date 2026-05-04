@@ -1,5 +1,10 @@
 from __future__ import annotations
 from typing import Any, Dict, List, Tuple
+import hashlib
+import json
+from datetime import datetime, timezone
+import re
+import requests
 
 SEEDS = {
     "flow": "https://www.kaldewei.com/products/shower-surfaces/kaldewei-flow/",
@@ -9,6 +14,14 @@ SEEDS = {
     "calima": "https://www.kaldewei.com/products/shower-surfaces/calima/",
     "xetis": "https://www.kaldewei.com/products/shower-surfaces/xetis/",
 }
+SOURCE_REGISTRY: List[Dict[str, Any]] = [
+    {"source_id": "kaldewei-flow-page", "family": "flow", "source_url": SEEDS["flow"], "source_type": "product_page", "expected_terms": ["FLOWLINE ZERO", "FLOWPOINT ZERO", "FLOWDRAIN"], "criticality": "high", "review_area": "flow"},
+    {"source_id": "kaldewei-flowdrain-horizontal-pdf", "family": "flowdrain", "source_url": "https://files.cdn.kaldewei.com/products/downloads/flowdrain-horizontal.pdf", "source_type": "pdf", "expected_terms": ["DN 50", "DN 40", "0.8", "0.63"], "criticality": "high", "review_area": "flowdrain"},
+    {"source_id": "kaldewei-nexsys-product-page", "family": "nexsys", "source_url": SEEDS["nexsys"], "source_type": "product_page", "expected_terms": ["NEXSYS", "KA 4121", "KA 4122"], "criticality": "high", "review_area": "nexsys"},
+    {"source_id": "kaldewei-waste-systems-page", "family": "waste", "source_url": SEEDS["waste"], "source_type": "product_page", "expected_terms": ["KA 90", "KA 120", "KA 300", "KA 125"], "criticality": "medium", "review_area": "waste"},
+]
+
+BASELINE_PATH = "data/source_baselines/kaldewei_sources.json"
 
 CATALOG: List[Dict[str, Any]] = [
     {"product_id": "kaldewei-nexsys", "product_name": "KALDEWEI NEXSYS", "product_url": SEEDS["nexsys"], "family": "nexsys", "candidate_type": "drain", "system_role": "complete_system", "complete_system": "yes", "promotion_reason": "integrated_shower_surface_system", "height_adj_min_mm": 84, "cover_lengths_mm": "750,800,900,1000,1200", "shower_sizes_mm": "800x800..900x1700", "system_meta": "integrated_4in1"},
@@ -115,3 +128,83 @@ def get_bom_options(url: str, params: Dict[str, Any] | None = None) -> List[Dict
             "option_meta": f"{pid}:{opt_type}:{str(comp.get('finish_name') or comp.get('product_id') or '')}",
         })
     return out
+
+
+def _fetch_source(url: str, timeout: int = 20) -> Dict[str, Any]:
+    try:
+        r = requests.get(url, timeout=timeout, allow_redirects=True, headers={"User-Agent": "Mozilla/5.0"})
+        content = r.content or b""
+        ctype = str(r.headers.get("Content-Type") or "")
+        mode = "binary_hash_only" if "pdf" in ctype.lower() or url.lower().endswith(".pdf") else "html_text"
+        text = ""
+        if mode == "html_text":
+            try:
+                text = content.decode(r.encoding or "utf-8", errors="ignore")
+            except Exception:
+                text = ""
+        return {"status_code": r.status_code, "final_url": str(r.url), "content": content, "text": text, "content_type": ctype, "mode": mode}
+    except Exception as e:
+        return {"status_code": None, "final_url": url, "content": b"", "text": "", "content_type": "", "mode": "error", "error": str(e)}
+
+
+def validate_kaldewei_sources(baseline_path: str = BASELINE_PATH) -> List[Dict[str, Any]]:
+    try:
+        with open(baseline_path, "r", encoding="utf-8") as f:
+            baseline = {x["source_id"]: x for x in json.load(f)}
+    except Exception:
+        baseline = {}
+    known_urls = {x["source_url"] for x in SOURCE_REGISTRY}
+    rows: List[Dict[str, Any]] = []
+    for src in SOURCE_REGISTRY:
+        fetched = _fetch_source(src["source_url"])
+        content = fetched.get("content") or b""
+        text = (fetched.get("text") or "")
+        h = hashlib.sha256(content).hexdigest() if content else ""
+        ln = len(content)
+        base = baseline.get(src["source_id"], {})
+        exp = src.get("expected_terms") or []
+        missing = [t for t in exp if t.lower() not in text.lower()] if fetched.get("mode") == "html_text" else []
+        new_candidates = []
+        if fetched.get("mode") == "html_text":
+            for m in re.findall(r'href=[\"\\\']([^\"\\\']+)[\"\\\']', text, flags=re.IGNORECASE):
+                ml = m.lower()
+                if ("kaldewei.com" in ml or ml.startswith("/")) and m not in known_urls and any(k in ml for k in ("flow", "nexsys", "waste", "ka-", "xetis", "calima", "conoflat")):
+                    new_candidates.append(m[:180])
+        review_reasons = []
+        if fetched.get("status_code") != 200:
+            review_reasons.append("unreachable_or_non_200")
+        if base and base.get("baseline_hash_sha256") and h and base.get("baseline_hash_sha256") != h:
+            review_reasons.append("hash_changed")
+        if base and base.get("baseline_content_length") not in (None, "") and ln and int(base.get("baseline_content_length")) != ln:
+            review_reasons.append("length_changed")
+        if missing:
+            review_reasons.append("expected_terms_missing")
+        if not base:
+            review_reasons.append("baseline_missing")
+        if new_candidates:
+            review_reasons.append("new_source_candidates")
+        rows.append({
+            "manufacturer": "kaldewei",
+            "source_id": src["source_id"],
+            "family": src["family"],
+            "source_url": src["source_url"],
+            "source_type": src["source_type"],
+            "status_code": fetched.get("status_code"),
+            "final_url": fetched.get("final_url"),
+            "content_hash_sha256": h,
+            "content_length": ln,
+            "baseline_hash_sha256": base.get("baseline_hash_sha256", ""),
+            "baseline_content_length": base.get("baseline_content_length", ""),
+            "hash_changed": bool(base and base.get("baseline_hash_sha256") and base.get("baseline_hash_sha256") != h),
+            "length_changed": bool(base and base.get("baseline_content_length") not in (None, "") and ln and int(base.get("baseline_content_length")) != ln),
+            "expected_terms_found": ",".join([t for t in exp if t not in missing]),
+            "expected_terms_missing": ",".join(missing),
+            "new_source_candidate_count": len(new_candidates),
+            "sample_new_source_candidates": ",".join(new_candidates[:5]),
+            "review_required": "yes" if review_reasons else "no",
+            "review_reason": ",".join(review_reasons),
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "extraction_mode": fetched.get("mode"),
+            "baseline_status": "missing" if not base else "present",
+        })
+    return rows

@@ -3137,6 +3137,11 @@ def run_update(
 
     has_kaldewei = any(str(r.get("manufacturer") or "").lower() == "kaldewei" for r in products_rows)
     if has_kaldewei:
+        try:
+            from .connectors import kaldewei as _kaldewei_connector
+            kal_source_checks = _kaldewei_connector.validate_kaldewei_sources()
+        except Exception:
+            kal_source_checks = []
         kaldewei_debug = {
             "kaldewei_assembled_products_created_count": 0,
             "kaldewei_assembled_products_by_family": {},
@@ -3327,8 +3332,26 @@ def run_update(
             ("sample_kaldewei_flow_finish_components", str([str(r.get("product_id")) for r in flow_finish_components[:10]])),
             ("sample_kaldewei_flow_finish_bom_options", str([f"{r.get('product_id')}->{r.get('component_id')}:{r.get('option_type')}" for r in flow_finish_bom[:10]])),
             ("kaldewei_flow_finish_product_explosion_prevented_count", str(len(flow_finish_bom))),
+            ("kaldewei_source_checks_count", str(len(kal_source_checks))),
+            ("kaldewei_source_checks_ok_count", str(sum(1 for r in kal_source_checks if str(r.get("review_required") or "") == "no"))),
+            ("kaldewei_source_checks_review_required_count", str(sum(1 for r in kal_source_checks if str(r.get("review_required") or "") == "yes"))),
+            ("kaldewei_source_hash_changed_count", str(sum(1 for r in kal_source_checks if bool(r.get("hash_changed"))))),
+            ("kaldewei_source_unreachable_count", str(sum(1 for r in kal_source_checks if str(r.get("status_code") or "") not in {"200", "200.0"}))),
+            ("kaldewei_source_expected_terms_missing_count", str(sum(1 for r in kal_source_checks if str(r.get("expected_terms_missing") or "") != ""))),
+            ("kaldewei_new_source_candidates_count", str(sum(int(r.get("new_source_candidate_count") or 0) for r in kal_source_checks))),
+            ("sample_kaldewei_source_review_required", str([f"{r.get('source_id')}:{r.get('review_reason')}" for r in kal_source_checks if str(r.get('review_required') or '') == 'yes'][:10])),
+            ("sample_kaldewei_new_source_candidates", str([r.get("sample_new_source_candidates") for r in kal_source_checks if str(r.get("sample_new_source_candidates") or "")][:10])),
+            ("kaldewei_source_baseline_missing_count", str(sum(1 for r in kal_source_checks if str(r.get("baseline_status") or "") == "missing"))),
         ]:
             evidence_rows.append({"manufacturer": "kaldewei", "product_id": "__summary__", "label": label, "snippet": snippet, "source": "kaldewei_summary"})
+        for sc in kal_source_checks:
+            evidence_rows.append({
+                "manufacturer": "kaldewei",
+                "product_id": "__source_check__",
+                "label": f"source_check:{sc.get('source_id')}",
+                "snippet": json.dumps(sc, ensure_ascii=False)[:1500],
+                "source": str(sc.get("source_url") or ""),
+            })
 
     products_df = pd.DataFrame(products_rows)
     comparison_df = pd.DataFrame(comparison_rows)
