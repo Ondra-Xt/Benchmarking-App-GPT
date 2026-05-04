@@ -1,0 +1,11 @@
+﻿priority,area,issue,evidence,required_work
+High,Coverage,Chybí produktové řady v Products/Comparison,"S+, C+, B, E+, M+ a MG jsou v Candidates_All, ale nejsou jako hotové benchmark produkty.",Doplnit detailní scraping + BOM assembly + promotion rules pro tyto řady.
+High,Classification,candidate_type/complete_system není normalizovaný,"V Candidates_All je většina řádků candidate_type=component a complete_system=component, i když system_role ukazuje complete_system/configuration_family/drain_body/grate.","Zavést explicitní hodnoty: system/configuration, drain_body=partial, grate=no, accessory=no, complete=yes."
+High,Benchmark hygiene,Samotná těla ShowerDrain C jsou v Products,4 řádky Rinnenkörper ShowerDrain C jsou promované jako Products vedle sestavených variant.,Demotovat raw body řádky; benchmarkovat pouze assembled_system body+grate nebo kompletní set.
+High,BOM,"Chybí BOM assembly pro S+, E+, M+, B, C+","Attachment sklízí komponenty/family pages, ale netvoří kompletní produkty pro tyto řady.",Přidat pravidla kombinace body/drain unit/profile/grate podle řady.
+High,Attributes,Technické parametry jsou slabě vyplněné,"Materiál, V4A, DIN 18534, sealing fleece, colours jsou v Products prakticky prázdné.",Doplnit extrakci z detailů/katalogových tabulek a datasheetů.
+High,Pricing,Offers sheet je prázdný,"V benchmarku nejsou ceny, takže sales_price score je vypnuté a pricing modul není hotový.",Doplnit scraping Reuter/Megabad/Hornbach nebo fallback DE; naplnit Offers.
+Medium,Public systems,Public 80/110 mají chybné role příslušenství,ShowerStep u Public 80/110 je v Candidates_All veden jako complete_system.,Opravit token pravidla: ShowerStep/Gefällekeil vždy accessory.
+Medium,Length normalization,Délky a article_no jsou vyplněné jen u části ShowerDrain C,selected_length/length_mode/article_no chybí u většiny produktů.,Vytáhnout detailní délkové varianty a normalizovat raw vs nominální délku.
+Medium,Product taxonomy,Products často nemají product_family,15 z 27 produktových řádků nemá product_family.,Propagovat product_family při promoci z Candidates a při BOM assembly.
+Low,Scope,Passavant/Public X mohou být mimo běžný residential shower benchmark,Jsou to technické/profesionální systémy; mohou zkreslit srovnání s KALDEWEI FLOWLINE ZERO.,"Rozhodnout, zda oddělit residential/professional/floor-drain scope."

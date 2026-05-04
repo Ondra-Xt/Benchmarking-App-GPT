@@ -1,27 +1,35 @@
 {
+  "w_param": 70.0,
+  "w_equiv": 30.0,
+  "unknown_penalty_score": 0.3,
+  "length_mode_match": 0.0,
+  "selected_length_match": 0.0,
+  "length_delta_within_tolerance": 0.0,
+  "equiv_finish_set_requires_base": 0.0,
+  "equiv_complete_system_bonus": 0.0,
+  "param_weights": {
+    "flow_rate_lps": 25,
+    "din_en_1253_cert": 10,
+    "din_18534_compliance": 10,
+    "material_v4a": 10,
+    "height_adjustability": 15,
+    "outlet_dn": 10,
+    "sealing_fleece_preassembled": 10,
+    "colours_count": 10
+  },
   "version": "1.0",
   "updated_at_utc": "2026-01-13T14:18:08Z",
-  "unknown_penalty_score": 0.3,
   "price_enabled": false,
   "equivalence_weights_pct": {
-    "installation_type": 17,
-    "tileable": 17,
-    "outlet_type_dn": 17,
-    "install_height": 17,
-    "sealing_fleece": 16,
-    "length_mode_match": 16
+    "length_mode_match": 100,
+    "selected_length_match": 0,
+    "length_delta_within_tolerance": 0,
+    "equiv_finish_set_requires_base": 0,
+    "equiv_complete_system_bonus": 0
   },
   "final_weights_pct": {
-    "equivalence_overall": 20,
-    "flow_rate": 15,
-    "material_v4a": 15,
-    "din_en_1253": 10,
-    "din_18534": 10,
-    "height_adjustability": 10,
-    "outlet_variants": 10,
-    "sealing_fleece_preassembled": 5,
-    "colours_count": 5,
-    "sales_price": 0
+    "w_param": 100,
+    "w_equiv": 0
   },
   "final_enabled": {
     "equivalence_overall": true,
