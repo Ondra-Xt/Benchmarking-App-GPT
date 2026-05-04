@@ -458,6 +458,14 @@ class PipelineExportTests(unittest.TestCase):
         self.assertIn("kaldewei-nexsys", set(products[products["candidate_type"] == "drain"]["product_id"].tolist()))
         self.assertIn("kaldewei-flowline-zero", set(products[products["candidate_type"] == "component"]["product_id"].tolist()))
         self.assertIn("kaldewei-flowpoint-zero", set(products[products["candidate_type"] == "component"]["product_id"].tolist()))
+        assembled = products[(products["manufacturer"] == "kaldewei") & (products["promotion_reason"] == "assembled_from_bom")]
+        self.assertEqual(len(assembled), 4)
+        self.assertTrue(set(assembled["product_family"].tolist()) == {"flowline_zero", "flowpoint_zero"})
+        self.assertTrue((assembled["candidate_type"] == "drain").all())
+        self.assertTrue((assembled["promote_to_product"] == "yes").all())
+        self.assertEqual(set(assembled["trap_component_id"].tolist()), {"kaldewei-flowdrain-horizontal-regular", "kaldewei-flowdrain-horizontal-flat"})
+        self.assertTrue(((assembled["product_id"] == "kaldewei-assembled-flowline-zero__flowdrain-horizontal-regular") & (assembled["flow_rate_lps"] == 0.8)).any())
+        self.assertTrue(((assembled["product_id"] == "kaldewei-assembled-flowpoint-zero__flowdrain-horizontal-flat") & (assembled["flow_rate_lps"] == 0.63)).any())
         self.assertTrue(((bom["product_id"] == "kaldewei-flowline-zero") & (bom["component_id"] == "kaldewei-flowdrain-horizontal-regular")).any())
         self.assertTrue(((bom["product_id"] == "kaldewei-flowpoint-zero") & (bom["component_id"] == "kaldewei-flowdrain-horizontal-regular") & (bom["parent_family"] == "flowpoint_zero")).any())
         self.assertTrue(((bom["product_id"] == "kaldewei-nexsys") & (bom["component_id"] == "kaldewei-ka-4121")).any())
@@ -478,6 +486,10 @@ class PipelineExportTests(unittest.TestCase):
         self.assertIn("kaldewei_candidates_count", labels)
         self.assertIn("kaldewei_bom_options_count", labels)
         self.assertIn("sample_kaldewei_bom_options", labels)
+        self.assertIn("kaldewei_assembled_products_created_count", labels)
+        ev = evidence[evidence["manufacturer"] == "kaldewei"].set_index("label")
+        self.assertEqual(str(ev.loc["kaldewei_assembled_products_created_count", "snippet"]), "4")
+        self.assertEqual(str(ev.loc["kaldewei_assembled_products_left_in_components_count", "snippet"]), "0")
 
     def test_viega_badablauf_pages_are_drain_body_not_accessory(self):
         for name in [

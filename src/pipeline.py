@@ -3137,6 +3137,81 @@ def run_update(
 
     has_kaldewei = any(str(r.get("manufacturer") or "").lower() == "kaldewei" for r in products_rows)
     if has_kaldewei:
+        kaldewei_debug = {
+            "kaldewei_assembled_products_created_count": 0,
+            "kaldewei_assembled_products_by_family": {},
+            "sample_kaldewei_assembled_products": [],
+            "kaldewei_assembled_products_skipped_count": 0,
+            "sample_kaldewei_assembly_skipped_reasons": [],
+            "kaldewei_assembled_product_duplicate_skipped_count": 0,
+            "kaldewei_assembled_products_emitted_to_products_count": 0,
+            "kaldewei_assembled_products_left_in_components_count": 0,
+        }
+        kal_rows_map = {str(r.get("product_id") or ""): r for r in products_rows if str(r.get("manufacturer") or "").lower() == "kaldewei"}
+        kal_existing_ids = set(kal_rows_map.keys())
+        kal_seen_keys: Set[Tuple[str, str]] = set()
+        for br in [r for r in bom_rows if str(r.get("manufacturer") or "").lower() == "kaldewei"]:
+            if str(br.get("option_type") or "") != "required_trap_set":
+                continue
+            fam = str(br.get("parent_family") or "")
+            if fam not in {"flowline_zero", "flowpoint_zero"}:
+                continue
+            pid = str(br.get("product_id") or "")
+            cid = str(br.get("component_id") or "")
+            if cid not in {"kaldewei-flowdrain-horizontal-regular", "kaldewei-flowdrain-horizontal-flat"}:
+                continue
+            base = kal_rows_map.get(pid)
+            trap = kal_rows_map.get(cid)
+            if not base or not trap:
+                kaldewei_debug["kaldewei_assembled_products_skipped_count"] += 1
+                if len(kaldewei_debug["sample_kaldewei_assembly_skipped_reasons"]) < 20:
+                    kaldewei_debug["sample_kaldewei_assembly_skipped_reasons"].append(f"{pid}->{cid}:missing_base_or_trap")
+                continue
+            key = (pid, cid)
+            if key in kal_seen_keys:
+                kaldewei_debug["kaldewei_assembled_product_duplicate_skipped_count"] += 1
+                continue
+            kal_seen_keys.add(key)
+            trap_suffix = cid.replace("kaldewei-", "")
+            asm_id = f"kaldewei-assembled-{fam.replace('_','-')}__{trap_suffix}"
+            if asm_id in kal_existing_ids:
+                kaldewei_debug["kaldewei_assembled_product_duplicate_skipped_count"] += 1
+                continue
+            asm = dict(base)
+            asm.update({
+                "manufacturer": "kaldewei",
+                "product_id": asm_id,
+                "product_name": f"{base.get('product_name')} with {trap.get('product_name')}",
+                "candidate_type": "drain",
+                "system_role": "assembled_system",
+                "complete_system": "yes",
+                "promote_to_product": "yes",
+                "promotion_reason": "assembled_from_bom",
+                "assembly_reason": "kaldewei_flow_visible_drain_with_flowdrain",
+                "assembled_from_bom": "true",
+                "product_family": fam,
+                "parent_family": fam,
+                "option_family": "flowdrain",
+                "base_component_id": pid,
+                "trap_component_id": cid,
+                "matched_component_ids": f"{pid},{cid}",
+                "source_url": str(base.get("product_url") or ""),
+                "sources": ",".join([str(base.get("product_url") or ""), str(trap.get("product_url") or "")]).strip(","),
+            })
+            for k in ("flow_rate_lps", "outlet_dn", "height_adj_min_mm", "height_adj_max_mm", "water_seal_mm", "flow_rate_raw_text"):
+                if trap.get(k) not in (None, ""):
+                    asm[k] = trap.get(k)
+            products_rows.append(asm)
+            comparison_rows.append({
+                "manufacturer": "kaldewei", "product_id": asm_id, "product_name": asm.get("product_name"),
+                "product_url": asm.get("product_url"), "final_score": "", "param_score": "", "equiv_score": "", "system_score": ""
+            })
+            kal_existing_ids.add(asm_id)
+            kaldewei_debug["kaldewei_assembled_products_created_count"] += 1
+            kaldewei_debug["kaldewei_assembled_products_by_family"][fam] = kaldewei_debug["kaldewei_assembled_products_by_family"].get(fam, 0) + 1
+            if len(kaldewei_debug["sample_kaldewei_assembled_products"]) < 20:
+                kaldewei_debug["sample_kaldewei_assembled_products"].append(f"{asm_id}|{pid}|{cid}")
+
         kal_rows = [r for r in products_rows if str(r.get("manufacturer") or "").lower() == "kaldewei"]
         kal_products = [r for r in kal_rows if str(r.get("candidate_type") or "").lower() == "drain"]
         kal_components = [r for r in kal_rows if str(r.get("candidate_type") or "").lower() == "component"]
@@ -3153,6 +3228,17 @@ def run_update(
             bom_by_type[t] = bom_by_type.get(t, 0) + 1
         unclear = [r for r in kal_rows if "unclear" in str(r.get("current_status") or "") or "unclear" in str(r.get("compatibility_caution") or "")]
         invalid_ka_bom_rows_removed_count = sum(1 for r in kal_bom if str(r.get("product_id") or "") in {"kaldewei-ka-4121", "kaldewei-ka-4122"})
+        kaldewei_debug["kaldewei_assembled_products_emitted_to_products_count"] = sum(
+            1 for r in kal_rows
+            if str(r.get("promotion_reason") or "") == "assembled_from_bom"
+            and str(r.get("candidate_type") or "") == "drain"
+            and str(r.get("promote_to_product") or "") == "yes"
+        )
+        kaldewei_debug["kaldewei_assembled_products_left_in_components_count"] = sum(
+            1 for r in kal_rows
+            if str(r.get("promotion_reason") or "") == "assembled_from_bom"
+            and str(r.get("candidate_type") or "") != "drain"
+        )
         for label, snippet in [
             ("kaldewei_candidates_count", str(len(kal_rows))),
             ("kaldewei_products_count", str(len(kal_products))),
@@ -3170,6 +3256,14 @@ def run_update(
             ("kaldewei_seed_param_preservation_count", str(kaldewei_seed_param_preservation_count)),
             ("sample_kaldewei_preserved_seed_params", str(sample_kaldewei_preserved_seed_params[:10])),
             ("kaldewei_invalid_bom_rows_removed_count", str(invalid_ka_bom_rows_removed_count)),
+            ("kaldewei_assembled_products_created_count", str(kaldewei_debug["kaldewei_assembled_products_created_count"])),
+            ("kaldewei_assembled_products_by_family", str(kaldewei_debug["kaldewei_assembled_products_by_family"])),
+            ("sample_kaldewei_assembled_products", str(kaldewei_debug["sample_kaldewei_assembled_products"][:10])),
+            ("kaldewei_assembled_products_skipped_count", str(kaldewei_debug["kaldewei_assembled_products_skipped_count"])),
+            ("sample_kaldewei_assembly_skipped_reasons", str(kaldewei_debug["sample_kaldewei_assembly_skipped_reasons"][:10])),
+            ("kaldewei_assembled_product_duplicate_skipped_count", str(kaldewei_debug["kaldewei_assembled_product_duplicate_skipped_count"])),
+            ("kaldewei_assembled_products_emitted_to_products_count", str(kaldewei_debug["kaldewei_assembled_products_emitted_to_products_count"])),
+            ("kaldewei_assembled_products_left_in_components_count", str(kaldewei_debug["kaldewei_assembled_products_left_in_components_count"])),
         ]:
             evidence_rows.append({"manufacturer": "kaldewei", "product_id": "__summary__", "label": label, "snippet": snippet, "source": "kaldewei_summary"})
 
