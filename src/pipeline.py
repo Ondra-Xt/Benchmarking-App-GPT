@@ -3118,6 +3118,40 @@ def run_update(
             "source": "id_stability",
         })
 
+    has_kaldewei = any(str(r.get("manufacturer") or "").lower() == "kaldewei" for r in products_rows)
+    if has_kaldewei:
+        kal_rows = [r for r in products_rows if str(r.get("manufacturer") or "").lower() == "kaldewei"]
+        kal_products = [r for r in kal_rows if str(r.get("candidate_type") or "").lower() == "drain"]
+        kal_components = [r for r in kal_rows if str(r.get("candidate_type") or "").lower() == "component"]
+        kal_bom = [r for r in bom_rows if str(r.get("manufacturer") or "").lower() == "kaldewei"]
+        def _by_family(rows):
+            out = {}
+            for r in rows:
+                fam = str(r.get("family") or r.get("parent_family") or "unknown")
+                out[fam] = out.get(fam, 0) + 1
+            return out
+        bom_by_type = {}
+        for r in kal_bom:
+            t = str(r.get("option_type") or "")
+            bom_by_type[t] = bom_by_type.get(t, 0) + 1
+        unclear = [r for r in kal_rows if "unclear" in str(r.get("current_status") or "") or "unclear" in str(r.get("compatibility_caution") or "")]
+        for label, snippet in [
+            ("kaldewei_candidates_count", str(len(kal_rows))),
+            ("kaldewei_products_count", str(len(kal_products))),
+            ("kaldewei_components_count", str(len(kal_components))),
+            ("kaldewei_candidates_by_family", str(_by_family(kal_rows))),
+            ("kaldewei_products_by_family", str(_by_family(kal_products))),
+            ("kaldewei_components_by_family", str(_by_family(kal_components))),
+            ("kaldewei_bom_options_count", str(len(kal_bom))),
+            ("kaldewei_bom_options_by_type", str(bom_by_type)),
+            ("sample_kaldewei_products", str([str(r.get('product_id')) for r in kal_products[:10]])),
+            ("sample_kaldewei_components", str([str(r.get('product_id')) for r in kal_components[:10]])),
+            ("sample_kaldewei_bom_options", str([f"{r.get('product_id')}->{r.get('component_id')}:{r.get('option_type')}" for r in kal_bom[:10]])),
+            ("kaldewei_unclear_compatibility_count", str(len(unclear))),
+            ("sample_kaldewei_unclear_compatibility", str([str(r.get('product_id')) for r in unclear[:10]])),
+        ]:
+            evidence_rows.append({"manufacturer": "kaldewei", "product_id": "__summary__", "label": label, "snippet": snippet, "source": "kaldewei_summary"})
+
     products_df = pd.DataFrame(products_rows)
     comparison_df = pd.DataFrame(comparison_rows)
     excluded_df = pd.DataFrame(excluded_rows)
