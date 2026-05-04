@@ -483,13 +483,19 @@ class PipelineExportTests(unittest.TestCase):
         self.assertEqual(str(drains.loc["kaldewei-nexsys", "promotion_reason"]), "integrated_shower_surface_system")
         self.assertIn("unclear", str(drains.loc["kaldewei-xetis-ka-200", "promotion_reason"]))
         labels = set(evidence[evidence["manufacturer"] == "kaldewei"]["label"].tolist())
-        self.assertIn("kaldewei_candidates_count", labels)
+        self.assertIn("kaldewei_registry_candidates_count", labels)
+        self.assertIn("kaldewei_final_rows_count", labels)
         self.assertIn("kaldewei_bom_options_count", labels)
         self.assertIn("sample_kaldewei_bom_options", labels)
         self.assertIn("kaldewei_assembled_products_created_count", labels)
         ev = evidence[evidence["manufacturer"] == "kaldewei"].set_index("label")
+        self.assertEqual(str(ev.loc["kaldewei_registry_candidates_count", "snippet"]), str(len(registry)))
+        self.assertEqual(str(ev.loc["kaldewei_final_rows_count", "snippet"]), str(len(products)))
         self.assertEqual(str(ev.loc["kaldewei_assembled_products_created_count", "snippet"]), "4")
         self.assertEqual(str(ev.loc["kaldewei_assembled_products_left_in_components_count", "snippet"]), "0")
+        text_cols = [c for c in ["promotion_reason", "why_not_product_reason", "assembly_reason", "current_status", "compatibility_caution", "matched_component_ids", "source_url"] if c in products.columns]
+        for c in text_cols:
+            self.assertFalse(products[c].astype(str).str.lower().str.contains("^nan$|^none$", regex=True).any())
 
     def test_viega_badablauf_pages_are_drain_body_not_accessory(self):
         for name in [
