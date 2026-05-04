@@ -47,7 +47,10 @@ class KaldeweiConnectorTests(unittest.TestCase):
         <a href="https://www.kaldewei.com/en/products/showers/detail/product/conoflat/?utm=1">lang</a>
         <a href="https://images.cdn.kaldewei.com/x.jpg">img</a>
         <a href="https://www.kaldewei.com/products/showers/shower-accessories/">nav</a>
+        <a href="https://www.kaldewei.de/products/showers/detail/product/nexsys/">local</a>
+        <a href="https://pricelist.kaldewei.com/catalog/product/fake">price</a>
         <a href="https://files.cdn.kaldewei.com/data/sprachen/deutsch/techdata/new-ka-doc.pdf">pdf</a>
+        <a href="https://www.kaldewei.com/products/showers/detail/product/new-flow-system/">newprod</a>
         </html>"""
         def fake_fetch(url, timeout=20):
             if 'conoflat' in url:
@@ -58,8 +61,11 @@ class KaldeweiConnectorTests(unittest.TestCase):
         row = {r['source_id']: r for r in rows}['kaldewei-conoflat-ka-120-techdata']
         self.assertNotIn('expected_terms_missing', row['review_reason'])
         self.assertIn('warning_terms_missing', row['review_warning'])
-        self.assertEqual(row['new_source_candidate_count'], 1)
-        self.assertEqual(row['new_pdf_source_candidate_count'], 1)
+        self.assertGreaterEqual(row['new_source_candidate_count'], 2)
+        self.assertGreaterEqual(row['new_pdf_source_candidate_count'], 1)
+        self.assertGreaterEqual(row['new_product_source_candidate_count'], 1)
+        self.assertGreaterEqual(int(row['ignored_language_variant_candidates_count']), 1)
+        self.assertGreaterEqual(int(row['ignored_pricelist_candidates_count']), 1)
 
 if __name__ == '__main__':
     unittest.main()

@@ -3346,11 +3346,16 @@ def run_update(
             ("kaldewei_source_warning_terms_missing_count", str(sum(1 for r in kal_source_checks if str(r.get("warning_terms_missing") or "") != ""))),
             ("kaldewei_new_product_source_candidates_count", str(sum(int(r.get("new_product_source_candidate_count") or 0) for r in kal_source_checks))),
             ("kaldewei_new_pdf_source_candidates_count", str(sum(int(r.get("new_pdf_source_candidate_count") or 0) for r in kal_source_checks))),
-            ("sample_kaldewei_new_product_source_candidates", str([r.get("sample_new_source_candidates") for r in kal_source_checks if "product_page_candidate" in str(r.get("new_source_candidate_types") or "")][:10])),
-            ("sample_kaldewei_new_pdf_source_candidates", str([r.get("sample_new_source_candidates") for r in kal_source_checks if any(x in str(r.get("new_source_candidate_types") or "") for x in ["pdf_candidate","datasheet_candidate"])][:10])),
+            ("sample_kaldewei_new_product_source_candidates", str([r.get("sample_new_product_source_candidates") for r in kal_source_checks if str(r.get("sample_new_product_source_candidates") or "")][:10])),
+            ("sample_kaldewei_new_pdf_source_candidates", str([r.get("sample_new_pdf_source_candidates") for r in kal_source_checks if str(r.get("sample_new_pdf_source_candidates") or "")][:10])),
             ("kaldewei_source_baseline_file_exists", str(Path(getattr(_kaldewei_connector, "BASELINE_PATH", "")).exists())),
             ("kaldewei_source_baseline_can_be_initialized", "yes"),
             ("kaldewei_source_baseline_path", str(getattr(_kaldewei_connector, "BASELINE_PATH", ""))),
+            ("kaldewei_ignored_source_candidates_count", str(sum(int(r.get("ignored_candidate_count") or 0) for r in kal_source_checks))),
+            ("sample_kaldewei_ignored_source_candidates", str([r.get("sample_ignored_candidates") for r in kal_source_checks if str(r.get("sample_ignored_candidates") or "")][:10])),
+            ("kaldewei_ignored_language_variant_candidates_count", str(sum(int(r.get("ignored_language_variant_candidates_count") or 0) for r in kal_source_checks))),
+            ("kaldewei_ignored_pricelist_candidates_count", str(sum(int(r.get("ignored_pricelist_candidates_count") or 0) for r in kal_source_checks))),
+            ("kaldewei_ignored_asset_candidates_count", str(sum(int(r.get("ignored_asset_candidates_count") or 0) for r in kal_source_checks))),
             ("kaldewei_source_checks_partial_export_rows_count", "0"),
         ]:
             evidence_rows.append({"manufacturer": "kaldewei", "product_id": "__summary__", "label": label, "snippet": snippet, "source": "kaldewei_summary"})
