@@ -21,7 +21,7 @@ SOURCE_REGISTRY: List[Dict[str, Any]] = [
     {"source_id": "kaldewei-nexsys-ka-4121-4122-pdf", "family": "nexsys", "source_url": "https://files.cdn.kaldewei.com/data/sprachen/tschechisch/techdata/DB03_21-Export_Print-CZcz_ST_AC_KA4121_KA4122_NEXSYS.pdf", "source_type": "pdf", "critical_expected_terms": ["KA 4121", "KA 4122", "NEXSYS"], "criticality": "high", "review_area": "nexsys"},
     {"source_id": "kaldewei-waste-systems-page", "family": "waste", "source_url": SEEDS["waste"], "source_type": "product_page", "critical_expected_terms": ["KA 90", "KA 120", "KA 300"], "criticality": "medium", "review_area": "waste"},
     {"source_id": "kaldewei-calima-ka-300-page", "family": "ka_300", "source_url": SEEDS["calima"], "source_type": "product_page", "critical_expected_terms": ["CALIMA", "KA 300"], "criticality": "medium", "review_area": "ka_300"},
-    {"source_id": "kaldewei-conoflat-ka-120-techdata", "family": "ka_120", "source_url": SEEDS["conoflat"], "source_type": "product_page", "critical_expected_terms": ["CONOFLAT", "KA 120"], "criticality": "medium", "review_area": "ka_120"},
+    {"source_id": "kaldewei-conoflat-ka-120-techdata", "family": "ka_120", "source_url": SEEDS["conoflat"], "source_type": "product_page", "critical_expected_terms": ["CONOFLAT"], "warning_expected_terms": ["KA 120"], "criticality": "medium", "review_area": "ka_120"},
     {"source_id": "kaldewei-ka-120-ka-125-legacy-sheet", "family": "ka_125", "source_url": "https://files.cdn.kaldewei.com/data/sprachen/deutsch/techdata/KADBD_ABLAUFGARNITUR_KA120_und_KA125.pdf", "source_type": "pdf", "critical_expected_terms": ["KA 120", "KA 125"], "criticality": "medium", "review_area": "legacy"},
     {"source_id": "kaldewei-xetis-ka-200-installation-sheet", "family": "xetis", "source_url": "https://files.cdn.kaldewei.com/data/sprachen/deutsch/techdata/DB03_21-Export_Print-DEde_DW_ZB_XETIS_Installation.pdf", "source_type": "pdf", "critical_expected_terms": ["XETIS", "KA 200"], "criticality": "medium", "review_area": "xetis"},
 ]
@@ -172,19 +172,29 @@ def write_kaldewei_source_baseline(source_checks: List[Dict[str, Any]], path: st
         json.dump(out, f, ensure_ascii=False, indent=2)
     return str(p)
 
-def _classify_source_candidate(url: str) -> str:
-    u = (url or "").lower()
+def _canonicalize_kaldewei_url(url: str) -> str:
+    u = (url or "").strip()
     if not u:
-        return "ignored_asset"
-    if "images.cdn.kaldewei.com" in u or any(u.endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp", ".svg", ".css", ".js")):
-        return "ignored_asset"
-    if "files.cdn.kaldewei.com" in u and any(k in u for k in (".pdf", ".zip", "techdata", "datasheet", "flyer")):
-        return "pdf_candidate" if ".pdf" in u else "datasheet_candidate"
-    if "pricelist.kaldewei.com" in u:
-        return "pricelist_candidate" if any(k in u for k in ("/product", "article", "detail")) else "ignored_asset"
-    if "kaldewei.com/products/" in u or "/detail/product/" in u:
-        return "product_page_candidate"
-    return "ignored_asset"
+        return ""
+    if u.startswith("/"):
+        u = "https://www.kaldewei.com" + u
+    u = u.split('#')[0].split('?')[0].rstrip('/')
+    u = u.replace('/en/', '/').replace('/de/', '/').replace('/cz/', '/')
+    return u
+
+def _classify_source_candidate(url: str) -> str:
+    u = _canonicalize_kaldewei_url(url).lower()
+    if not u or u.endswith(('.jpg','.jpeg','.png','.webp','.svg','.css','.js','.ico','.gif')) or 'images.cdn.kaldewei.com' in u:
+        return 'ignored'
+    if 'files.cdn.kaldewei.com' in u and any(k in u for k in ('.pdf','.zip','techdata','datasheet','flyer')):
+        return 'high_review_candidate'
+    if 'pricelist.kaldewei.com' in u:
+        return 'medium_review_candidate' if any(k in u for k in ('/product','article','detail')) else 'ignored'
+    if 'kaldewei.com/products/' in u or '/detail/product/' in u:
+        if any(k in u for k in ('flow','nexsys','xetis','waste','ka-','conoflat','calima')):
+            return 'high_review_candidate'
+        return 'low_noise_candidate'
+    return 'ignored'
 
 def validate_kaldewei_sources(baseline_path: str = BASELINE_PATH) -> List[Dict[str, Any]]:
     try:
@@ -192,7 +202,7 @@ def validate_kaldewei_sources(baseline_path: str = BASELINE_PATH) -> List[Dict[s
             baseline = {x["source_id"]: x for x in json.load(f)}
     except Exception:
         baseline = {}
-    known_urls = {x["source_url"] for x in SOURCE_REGISTRY}
+    known_urls = {_canonicalize_kaldewei_url(x["source_url"]) for x in SOURCE_REGISTRY}
     rows: List[Dict[str, Any]] = []
     for src in SOURCE_REGISTRY:
         fetched = _fetch_source(src["source_url"])
@@ -205,26 +215,26 @@ def validate_kaldewei_sources(baseline_path: str = BASELINE_PATH) -> List[Dict[s
         warning_terms = src.get("warning_expected_terms") or []
         critical_missing = [t for t in critical_terms if t.lower() not in text.lower()] if fetched.get("mode") == "html_text" else []
         warning_missing = [t for t in warning_terms if t.lower() not in text.lower()] if fetched.get("mode") == "html_text" else []
-        normalized = []
-        candidate_types = []
+        candidate_high_med = []
+        ignored_candidates = []
         if fetched.get("mode") == "html_text":
             for m in re.findall(r'href=["\']([^"\']+)["\']', text, flags=re.IGNORECASE):
                 u = (m or "").strip()
                 if not u or u.startswith("#"):
                     continue
-                if u.startswith("/"):
-                    u = "https://www.kaldewei.com" + u
+                u = _canonicalize_kaldewei_url(u)
                 if "kaldewei" not in u.lower():
                     continue
-                u = u.split('#')[0].split('?')[0].rstrip('/')
                 ctype = _classify_source_candidate(u)
-                if ctype == "ignored_asset" or u in known_urls:
+                if u in known_urls:
                     continue
-                normalized.append(u)
-                candidate_types.append((u, ctype))
+                if ctype in {"high_review_candidate", "medium_review_candidate"}:
+                    candidate_high_med.append((u, ctype))
+                else:
+                    ignored_candidates.append(u)
         uniq = []
         seen = set()
-        for u, t in candidate_types:
+        for u, t in candidate_high_med:
             if u in seen:
                 continue
             seen.add(u)
@@ -244,5 +254,7 @@ def validate_kaldewei_sources(baseline_path: str = BASELINE_PATH) -> List[Dict[s
             review_reasons.append("baseline_missing")
         if uniq:
             review_reasons.append("new_source_candidates")
-        rows.append({"manufacturer":"kaldewei","source_id":src["source_id"],"family":src["family"],"source_url":src["source_url"],"source_type":src["source_type"],"status_code":fetched.get("status_code"),"final_url":fetched.get("final_url"),"content_hash_sha256":h,"content_length":ln,"baseline_hash_sha256":base.get("baseline_hash_sha256", ""),"baseline_content_length":base.get("baseline_content_length", ""),"hash_changed":bool(base and base.get("baseline_hash_sha256") and base.get("baseline_hash_sha256") != h),"length_changed":bool(base and base.get("baseline_content_length") not in (None, "") and ln and int(base.get("baseline_content_length")) != ln),"expected_terms_found":",".join([t for t in critical_terms if t not in critical_missing]),"expected_terms_missing":",".join(critical_missing),"warning_terms_missing":",".join(warning_missing),"new_source_candidate_count":len(uniq),"sample_new_source_candidates":",".join([u for u,_ in uniq[:5]])[:900],"new_source_candidate_types":",".join([t for _,t in uniq]),"review_required":"yes" if review_reasons else "no","review_warning":"warning_terms_missing" if warning_missing else "","review_reason":",".join(review_reasons),"checked_at":datetime.now(timezone.utc).isoformat(),"extraction_mode":fetched.get("mode"),"baseline_status":"missing" if not base else "present","fetch_error":str(fetched.get("error") or "")})
+        new_product_count = sum(1 for u,_ in uniq if "kaldewei.com/products" in u.lower() or "/detail/product/" in u.lower())
+        new_pdf_count = sum(1 for u,_ in uniq if "files.cdn.kaldewei.com" in u.lower())
+        rows.append({"manufacturer":"kaldewei","source_id":src["source_id"],"family":src["family"],"source_url":src["source_url"],"source_type":src["source_type"],"status_code":fetched.get("status_code"),"final_url":fetched.get("final_url"),"content_hash_sha256":h,"content_length":ln,"baseline_hash_sha256":base.get("baseline_hash_sha256", ""),"baseline_content_length":base.get("baseline_content_length", ""),"hash_changed":bool(base and base.get("baseline_hash_sha256") and base.get("baseline_hash_sha256") != h),"length_changed":bool(base and base.get("baseline_content_length") not in (None, "") and ln and int(base.get("baseline_content_length")) != ln),"expected_terms_found":",".join([t for t in critical_terms if t not in critical_missing]),"expected_terms_missing":",".join(critical_missing),"warning_terms_missing":",".join(warning_missing),"new_source_candidate_count":len(uniq),"sample_new_source_candidates":",".join([u for u,_ in uniq[:5]])[:900],"new_source_candidate_types":",".join([t for _,t in uniq]),"new_product_source_candidate_count":new_product_count,"new_pdf_source_candidate_count":new_pdf_count,"ignored_candidate_count":len(set(ignored_candidates)),"sample_ignored_candidates":",".join(sorted(set(ignored_candidates))[:5])[:900],"review_required":"yes" if review_reasons else "no","review_warning":"warning_terms_missing" if warning_missing else "","review_reason":",".join(review_reasons),"checked_at":datetime.now(timezone.utc).isoformat(),"extraction_mode":fetched.get("mode"),"baseline_status":"missing" if not base else "present","fetch_error":str(fetched.get("error") or "")})
     return rows

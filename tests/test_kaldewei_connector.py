@@ -40,5 +40,26 @@ class KaldeweiConnectorTests(unittest.TestCase):
         self.assertIn('fetch_error', by_id['kaldewei-xetis-ka-200-installation-sheet']['review_reason'])
         self.assertIn('expected_terms_missing', by_id['kaldewei-nexsys-product-page']['review_reason'])
 
+
+    def test_candidate_filtering_and_conoflat_warning_only(self):
+        conoflat_html = """<html>CONOFLAT
+        <a href="https://www.kaldewei.com/products/showers/detail/product/conoflat/">same</a>
+        <a href="https://www.kaldewei.com/en/products/showers/detail/product/conoflat/?utm=1">lang</a>
+        <a href="https://images.cdn.kaldewei.com/x.jpg">img</a>
+        <a href="https://www.kaldewei.com/products/showers/shower-accessories/">nav</a>
+        <a href="https://files.cdn.kaldewei.com/data/sprachen/deutsch/techdata/new-ka-doc.pdf">pdf</a>
+        </html>"""
+        def fake_fetch(url, timeout=20):
+            if 'conoflat' in url:
+                return {"status_code": 200, "final_url": url, "content": conoflat_html.encode(), "text": conoflat_html, "content_type": "text/html", "mode": "html_text"}
+            return {"status_code": 200, "final_url": url, "content": b'<html></html>', "text": '<html></html>', "content_type": "text/html", "mode": "html_text"}
+        with patch('src.connectors.kaldewei._fetch_source', side_effect=fake_fetch), patch('src.connectors.kaldewei.json.load', return_value=[]), patch('builtins.open'):
+            rows = kaldewei.validate_kaldewei_sources('/tmp/base.json')
+        row = {r['source_id']: r for r in rows}['kaldewei-conoflat-ka-120-techdata']
+        self.assertNotIn('expected_terms_missing', row['review_reason'])
+        self.assertIn('warning_terms_missing', row['review_warning'])
+        self.assertEqual(row['new_source_candidate_count'], 1)
+        self.assertEqual(row['new_pdf_source_candidate_count'], 1)
+
 if __name__ == '__main__':
     unittest.main()
