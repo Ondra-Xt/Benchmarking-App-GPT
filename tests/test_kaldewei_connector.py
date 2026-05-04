@@ -41,6 +41,9 @@ class KaldeweiConnectorTests(unittest.TestCase):
         self.assertTrue(any(o['component_id'] == 'kaldewei-ka-4121' for o in nex_opts))
         self.assertTrue(any(o['component_id'] == 'kaldewei-ka-4122' for o in nex_opts))
         self.assertTrue(any(o['component_id'] == 'kaldewei-nexsys-design-cover-brushed' for o in nex_opts))
+        flowline_opts = kaldewei.get_bom_options(kaldewei.SEEDS['flow'] + "#kaldewei-flowline-zero")
+        finish_ids = {o['component_id'] for o in flowline_opts if o['option_type'] == 'compatible_finish'}
+        self.assertEqual(len(finish_ids), 5)
 
 if __name__ == '__main__':
     unittest.main()

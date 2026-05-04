@@ -14,6 +14,16 @@ CATALOG: List[Dict[str, Any]] = [
     {"product_id": "kaldewei-nexsys", "product_name": "KALDEWEI NEXSYS", "product_url": SEEDS["nexsys"], "family": "nexsys", "candidate_type": "drain", "system_role": "complete_system", "complete_system": "yes", "promotion_reason": "integrated_shower_surface_system", "height_adj_min_mm": 84, "cover_lengths_mm": "750,800,900,1000,1200", "shower_sizes_mm": "800x800..900x1700", "system_meta": "integrated_4in1"},
     {"product_id": "kaldewei-flowline-zero", "product_name": "KALDEWEI FLOWLINE ZERO", "product_url": SEEDS["flow"], "family": "flowline_zero", "candidate_type": "component", "system_role": "visible_linear_profile", "complete_system": "component", "available_lengths_mm": "900,1200,1500"},
     {"product_id": "kaldewei-flowpoint-zero", "product_name": "KALDEWEI FLOWPOINT ZERO", "product_url": SEEDS["flow"], "family": "flowpoint_zero", "candidate_type": "component", "system_role": "visible_point_cover", "complete_system": "component"},
+    {"product_id": "kaldewei-flowline-zero-finish-brushed-steel", "product_name": "KALDEWEI FLOWLINE ZERO finish brushed steel", "product_url": SEEDS["flow"], "family": "flowline_zero", "candidate_type": "component", "system_role": "finish_cover", "complete_system": "component", "promotion_reason": "cover_only_component", "finish_name": "brushed steel", "finish_code": "930", "current_status": "current"},
+    {"product_id": "kaldewei-flowline-zero-finish-brushed-champagne", "product_name": "KALDEWEI FLOWLINE ZERO finish brushed champagne", "product_url": SEEDS["flow"], "family": "flowline_zero", "candidate_type": "component", "system_role": "finish_cover", "complete_system": "component", "promotion_reason": "cover_only_component", "finish_name": "brushed champagne", "finish_code": "931", "current_status": "current"},
+    {"product_id": "kaldewei-flowline-zero-finish-brushed-graphite", "product_name": "KALDEWEI FLOWLINE ZERO finish brushed graphite", "product_url": SEEDS["flow"], "family": "flowline_zero", "candidate_type": "component", "system_role": "finish_cover", "complete_system": "component", "promotion_reason": "cover_only_component", "finish_name": "brushed graphite", "finish_code": "932", "current_status": "current"},
+    {"product_id": "kaldewei-flowline-zero-finish-alpine-white-matt", "product_name": "KALDEWEI FLOWLINE ZERO finish alpine white matt", "product_url": SEEDS["flow"], "family": "flowline_zero", "candidate_type": "component", "system_role": "finish_cover", "complete_system": "component", "promotion_reason": "cover_only_component", "finish_name": "alpine white matt", "finish_code": "711", "current_status": "current"},
+    {"product_id": "kaldewei-flowline-zero-finish-black-matt-100", "product_name": "KALDEWEI FLOWLINE ZERO finish black matt 100", "product_url": SEEDS["flow"], "family": "flowline_zero", "candidate_type": "component", "system_role": "finish_cover", "complete_system": "component", "promotion_reason": "cover_only_component", "finish_name": "black matt 100", "finish_code": "676", "current_status": "current"},
+    {"product_id": "kaldewei-flowpoint-zero-finish-brushed-steel", "product_name": "KALDEWEI FLOWPOINT ZERO finish brushed steel", "product_url": SEEDS["flow"], "family": "flowpoint_zero", "candidate_type": "component", "system_role": "finish_cover", "complete_system": "component", "promotion_reason": "cover_only_component", "finish_name": "brushed steel", "finish_code": "930", "current_status": "current"},
+    {"product_id": "kaldewei-flowpoint-zero-finish-brushed-champagne", "product_name": "KALDEWEI FLOWPOINT ZERO finish brushed champagne", "product_url": SEEDS["flow"], "family": "flowpoint_zero", "candidate_type": "component", "system_role": "finish_cover", "complete_system": "component", "promotion_reason": "cover_only_component", "finish_name": "brushed champagne", "finish_code": "931", "current_status": "current"},
+    {"product_id": "kaldewei-flowpoint-zero-finish-brushed-graphite", "product_name": "KALDEWEI FLOWPOINT ZERO finish brushed graphite", "product_url": SEEDS["flow"], "family": "flowpoint_zero", "candidate_type": "component", "system_role": "finish_cover", "complete_system": "component", "promotion_reason": "cover_only_component", "finish_name": "brushed graphite", "finish_code": "932", "current_status": "current"},
+    {"product_id": "kaldewei-flowpoint-zero-finish-alpine-white-matt", "product_name": "KALDEWEI FLOWPOINT ZERO finish alpine white matt", "product_url": SEEDS["flow"], "family": "flowpoint_zero", "candidate_type": "component", "system_role": "finish_cover", "complete_system": "component", "promotion_reason": "cover_only_component", "finish_name": "alpine white matt", "finish_code": "711", "current_status": "current"},
+    {"product_id": "kaldewei-flowpoint-zero-finish-black-matt-100", "product_name": "KALDEWEI FLOWPOINT ZERO finish black matt 100", "product_url": SEEDS["flow"], "family": "flowpoint_zero", "candidate_type": "component", "system_role": "finish_cover", "complete_system": "component", "promotion_reason": "cover_only_component", "finish_name": "black matt 100", "finish_code": "676", "current_status": "current"},
     {"product_id": "kaldewei-flowdrain-horizontal-regular", "product_name": "KALDEWEI FLOWDRAIN horizontal regular", "product_url": SEEDS["waste"], "family": "flowdrain", "candidate_type": "component", "system_role": "trap_set", "complete_system": "component", "outlet_dn": "DN50", "flow_rate_lps": 0.8, "height_adj_min_mm": 78, "height_adj_max_mm": 179, "water_seal_mm": 50},
     {"product_id": "kaldewei-flowdrain-horizontal-flat", "product_name": "KALDEWEI FLOWDRAIN horizontal flat", "product_url": SEEDS["waste"], "family": "flowdrain", "candidate_type": "component", "system_role": "trap_set", "complete_system": "component", "outlet_dn": "DN40", "flow_rate_lps": 0.63, "height_adj_min_mm": 58, "height_adj_max_mm": 78, "water_seal_mm": 30},
     {"product_id": "kaldewei-ka-90-horizontal", "product_name": "KALDEWEI KA 90 horizontal", "product_url": SEEDS["waste"], "family": "ka_90", "candidate_type": "component", "system_role": "waste_fitting", "complete_system": "component", "flow_rate_lps": 0.71, "height_adj_min_mm": 80, "height_adj_max_mm": 80},
@@ -38,6 +48,20 @@ BOM = {
     "kaldewei-flowpoint-zero": [("kaldewei-flowdrain-horizontal-regular", "required_trap_set"), ("kaldewei-flowdrain-horizontal-flat", "required_trap_set")],
     "kaldewei-nexsys": [("kaldewei-ka-4121", "compatible_drain_set"), ("kaldewei-ka-4122", "compatible_drain_set"), ("kaldewei-nexsys-design-cover-brushed", "compatible_cover"), ("kaldewei-nexsys-design-cover-polished", "compatible_cover"), ("kaldewei-nexsys-design-cover-coated-white", "compatible_cover")],
 }
+BOM["kaldewei-flowline-zero"].extend([
+    ("kaldewei-flowline-zero-finish-brushed-steel", "compatible_finish"),
+    ("kaldewei-flowline-zero-finish-brushed-champagne", "compatible_finish"),
+    ("kaldewei-flowline-zero-finish-brushed-graphite", "compatible_finish"),
+    ("kaldewei-flowline-zero-finish-alpine-white-matt", "compatible_finish"),
+    ("kaldewei-flowline-zero-finish-black-matt-100", "compatible_finish"),
+])
+BOM["kaldewei-flowpoint-zero"].extend([
+    ("kaldewei-flowpoint-zero-finish-brushed-steel", "compatible_finish"),
+    ("kaldewei-flowpoint-zero-finish-brushed-champagne", "compatible_finish"),
+    ("kaldewei-flowpoint-zero-finish-brushed-graphite", "compatible_finish"),
+    ("kaldewei-flowpoint-zero-finish-alpine-white-matt", "compatible_finish"),
+    ("kaldewei-flowpoint-zero-finish-black-matt-100", "compatible_finish"),
+])
 
 
 def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -60,10 +84,10 @@ def extract_parameters(url: str) -> Dict[str, Any]:
     if frag:
         row = next((r for r in CATALOG if str(r.get("product_id") or "").lower() == frag), None)
         if row:
-            return {k: v for k, v in row.items() if k in {"flow_rate_lps", "outlet_dn", "height_adj_min_mm", "height_adj_max_mm", "water_seal_mm", "current_status", "compatibility_caution"}}
+            return {k: v for k, v in row.items() if k in {"flow_rate_lps", "outlet_dn", "height_adj_min_mm", "height_adj_max_mm", "water_seal_mm", "current_status", "compatibility_caution", "finish_name", "finish_code"}}
     for r in CATALOG:
         if str(r.get("product_url") or "").lower() == u:
-            return {k: v for k, v in r.items() if k in {"flow_rate_lps", "outlet_dn", "height_adj_min_mm", "height_adj_max_mm", "water_seal_mm", "current_status", "compatibility_caution"}}
+            return {k: v for k, v in r.items() if k in {"flow_rate_lps", "outlet_dn", "height_adj_min_mm", "height_adj_max_mm", "water_seal_mm", "current_status", "compatibility_caution", "finish_name", "finish_code"}}
     return {}
 
 
@@ -83,10 +107,11 @@ def get_bom_options(url: str, params: Dict[str, Any] | None = None) -> List[Dict
             "component_id": cid,
             "option_type": opt_type,
             "option_label": str(comp.get("product_name") or cid),
+            "option_sku": str(comp.get("finish_code") or ""),
             "option_family": str(comp.get("family") or ""),
             "option_role": str(comp.get("system_role") or "component"),
             "parent_family": str(parent.get("family") or ""),
             "source_url": str(parent.get("product_url") or ""),
-            "option_meta": f"{pid}:{opt_type}",
+            "option_meta": f"{pid}:{opt_type}:{str(comp.get('finish_name') or comp.get('product_id') or '')}",
         })
     return out

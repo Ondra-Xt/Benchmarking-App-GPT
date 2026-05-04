@@ -1114,7 +1114,7 @@ def run_update(
         role = ""
         if manufacturer == "kaldewei":
             rowd = r.to_dict() if hasattr(r, "to_dict") else dict(r)
-            for k in ("flow_rate_lps", "outlet_dn", "height_adj_min_mm", "height_adj_max_mm", "water_seal_mm", "current_status", "compatibility_caution", "system_role", "product_family"):
+            for k in ("flow_rate_lps", "outlet_dn", "height_adj_min_mm", "height_adj_max_mm", "water_seal_mm", "current_status", "compatibility_caution", "system_role", "product_family", "finish_name", "finish_code"):
                 if params.get(k) in (None, "") and rowd.get(k) not in (None, ""):
                     params[k] = rowd.get(k)
                     kaldewei_seed_param_preservation_count += 1
@@ -3277,6 +3277,11 @@ def run_update(
         nexsys_covers = [r for r in nexsys_rows if "cover" in str(r.get("system_role") or "")]
         nexsys_bom = [r for r in kal_bom if str(r.get("parent_family") or "") == "nexsys"]
         nexsys_unclear = [r for r in nexsys_rows if "performance_data_unclear" in str(r.get("current_status") or "")]
+        flow_finish_components = [r for r in kal_components if str(r.get("system_role") or "") == "finish_cover" and str(r.get("product_id") or "").startswith("kaldewei-flow")]
+        flowline_finish_components = [r for r in flow_finish_components if str(r.get("product_family") or "") == "flowline_zero"]
+        flowpoint_finish_components = [r for r in flow_finish_components if str(r.get("product_family") or "") == "flowpoint_zero"]
+        flow_finish_bom = [r for r in kal_bom if str(r.get("option_type") or "") == "compatible_finish" and str(r.get("product_id") or "") in {"kaldewei-flowline-zero", "kaldewei-flowpoint-zero"}]
+        flow_finish_codes = {str(r.get("option_sku") or "") for r in flow_finish_bom if str(r.get("option_sku") or "")}
         for label, snippet in [
             ("kaldewei_registry_candidates_count", str(kal_registry_candidates)),
             ("kaldewei_final_rows_count", str(len(kal_rows))),
@@ -3314,6 +3319,14 @@ def run_update(
             ("sample_kaldewei_nexsys_bom_options", str([f"{r.get('product_id')}->{r.get('component_id')}:{r.get('option_type')}" for r in nexsys_bom[:10]])),
             ("kaldewei_nexsys_performance_data_unclear_count", str(len(nexsys_unclear))),
             ("sample_kaldewei_nexsys_unclear_performance_data", str([str(r.get("product_id")) for r in nexsys_unclear[:10]])),
+            ("kaldewei_flow_finish_components_count", str(len(flow_finish_components))),
+            ("kaldewei_flowline_finish_components_count", str(len(flowline_finish_components))),
+            ("kaldewei_flowpoint_finish_components_count", str(len(flowpoint_finish_components))),
+            ("kaldewei_flow_finish_bom_options_count", str(len(flow_finish_bom))),
+            ("kaldewei_flow_finish_codes_count", str(len(flow_finish_codes))),
+            ("sample_kaldewei_flow_finish_components", str([str(r.get("product_id")) for r in flow_finish_components[:10]])),
+            ("sample_kaldewei_flow_finish_bom_options", str([f"{r.get('product_id')}->{r.get('component_id')}:{r.get('option_type')}" for r in flow_finish_bom[:10]])),
+            ("kaldewei_flow_finish_product_explosion_prevented_count", str(len(flow_finish_bom))),
         ]:
             evidence_rows.append({"manufacturer": "kaldewei", "product_id": "__summary__", "label": label, "snippet": snippet, "source": "kaldewei_summary"})
 
