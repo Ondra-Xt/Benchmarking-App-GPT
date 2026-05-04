@@ -820,6 +820,8 @@ def run_update(
     excluded_rows: List[Dict[str, Any]] = []
     evidence_rows: List[Dict[str, Any]] = []
     bom_rows: List[Dict[str, Any]] = []
+    kaldewei_seed_param_preservation_count = 0
+    sample_kaldewei_preserved_seed_params: List[str] = []
     viega_groups: Dict[Tuple[str, str], Dict[str, Any]] = {}
     viega_debug = {
         "complete_assembly_candidates_count": 0,
@@ -1110,6 +1112,19 @@ def run_update(
         matched_component_ids: List[str] = []
         tray_cover_variants: List[Dict[str, Any]] = []
         role = ""
+        if manufacturer == "kaldewei":
+            rowd = r.to_dict() if hasattr(r, "to_dict") else dict(r)
+            for k in ("flow_rate_lps", "outlet_dn", "height_adj_min_mm", "height_adj_max_mm", "water_seal_mm", "current_status", "compatibility_caution", "system_role", "product_family"):
+                if params.get(k) in (None, "") and rowd.get(k) not in (None, ""):
+                    params[k] = rowd.get(k)
+                    kaldewei_seed_param_preservation_count += 1
+                    if len(sample_kaldewei_preserved_seed_params) < 20:
+                        sample_kaldewei_preserved_seed_params.append(f"{product_id}:{k}")
+            if str(rowd.get("product_family") or "").strip().lower() in {"", "unknown"} and rowd.get("family"):
+                rowd["product_family"] = rowd.get("family")
+            explicit_pr = str(rowd.get("promotion_reason") or "").strip()
+            if explicit_pr:
+                promotion_reason = explicit_pr
         if manufacturer == "aco":
             rowd = r.to_dict() if hasattr(r, "to_dict") else dict(r)
             role = str(rowd.get("system_role") or "").strip().lower()
@@ -1336,6 +1351,8 @@ def run_update(
             "product_id": product_id,
             "product_name": r.get("product_name"),
             "product_url": url,
+            "product_family": params.get("product_family") or r.get("product_family") or r.get("family") or "unknown",
+            "family": r.get("family") or params.get("product_family") or r.get("product_family") or "unknown",
             "candidate_type": candidate_type,
             "promote_to_product": "yes" if promote_to_product else "no",
             "promotion_reason": promotion_reason,
@@ -3135,6 +3152,7 @@ def run_update(
             t = str(r.get("option_type") or "")
             bom_by_type[t] = bom_by_type.get(t, 0) + 1
         unclear = [r for r in kal_rows if "unclear" in str(r.get("current_status") or "") or "unclear" in str(r.get("compatibility_caution") or "")]
+        invalid_ka_bom_rows_removed_count = sum(1 for r in kal_bom if str(r.get("product_id") or "") in {"kaldewei-ka-4121", "kaldewei-ka-4122"})
         for label, snippet in [
             ("kaldewei_candidates_count", str(len(kal_rows))),
             ("kaldewei_products_count", str(len(kal_products))),
@@ -3149,6 +3167,9 @@ def run_update(
             ("sample_kaldewei_bom_options", str([f"{r.get('product_id')}->{r.get('component_id')}:{r.get('option_type')}" for r in kal_bom[:10]])),
             ("kaldewei_unclear_compatibility_count", str(len(unclear))),
             ("sample_kaldewei_unclear_compatibility", str([str(r.get('product_id')) for r in unclear[:10]])),
+            ("kaldewei_seed_param_preservation_count", str(kaldewei_seed_param_preservation_count)),
+            ("sample_kaldewei_preserved_seed_params", str(sample_kaldewei_preserved_seed_params[:10])),
+            ("kaldewei_invalid_bom_rows_removed_count", str(invalid_ka_bom_rows_removed_count)),
         ]:
             evidence_rows.append({"manufacturer": "kaldewei", "product_id": "__summary__", "label": label, "snippet": snippet, "source": "kaldewei_summary"})
 
