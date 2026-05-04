@@ -458,6 +458,7 @@ class PipelineExportTests(unittest.TestCase):
         self.assertIn("kaldewei-nexsys", set(products[products["candidate_type"] == "drain"]["product_id"].tolist()))
         self.assertIn("kaldewei-flowline-zero", set(products[products["candidate_type"] == "component"]["product_id"].tolist()))
         self.assertIn("kaldewei-flowpoint-zero", set(products[products["candidate_type"] == "component"]["product_id"].tolist()))
+        self.assertIn("kaldewei-nexsys-design-cover-brushed", set(products[products["candidate_type"] == "component"]["product_id"].tolist()))
         assembled = products[(products["manufacturer"] == "kaldewei") & (products["promotion_reason"] == "assembled_from_bom")]
         self.assertEqual(len(assembled), 4)
         self.assertTrue(set(assembled["product_family"].tolist()) == {"flowline_zero", "flowpoint_zero"})
@@ -469,7 +470,9 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue(((bom["product_id"] == "kaldewei-flowline-zero") & (bom["component_id"] == "kaldewei-flowdrain-horizontal-regular")).any())
         self.assertTrue(((bom["product_id"] == "kaldewei-flowpoint-zero") & (bom["component_id"] == "kaldewei-flowdrain-horizontal-regular") & (bom["parent_family"] == "flowpoint_zero")).any())
         self.assertTrue(((bom["product_id"] == "kaldewei-nexsys") & (bom["component_id"] == "kaldewei-ka-4121")).any())
+        self.assertTrue(((bom["product_id"] == "kaldewei-nexsys") & (bom["component_id"] == "kaldewei-nexsys-design-cover-brushed") & (bom["option_type"] == "compatible_cover")).any())
         self.assertFalse(((bom["product_id"] == "kaldewei-ka-4121") | (bom["product_id"] == "kaldewei-ka-4122")).any())
+        self.assertFalse(((assembled["product_id"].astype(str).str.contains("nexsys"))).any())
         comp = products[products["candidate_type"] == "component"].set_index("product_id")
         self.assertEqual(float(comp.loc["kaldewei-flowdrain-horizontal-flat", "flow_rate_lps"]), 0.63)
         self.assertEqual(str(comp.loc["kaldewei-flowdrain-horizontal-flat", "outlet_dn"]), "DN40")
@@ -488,11 +491,13 @@ class PipelineExportTests(unittest.TestCase):
         self.assertIn("kaldewei_bom_options_count", labels)
         self.assertIn("sample_kaldewei_bom_options", labels)
         self.assertIn("kaldewei_assembled_products_created_count", labels)
+        self.assertIn("kaldewei_nexsys_design_covers_count", labels)
         ev = evidence[evidence["manufacturer"] == "kaldewei"].set_index("label")
         self.assertEqual(str(ev.loc["kaldewei_registry_candidates_count", "snippet"]), str(len(registry)))
         self.assertEqual(str(ev.loc["kaldewei_final_rows_count", "snippet"]), str(len(products)))
         self.assertEqual(str(ev.loc["kaldewei_assembled_products_created_count", "snippet"]), "4")
         self.assertEqual(str(ev.loc["kaldewei_assembled_products_left_in_components_count", "snippet"]), "0")
+        self.assertEqual(str(ev.loc["kaldewei_nexsys_drain_sets_count", "snippet"]), "2")
         text_cols = [c for c in ["promotion_reason", "why_not_product_reason", "assembly_reason", "current_status", "compatibility_caution", "matched_component_ids", "source_url"] if c in products.columns]
         for c in text_cols:
             self.assertFalse(products[c].astype(str).str.lower().str.contains("^nan$|^none$", regex=True).any())
