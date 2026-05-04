@@ -7,19 +7,25 @@ import re
 import requests
 
 SEEDS = {
-    "flow": "https://www.kaldewei.com/products/shower-surfaces/kaldewei-flow/",
-    "nexsys": "https://www.kaldewei.com/products/shower-surfaces/nexsys/",
-    "waste": "https://www.kaldewei.com/products/accessories/waste-fittings/",
-    "conoflat": "https://www.kaldewei.com/products/shower-surfaces/conoflat/",
-    "calima": "https://www.kaldewei.com/products/shower-surfaces/calima/",
-    "xetis": "https://www.kaldewei.com/products/shower-surfaces/xetis/",
+    "flow": "https://www.kaldewei.com/products/kaldewei-flow/",
+    "nexsys": "https://www.kaldewei.com/products/showers/detail/product/nexsys/",
+    "waste": "https://www.kaldewei.com/products/showers/shower-accessories/waste-systems/",
+    "conoflat": "https://www.kaldewei.com/products/showers/detail/product/conoflat/",
+    "calima": "https://www.kaldewei.com/products/calima/",
+    "xetis": "https://www.kaldewei.com/products/showers/detail/product/xetis/",
 }
 SOURCE_REGISTRY: List[Dict[str, Any]] = [
-    {"source_id": "kaldewei-flow-page", "family": "flow", "source_url": SEEDS["flow"], "source_type": "product_page", "expected_terms": ["FLOWLINE ZERO", "FLOWPOINT ZERO", "FLOWDRAIN"], "criticality": "high", "review_area": "flow"},
-    {"source_id": "kaldewei-flowdrain-horizontal-pdf", "family": "flowdrain", "source_url": "https://files.cdn.kaldewei.com/products/downloads/flowdrain-horizontal.pdf", "source_type": "pdf", "expected_terms": ["DN 50", "DN 40", "0.8", "0.63"], "criticality": "high", "review_area": "flowdrain"},
-    {"source_id": "kaldewei-nexsys-product-page", "family": "nexsys", "source_url": SEEDS["nexsys"], "source_type": "product_page", "expected_terms": ["NEXSYS", "KA 4121", "KA 4122"], "criticality": "high", "review_area": "nexsys"},
-    {"source_id": "kaldewei-waste-systems-page", "family": "waste", "source_url": SEEDS["waste"], "source_type": "product_page", "expected_terms": ["KA 90", "KA 120", "KA 300", "KA 125"], "criticality": "medium", "review_area": "waste"},
+    {"source_id": "kaldewei-flow-page", "family": "flow", "source_url": SEEDS["flow"], "source_type": "product_page", "expected_terms": ["FLOWLINE ZERO", "FLOWPOINT ZERO", "FLOWDRAIN", "brushed steel", "brushed champagne", "brushed graphite", "alpine white matt", "black matt 100"], "criticality": "high", "review_area": "flow"},
+    {"source_id": "kaldewei-flowdrain-horizontal-pdf", "family": "flowdrain", "source_url": "https://files.cdn.kaldewei.com/data/sprachen/englisch/prospekte/installationsanleitungen/DB24_GB_DA_ZUB_FLOWDRAIN_HORIZONTAL_WEB.pdf", "source_type": "pdf", "expected_terms": ["FLOWDRAIN", "DN 50", "DN 40", "0.8", "0.63", "50 mm", "30 mm"], "criticality": "high", "review_area": "flowdrain"},
+    {"source_id": "kaldewei-nexsys-product-page", "family": "nexsys", "source_url": SEEDS["nexsys"], "source_type": "product_page", "expected_terms": ["NEXSYS", "design cover", "4-in-1"], "criticality": "high", "review_area": "nexsys"},
+    {"source_id": "kaldewei-nexsys-ka-4121-4122-pdf", "family": "nexsys", "source_url": "https://files.cdn.kaldewei.com/data/sprachen/tschechisch/techdata/DB03_21-Export_Print-CZcz_ST_AC_KA4121_KA4122_NEXSYS.pdf", "source_type": "pdf", "expected_terms": ["KA 4121", "KA 4122", "NEXSYS"], "criticality": "high", "review_area": "nexsys"},
+    {"source_id": "kaldewei-waste-systems-page", "family": "waste", "source_url": SEEDS["waste"], "source_type": "product_page", "expected_terms": ["KA 90", "KA 120", "KA 300"], "criticality": "medium", "review_area": "waste"},
+    {"source_id": "kaldewei-calima-ka-300-page", "family": "ka_300", "source_url": SEEDS["calima"], "source_type": "product_page", "expected_terms": ["CALIMA", "KA 300"], "criticality": "medium", "review_area": "ka_300"},
+    {"source_id": "kaldewei-conoflat-ka-120-techdata", "family": "ka_120", "source_url": SEEDS["conoflat"], "source_type": "product_page", "expected_terms": ["CONOFLAT", "KA 120"], "criticality": "medium", "review_area": "ka_120"},
+    {"source_id": "kaldewei-ka-120-ka-125-legacy-sheet", "family": "ka_125", "source_url": "https://files.cdn.kaldewei.com/data/sprachen/deutsch/techdata/KADBD_ABLAUFGARNITUR_KA120_und_KA125.pdf", "source_type": "pdf", "expected_terms": ["KA 120", "KA 125"], "criticality": "medium", "review_area": "legacy"},
+    {"source_id": "kaldewei-xetis-ka-200-installation-sheet", "family": "xetis", "source_url": "https://files.cdn.kaldewei.com/data/sprachen/deutsch/techdata/DB03_21-Export_Print-DEde_DW_ZB_XETIS_Installation.pdf", "source_type": "pdf", "expected_terms": ["XETIS", "KA 200"], "criticality": "medium", "review_area": "xetis"},
 ]
+
 
 BASELINE_PATH = "data/source_baselines/kaldewei_sources.json"
 
@@ -144,7 +150,7 @@ def _fetch_source(url: str, timeout: int = 20) -> Dict[str, Any]:
                 text = ""
         return {"status_code": r.status_code, "final_url": str(r.url), "content": content, "text": text, "content_type": ctype, "mode": mode}
     except Exception as e:
-        return {"status_code": None, "final_url": url, "content": b"", "text": "", "content_type": "", "mode": "error", "error": str(e)}
+        return {"status_code": None, "final_url": url, "content": b"", "text": "", "content_type": "", "mode": "error", "error": f"{e.__class__.__name__}: {e}"}
 
 
 def validate_kaldewei_sources(baseline_path: str = BASELINE_PATH) -> List[Dict[str, Any]]:
@@ -171,7 +177,9 @@ def validate_kaldewei_sources(baseline_path: str = BASELINE_PATH) -> List[Dict[s
                 if ("kaldewei.com" in ml or ml.startswith("/")) and m not in known_urls and any(k in ml for k in ("flow", "nexsys", "waste", "ka-", "xetis", "calima", "conoflat")):
                     new_candidates.append(m[:180])
         review_reasons = []
-        if fetched.get("status_code") != 200:
+        if fetched.get("mode") == "error":
+            review_reasons.append("fetch_error")
+        elif fetched.get("status_code") != 200:
             review_reasons.append("unreachable_or_non_200")
         if base and base.get("baseline_hash_sha256") and h and base.get("baseline_hash_sha256") != h:
             review_reasons.append("hash_changed")
@@ -206,5 +214,6 @@ def validate_kaldewei_sources(baseline_path: str = BASELINE_PATH) -> List[Dict[s
             "checked_at": datetime.now(timezone.utc).isoformat(),
             "extraction_mode": fetched.get("mode"),
             "baseline_status": "missing" if not base else "present",
+            "fetch_error": str(fetched.get("error") or ""),
         })
     return rows

@@ -148,6 +148,24 @@ class PipelineExportTests(unittest.TestCase):
             self.assertEqual(len(self._sheet_rows(out, "Excluded")), 2)
             self.assertEqual(len(self._sheet_rows(out, "Evidence")), 2)
 
+
+    def test_export_writes_source_checks_sheet_from_evidence(self):
+        with tempfile.TemporaryDirectory() as td:
+            template = Path(td) / "template.xlsx"
+            out = Path(td) / "out.xlsx"
+            self._make_template(template)
+            evidence_df = pd.DataFrame([{
+                "manufacturer": "kaldewei",
+                "product_id": "__source_check__",
+                "label": "source_check:kaldewei-flow-page",
+                "snippet": '{"manufacturer":"kaldewei","source_id":"kaldewei-flow-page","family":"flow","source_url":"u","source_type":"product_page","status_code":200,"final_url":"u","content_hash_sha256":"h","content_length":10,"baseline_hash_sha256":"h","baseline_content_length":10,"hash_changed":false,"length_changed":false,"expected_terms_found":"FLOWDRAIN","expected_terms_missing":"","new_source_candidate_count":0,"sample_new_source_candidates":"","review_required":"no","review_reason":"","checked_at":"2026-01-01T00:00:00+00:00","extraction_mode":"html_text","fetch_error":""}',
+                "source": "u",
+            }])
+            export_excel(template, out, default_config(), evidence_df=evidence_df)
+            rows = self._sheet_rows(out, "Source_Checks")
+            self.assertEqual(rows[0][0:4], ("manufacturer", "source_id", "family", "source_url"))
+            self.assertEqual(rows[1][0:3], ("kaldewei", "kaldewei-flow-page", "flow"))
+
     def test_run_update_excludes_complete_system_no_and_normalizes_manufacturer(self):
         registry = pd.DataFrame(
             [
