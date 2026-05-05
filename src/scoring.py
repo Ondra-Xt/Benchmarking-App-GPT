@@ -60,9 +60,16 @@ def compute_parameter_score(params: Dict[str, Any], cfg: Union[Dict[str, Any], W
     detail: Dict[str, float] = {}
     total = 0.0
 
-    # Flow rate: když je hodnota → 1, jinak 0 (zatím)
     flow = _to_float(params.get("flow_rate_lps"))
-    detail["flow_rate_lps"] = 1.0 if (flow is not None and flow > 0) else 0.0
+    if flow is None or flow <= 0:
+        detail["flow_rate_lps"] = 0.0
+        detail["flow_rate_pass_0_8_lps"] = 0.0
+    elif flow >= 0.8:
+        detail["flow_rate_lps"] = 1.0
+        detail["flow_rate_pass_0_8_lps"] = 1.0
+    else:
+        detail["flow_rate_lps"] = max(0.0, min(1.0, flow / 0.8))
+        detail["flow_rate_pass_0_8_lps"] = 0.0
 
     # Certifikace
     detail["din_en_1253_cert"] = 1.0 if str(params.get("din_en_1253_cert")).lower() == "yes" else 0.0
