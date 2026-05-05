@@ -563,6 +563,11 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue((ka120["water_seal_mm"].notna()).all())
         self.assertTrue((ka120["model_number"].astype(str).str.strip() != "").all())
         self.assertTrue((ka120["article_number"].astype(str).str.strip() != "").all())
+        self.assertEqual(set(ka120["article_number"].astype(str).tolist()), {"687772530000", "687772510000", "687772520000"})
+        self.assertTrue(set(ka120["article_number"].astype(str).tolist()).isdisjoint({"687675", "687676", "687677"}))
+        self.assertEqual(float(ka120.loc["kaldewei-ka-120-horizontal", "height_adj_min_mm"]), 83.0)
+        self.assertEqual(float(ka120.loc["kaldewei-ka-120-flat", "height_adj_min_mm"]), 63.0)
+        self.assertEqual(float(ka120.loc["kaldewei-ka-120-vertical", "height_adj_min_mm"]), 83.0)
         self.assertFalse(comparison[comparison["manufacturer"] == "kaldewei"]["product_id"].astype(str).str.startswith("kaldewei-ka-120-").any())
         drains = products[products["candidate_type"] == "drain"].set_index("product_id")
         self.assertEqual(str(drains.loc["kaldewei-nexsys", "promotion_reason"]), "integrated_shower_surface_system")
@@ -590,6 +595,14 @@ class PipelineExportTests(unittest.TestCase):
         ]
         self.assertFalse(ka120_evidence.empty)
         self.assertTrue(((ka120_evidence["source_url"].astype(str).str.strip() != "") | (ka120_evidence["source_label"].astype(str).str.strip() != "")).any())
+        self.assertFalse((evidence[(evidence["manufacturer"] == "kaldewei") & (evidence["product_id"].astype(str).str.startswith("kaldewei-ka-120-"))]["snippet"].astype(str) == "0.0").any())
+        self.assertTrue(
+            (
+                (evidence["manufacturer"] == "kaldewei")
+                & (evidence["product_id"].astype(str).str.startswith("kaldewei-ka-120-"))
+                & (evidence["field_name"] == "article_number")
+            ).any()
+        )
         text_cols = [c for c in ["promotion_reason", "why_not_product_reason", "assembly_reason", "current_status", "compatibility_caution", "matched_component_ids", "source_url"] if c in products.columns]
         for c in text_cols:
             self.assertFalse(products[c].astype(str).str.lower().str.contains("^nan$|^none$", regex=True).any())

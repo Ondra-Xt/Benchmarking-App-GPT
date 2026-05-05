@@ -1407,6 +1407,36 @@ def run_update(
                 "snippet": f"complete_system={prod_row.get('complete_system')}",
                 "source": url,
             })
+            for fld in [
+                "model_number",
+                "article_number",
+                "flow_rate_lps",
+                "outlet_dn",
+                "dn",
+                "water_seal_mm",
+                "construction_height_mm",
+                "height_adj_min_mm",
+                "height_adj_max_mm",
+                "outlet_orientation",
+            ]:
+                val = prod_row.get(fld)
+                if val in (None, "", "nan"):
+                    continue
+                evidence_rows.append({
+                    "manufacturer": manufacturer,
+                    "product_id": product_id,
+                    "label": f"Kaldewei technical: {fld}",
+                    "field_name": fld,
+                    "extracted_value": str(val),
+                    "evidence_type": "manual_seed_value",
+                    "source_label": str(prod_row.get("source_label") or "kaldewei_seed_catalog"),
+                    "source_url": str(prod_row.get("source_url") or url),
+                    "source_type": str(prod_row.get("source_type") or "seed_catalog"),
+                    "source_note": "KA120 value seeded from official Kaldewei KA120 technical sheet; PDF excerpt parsing not yet implemented",
+                    "source_excerpt": "",
+                    "snippet": f"{fld}={val}",
+                    "source": url,
+                })
         if manufacturer == "viega":
             if candidate_type == "drain":
                 viega_debug["rows_emitted_to_products_count"] += 1

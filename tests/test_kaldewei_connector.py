@@ -80,8 +80,11 @@ class KaldeweiConnectorTests(unittest.TestCase):
         self.assertIn(1.4, flow_vals)
         self.assertTrue(any(str(r.get("outlet_orientation")) == "horizontal" for r in ka120))
         self.assertTrue(any(str(r.get("outlet_orientation")) == "vertical" for r in ka120))
-        self.assertTrue(all(str(r.get("model_number") or "").strip() != "" for r in ka120))
-        self.assertTrue(all(str(r.get("article_number") or "").strip() != "" for r in ka120))
+        self.assertEqual({str(r.get("model_number")) for r in ka120}, {"4106", "4107", "4108"})
+        self.assertEqual(
+            {str(r.get("article_number")) for r in ka120},
+            {"687772530000", "687772510000", "687772520000"},
+        )
 
 if __name__ == '__main__':
     unittest.main()
