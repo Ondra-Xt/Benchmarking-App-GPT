@@ -375,6 +375,40 @@ def _is_explicit_viega_drain_body_override(product_id: str, row: Dict[str, Any])
     return any(tok in txt for tok in model_tokens)
 
 
+def _should_emit_evidence_value(value: Any) -> bool:
+    if value is None:
+        return False
+    try:
+        if pd.isna(value):
+            return False
+    except Exception:
+        pass
+    sval = str(value).strip().lower()
+    if sval in {"", "nan", "none", "null", "not_applicable", "n/a"}:
+        return False
+    return True
+
+
+def _is_kaldewei_ka120_row(row: Dict[str, Any]) -> bool:
+    fam = str(row.get("product_family") or row.get("family") or "").lower()
+    pid = str(row.get("product_id") or "").lower()
+    name = str(row.get("product_name") or "").lower()
+    return fam == "ka_120" or "ka-120" in pid or "ka 120" in name
+
+
+def _kaldewei_evidence_note(row: Dict[str, Any], field_name: str) -> str:
+    if _is_kaldewei_ka120_row(row):
+        return "KA120 value seeded from official Kaldewei KA120 technical sheet; PDF excerpt parsing not yet implemented"
+    fam = str(row.get("product_family") or row.get("family") or "").lower()
+    if fam == "flowdrain":
+        return "FLOWDRAIN value seeded from official Kaldewei FLOWDRAIN technical source; PDF excerpt parsing not yet implemented"
+    if fam in {"flowline_zero", "flowpoint_zero"}:
+        return "FLOW value seeded from official Kaldewei FLOW product source; PDF excerpt parsing not yet implemented"
+    if fam == "nexsys":
+        return "NEXSYS value seeded from official Kaldewei NEXSYS source; PDF excerpt parsing not yet implemented"
+    return "curated Kaldewei catalog value; source URL known, excerpt not yet parsed"
+
+
 def _extract_model_token(text: str) -> str:
     m = re.search(r"(\d{4,5})[.\-](\d{1,2})", text)
     if m:
@@ -1420,7 +1454,7 @@ def run_update(
                 "outlet_orientation",
             ]:
                 val = prod_row.get(fld)
-                if val in (None, "", "nan"):
+                if not _should_emit_evidence_value(val):
                     continue
                 evidence_rows.append({
                     "manufacturer": manufacturer,
@@ -1432,7 +1466,7 @@ def run_update(
                     "source_label": str(prod_row.get("source_label") or "kaldewei_seed_catalog"),
                     "source_url": str(prod_row.get("source_url") or url),
                     "source_type": str(prod_row.get("source_type") or "seed_catalog"),
-                    "source_note": "KA120 value seeded from official Kaldewei KA120 technical sheet; PDF excerpt parsing not yet implemented",
+                    "source_note": _kaldewei_evidence_note(prod_row, fld),
                     "source_excerpt": "",
                     "snippet": f"{fld}={val}",
                     "source": url,
@@ -1463,19 +1497,22 @@ def run_update(
 
         # detail pro debug (volitelné)
         for k, v in (param_detail or {}).items():
+            extracted_raw = params.get(k, "")
+            if manufacturer == "kaldewei" and not _should_emit_evidence_value(extracted_raw):
+                continue
             evidence_rows.append({
                 "manufacturer": manufacturer,
                 "product_id": product_id,
                 "label": f"Param detail: {k}",
                 "field_name": str(k),
-                "extracted_value": str(params.get(k, "")),
+                "extracted_value": str(extracted_raw),
                 "evidence_type": "curated_catalog_value" if manufacturer == "kaldewei" else "source_excerpt",
                 "source_label": "kaldewei_seed_catalog" if manufacturer == "kaldewei" else "",
                 "source_url": str(prod_row.get("source_url") or url),
                 "source_type": str(prod_row.get("source_type") or ""),
-                "source_note": "curated_kaldewei_catalog_value" if manufacturer == "kaldewei" else "",
+                "source_note": (_kaldewei_evidence_note(prod_row, str(k)) if manufacturer == "kaldewei" else ""),
                 "source_excerpt": "",
-                "snippet": (f"value={params.get(k, '')}" if manufacturer == "kaldewei" else str(v)),
+                "snippet": (f"value={extracted_raw}" if manufacturer == "kaldewei" else str(v)),
                 "source": url,
             })
 

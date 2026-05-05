@@ -595,6 +595,15 @@ class PipelineExportTests(unittest.TestCase):
         ]
         self.assertFalse(ka120_evidence.empty)
         self.assertTrue(((ka120_evidence["source_url"].astype(str).str.strip() != "") | (ka120_evidence["source_label"].astype(str).str.strip() != "")).any())
+        kaldewei_evidence = evidence[evidence["manufacturer"] == "kaldewei"].copy()
+        technical_ev = kaldewei_evidence[
+            ~kaldewei_evidence["field_name"].astype(str).str.lower().isin(["", "nan", "none"])
+        ]
+        self.assertFalse(technical_ev["extracted_value"].astype(str).str.lower().isin(["", "nan", "none"]).any())
+        ka120_note_mask = kaldewei_evidence["source_note"].astype(str).str.contains("KA120 value seeded|KA 120 value seeded|official Kaldewei KA120 technical sheet", case=False, regex=True)
+        self.assertTrue((kaldewei_evidence[ka120_note_mask]["product_id"].astype(str).str.startswith("kaldewei-ka-120-")).all())
+        non_ka120 = kaldewei_evidence[~kaldewei_evidence["product_id"].astype(str).str.startswith("kaldewei-ka-120-")]
+        self.assertFalse(non_ka120["source_note"].astype(str).str.contains("KA120 value seeded|KA 120 value seeded|official Kaldewei KA120 technical sheet", case=False, regex=True).any())
         self.assertFalse((evidence[(evidence["manufacturer"] == "kaldewei") & (evidence["product_id"].astype(str).str.startswith("kaldewei-ka-120-"))]["snippet"].astype(str) == "0.0").any())
         self.assertTrue(
             (
@@ -606,6 +615,16 @@ class PipelineExportTests(unittest.TestCase):
         text_cols = [c for c in ["promotion_reason", "why_not_product_reason", "assembly_reason", "current_status", "compatibility_caution", "matched_component_ids", "source_url"] if c in products.columns]
         for c in text_cols:
             self.assertFalse(products[c].astype(str).str.lower().str.contains("^nan$|^none$", regex=True).any())
+
+    def test_should_emit_evidence_value_helper(self):
+        self.assertFalse(pipeline._should_emit_evidence_value(None))
+        self.assertFalse(pipeline._should_emit_evidence_value(float("nan")))
+        self.assertFalse(pipeline._should_emit_evidence_value("nan"))
+        self.assertFalse(pipeline._should_emit_evidence_value(""))
+        self.assertFalse(pipeline._should_emit_evidence_value("not_applicable"))
+        self.assertTrue(pipeline._should_emit_evidence_value(0.85))
+        self.assertTrue(pipeline._should_emit_evidence_value("DN50"))
+        self.assertTrue(pipeline._should_emit_evidence_value("687772530000"))
 
     def test_viega_badablauf_pages_are_drain_body_not_accessory(self):
         for name in [
