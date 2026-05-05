@@ -546,6 +546,15 @@ class PipelineExportTests(unittest.TestCase):
         self.assertEqual(float(comp.loc["kaldewei-ka-90-horizontal", "flow_rate_lps"]), 0.71)
         self.assertEqual(float(comp.loc["kaldewei-ka-90-flat", "flow_rate_lps"]), 0.68)
         self.assertEqual(float(comp.loc["kaldewei-ka-90-vertical", "flow_rate_lps"]), 1.22)
+        ka90 = comp.loc[[x for x in comp.index if str(x).startswith("kaldewei-ka-90-")]]
+        self.assertEqual(len(ka90), 3)
+        self.assertTrue((ka90["product_category"].astype(str) == "tray_waste_fitting").all())
+        self.assertTrue((ka90["system_role"].astype(str) == "tray_waste_fitting").all())
+        self.assertTrue((ka90["complete_system"].astype(str) == "component").all())
+        self.assertTrue((ka90["model_number"].astype(str).isin(["4103", "4104", "4105"])).all())
+        self.assertTrue((ka90["outlet_orientation"].astype(str).str.strip() != "").all())
+        self.assertTrue((ka90["outlet_dn"].astype(str).str.strip() != "").all())
+        self.assertFalse(comparison[comparison["manufacturer"] == "kaldewei"]["product_id"].astype(str).str.startswith("kaldewei-ka-90-").any())
         self.assertEqual(float(comp.loc["kaldewei-ka-300-horizontal", "flow_rate_lps"]), 0.61)
         self.assertEqual(float(comp.loc["kaldewei-ka-300-flat", "flow_rate_lps"]), 0.57)
         self.assertEqual(str(comp.loc["kaldewei-ka-125-legacy", "product_family"]), "ka_125")
@@ -595,6 +604,13 @@ class PipelineExportTests(unittest.TestCase):
         ]
         self.assertFalse(ka120_evidence.empty)
         self.assertTrue(((ka120_evidence["source_url"].astype(str).str.strip() != "") | (ka120_evidence["source_label"].astype(str).str.strip() != "")).any())
+        ka90_evidence = evidence[
+            (evidence["manufacturer"] == "kaldewei")
+            & (evidence["product_id"].astype(str).str.startswith("kaldewei-ka-90-"))
+            & (evidence["field_name"].isin(["model_number", "flow_rate_lps", "outlet_dn", "dn"]))
+        ]
+        self.assertFalse(ka90_evidence.empty)
+        self.assertTrue(((ka90_evidence["source_url"].astype(str).str.strip() != "") | (ka90_evidence["source_label"].astype(str).str.strip() != "")).all())
         kaldewei_evidence = evidence[evidence["manufacturer"] == "kaldewei"].copy()
         technical_ev = kaldewei_evidence[
             ~kaldewei_evidence["field_name"].astype(str).str.lower().isin(["", "nan", "none"])
@@ -604,6 +620,8 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue((kaldewei_evidence[ka120_note_mask]["product_id"].astype(str).str.startswith("kaldewei-ka-120-")).all())
         non_ka120 = kaldewei_evidence[~kaldewei_evidence["product_id"].astype(str).str.startswith("kaldewei-ka-120-")]
         self.assertFalse(non_ka120["source_note"].astype(str).str.contains("KA120 value seeded|KA 120 value seeded|official Kaldewei KA120 technical sheet", case=False, regex=True).any())
+        ka90_note_mask = kaldewei_evidence["source_note"].astype(str).str.contains("KA90 value seeded|official Kaldewei KA90 technical source", case=False, regex=True)
+        self.assertTrue((kaldewei_evidence[ka90_note_mask]["product_id"].astype(str).str.startswith("kaldewei-ka-90-")).all())
         self.assertFalse((evidence[(evidence["manufacturer"] == "kaldewei") & (evidence["product_id"].astype(str).str.startswith("kaldewei-ka-120-"))]["snippet"].astype(str) == "0.0").any())
         self.assertTrue(
             (

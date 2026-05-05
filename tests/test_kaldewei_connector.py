@@ -86,5 +86,22 @@ class KaldeweiConnectorTests(unittest.TestCase):
             {"687772530000", "687772510000", "687772520000"},
         )
 
+    def test_ka90_structured_variants_from_seed_catalog(self):
+        rows, _ = kaldewei.discover_candidates()
+        ka90 = [r for r in rows if str(r.get("family")) == "ka_90"]
+        self.assertEqual(len(ka90), 3)
+        self.assertTrue(all(str(r.get("candidate_type")) == "component" for r in ka90))
+        self.assertTrue(all(str(r.get("product_category")) == "tray_waste_fitting" for r in ka90))
+        self.assertTrue(all(str(r.get("system_role")) == "tray_waste_fitting" for r in ka90))
+        self.assertTrue(all(str(r.get("complete_system")) == "component" for r in ka90))
+        self.assertTrue(all(str(r.get("selected_length_mm")) in {"", "not_applicable"} for r in ka90))
+        by_model = {str(r.get("model_number")): r for r in ka90}
+        self.assertEqual(float(by_model["4103"]["flow_rate_lps"]), 0.71)
+        self.assertEqual(str(by_model["4103"]["outlet_dn"]), "DN50")
+        self.assertEqual(float(by_model["4104"]["flow_rate_lps"]), 0.68)
+        self.assertEqual(str(by_model["4104"]["outlet_dn"]), "DN40")
+        self.assertEqual(float(by_model["4105"]["flow_rate_lps"]), 1.22)
+        self.assertEqual(str(by_model["4105"]["outlet_dn"]), "DN50")
+
 if __name__ == '__main__':
     unittest.main()

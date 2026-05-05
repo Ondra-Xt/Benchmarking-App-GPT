@@ -396,9 +396,18 @@ def _is_kaldewei_ka120_row(row: Dict[str, Any]) -> bool:
     return fam == "ka_120" or "ka-120" in pid or "ka 120" in name
 
 
+def _is_kaldewei_ka90_row(row: Dict[str, Any]) -> bool:
+    fam = str(row.get("product_family") or row.get("family") or "").lower()
+    pid = str(row.get("product_id") or "").lower()
+    name = str(row.get("product_name") or "").lower()
+    return fam == "ka_90" or "ka-90" in pid or "ka 90" in name
+
+
 def _kaldewei_evidence_note(row: Dict[str, Any], field_name: str) -> str:
     if _is_kaldewei_ka120_row(row):
         return "KA120 value seeded from official Kaldewei KA120 technical sheet; PDF excerpt parsing not yet implemented"
+    if _is_kaldewei_ka90_row(row):
+        return "KA90 value seeded from official Kaldewei KA90 technical source; PDF excerpt parsing not yet implemented"
     fam = str(row.get("product_family") or row.get("family") or "").lower()
     if fam == "flowdrain":
         return "FLOWDRAIN value seeded from official Kaldewei FLOWDRAIN technical source; PDF excerpt parsing not yet implemented"
