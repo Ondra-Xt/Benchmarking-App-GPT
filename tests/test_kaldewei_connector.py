@@ -67,5 +67,21 @@ class KaldeweiConnectorTests(unittest.TestCase):
         self.assertGreaterEqual(int(row['ignored_language_variant_candidates_count']), 1)
         self.assertGreaterEqual(int(row['ignored_pricelist_candidates_count']), 1)
 
+    def test_ka120_structured_variants_from_seed_catalog(self):
+        rows, _ = kaldewei.discover_candidates()
+        ka120 = [r for r in rows if str(r.get("family")) == "ka_120"]
+        self.assertGreater(len(ka120), 1)
+        self.assertTrue(all(str(r.get("candidate_type")) == "component" for r in ka120))
+        self.assertTrue(all(str(r.get("complete_system")) == "component" for r in ka120))
+        self.assertTrue(all(str(r.get("system_role")) == "tray_waste_fitting" for r in ka120))
+        self.assertTrue(all(str(r.get("selected_length_mm")) in {"", "not_applicable"} for r in ka120))
+        flow_vals = {float(r.get("flow_rate_lps")) for r in ka120 if r.get("flow_rate_lps") not in (None, "")}
+        self.assertIn(0.85, flow_vals)
+        self.assertIn(1.4, flow_vals)
+        self.assertTrue(any(str(r.get("outlet_orientation")) == "horizontal" for r in ka120))
+        self.assertTrue(any(str(r.get("outlet_orientation")) == "vertical" for r in ka120))
+        self.assertTrue(all(str(r.get("model_number") or "").strip() != "" for r in ka120))
+        self.assertTrue(all(str(r.get("article_number") or "").strip() != "" for r in ka120))
+
 if __name__ == '__main__':
     unittest.main()

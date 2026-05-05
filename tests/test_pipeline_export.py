@@ -549,6 +549,21 @@ class PipelineExportTests(unittest.TestCase):
         self.assertEqual(float(comp.loc["kaldewei-ka-300-horizontal", "flow_rate_lps"]), 0.61)
         self.assertEqual(float(comp.loc["kaldewei-ka-300-flat", "flow_rate_lps"]), 0.57)
         self.assertEqual(str(comp.loc["kaldewei-ka-125-legacy", "product_family"]), "ka_125")
+        ka120 = comp.loc[[x for x in comp.index if str(x).startswith("kaldewei-ka-120-")]]
+        self.assertEqual(len(ka120), 3)
+        self.assertTrue((ka120["product_category"].astype(str) == "tray_waste_fitting").all())
+        self.assertTrue((ka120["system_role"].astype(str) == "tray_waste_fitting").all())
+        self.assertTrue((ka120["complete_system"].astype(str) == "component").all())
+        if "selected_length_mm" in ka120.columns:
+            self.assertTrue((ka120["selected_length_mm"].astype(str).isin(["", "not_applicable", "nan", "None"])).all())
+        self.assertIn(0.85, set(ka120["flow_rate_lps"].astype(float).tolist()))
+        self.assertIn(1.4, set(ka120["flow_rate_lps"].astype(float).tolist()))
+        self.assertTrue((ka120["outlet_orientation"].astype(str).str.strip() != "").all())
+        self.assertTrue((ka120["outlet_dn"].astype(str).str.strip() != "").all())
+        self.assertTrue((ka120["water_seal_mm"].notna()).all())
+        self.assertTrue((ka120["model_number"].astype(str).str.strip() != "").all())
+        self.assertTrue((ka120["article_number"].astype(str).str.strip() != "").all())
+        self.assertFalse(comparison[comparison["manufacturer"] == "kaldewei"]["product_id"].astype(str).str.startswith("kaldewei-ka-120-").any())
         drains = products[products["candidate_type"] == "drain"].set_index("product_id")
         self.assertEqual(str(drains.loc["kaldewei-nexsys", "promotion_reason"]), "integrated_shower_surface_system")
         self.assertIn("unclear", str(drains.loc["kaldewei-xetis-ka-200", "promotion_reason"]))
@@ -568,6 +583,13 @@ class PipelineExportTests(unittest.TestCase):
         self.assertEqual(str(ev.loc["kaldewei_nexsys_drain_sets_count", "snippet"]), "2")
         self.assertEqual(str(ev.loc["kaldewei_flowline_finish_components_count", "snippet"]), "5")
         self.assertEqual(str(ev.loc["kaldewei_flowpoint_finish_components_count", "snippet"]), "5")
+        ka120_evidence = evidence[
+            (evidence["manufacturer"] == "kaldewei")
+            & (evidence["product_id"].astype(str).str.startswith("kaldewei-ka-120-"))
+            & (evidence["field_name"] == "flow_rate_lps")
+        ]
+        self.assertFalse(ka120_evidence.empty)
+        self.assertTrue(((ka120_evidence["source_url"].astype(str).str.strip() != "") | (ka120_evidence["source_label"].astype(str).str.strip() != "")).any())
         text_cols = [c for c in ["promotion_reason", "why_not_product_reason", "assembly_reason", "current_status", "compatibility_caution", "matched_component_ids", "source_url"] if c in products.columns]
         for c in text_cols:
             self.assertFalse(products[c].astype(str).str.lower().str.contains("^nan$|^none$", regex=True).any())
