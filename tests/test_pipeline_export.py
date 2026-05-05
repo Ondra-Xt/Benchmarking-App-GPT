@@ -248,6 +248,20 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue(str(kprod[kprod["product_id"] == "kaldewei-xetis-ka-200"].iloc[0].get("complete_system")) in {"configuration", "yes"})
         kev = evidence[evidence["manufacturer"] == "kaldewei"]
         self.assertFalse(any(str(x) == "0.0" for x in kev["snippet"]))
+        tech_fields = ["flow_rate_lps", "water_seal_mm", "height_adj_min_mm", "height_adj_max_mm"]
+        kprod_rows = products[products["manufacturer"] == "kaldewei"]
+        for _, row in kprod_rows.iterrows():
+            has_tech = any(str(row.get(f)) not in {"", "None", "nan"} for f in tech_fields)
+            if has_tech:
+                self.assertTrue(str(row.get("source_url") or row.get("sources") or "").strip() != "")
+        assembled_rows = kprod_rows[kprod_rows["product_id"].astype(str).str.startswith("kaldewei-assembled-")]
+        self.assertTrue((assembled_rows["sources"].astype(str).str.contains(",") | assembled_rows["sources"].astype(str).str.contains("kaldewei.com")).all())
+        flow_ev = kev[(kev["field_name"] == "flow_rate_lps") & (kev["product_id"].isin(["kaldewei-flowdrain-horizontal-regular", "kaldewei-flowdrain-horizontal-flat"]))]
+        self.assertTrue(any(ev == "0.8" for ev in flow_ev["extracted_value"].astype(str)))
+        self.assertTrue(any(ev == "0.63" for ev in flow_ev["extracted_value"].astype(str)))
+        self.assertTrue((flow_ev["source_url"].astype(str).str.strip() != "").all())
+        self.assertTrue((kev[(kev["product_id"] == "kaldewei-nexsys") & (kev["field_name"] == "complete_system")]["extracted_value"].astype(str) == "yes").any())
+        self.assertTrue((kev[(kev["product_id"] == "kaldewei-xetis-ka-200") & (kev["field_name"] == "complete_system")]["extracted_value"].astype(str).isin(["configuration", "yes"])).any())
 
     def test_aco_role_based_promotion_splits_products_and_components(self):
         registry = pd.DataFrame(

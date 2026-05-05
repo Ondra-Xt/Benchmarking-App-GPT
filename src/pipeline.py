@@ -1372,6 +1372,12 @@ def run_update(
             "pairing_reason": "",
             "why_not_product_reason": why_not_product_reason,
             "system_role": system_role_out,
+            "source_url": str(r.get("product_url") or params.get("source_url") or ""),
+            "sources": str(r.get("product_url") or params.get("source_url") or ""),
+            "source_label": "kaldewei_seed_catalog" if manufacturer == "kaldewei" else "",
+            "source_type": "seed_catalog" if manufacturer == "kaldewei" else "",
+            "source_status": "known" if manufacturer == "kaldewei" else "",
+            "source_note": "manual_seed_value" if manufacturer == "kaldewei" else "",
 
             # vytažené parametry:
             **{k: v for k, v in params.items() if k != "evidence"},
@@ -1385,6 +1391,22 @@ def run_update(
         if manufacturer == "aco" and candidate_type == "component" and promote_to_product:
             aco_debug["components_with_promote_yes_count"] += 1
         products_rows.append(prod_row)
+        if manufacturer == "kaldewei":
+            evidence_rows.append({
+                "manufacturer": manufacturer,
+                "product_id": product_id,
+                "label": "Kaldewei taxonomy",
+                "field_name": "complete_system",
+                "extracted_value": str(prod_row.get("complete_system") or ""),
+                "evidence_type": "manual_seed_value",
+                "source_label": str(prod_row.get("source_label") or ""),
+                "source_url": str(prod_row.get("source_url") or url),
+                "source_type": str(prod_row.get("source_type") or ""),
+                "source_note": "seeded_from_official_technical_sheet",
+                "source_excerpt": "",
+                "snippet": f"complete_system={prod_row.get('complete_system')}",
+                "source": url,
+            })
         if manufacturer == "viega":
             if candidate_type == "drain":
                 viega_debug["rows_emitted_to_products_count"] += 1
@@ -1415,7 +1437,15 @@ def run_update(
                 "manufacturer": manufacturer,
                 "product_id": product_id,
                 "label": f"Param detail: {k}",
-                "snippet": ("curated_kaldewei_catalog_value" if manufacturer == "kaldewei" and str(v) in {"0.0","1.0"} else str(v)),
+                "field_name": str(k),
+                "extracted_value": str(params.get(k, "")),
+                "evidence_type": "curated_catalog_value" if manufacturer == "kaldewei" else "source_excerpt",
+                "source_label": "kaldewei_seed_catalog" if manufacturer == "kaldewei" else "",
+                "source_url": str(prod_row.get("source_url") or url),
+                "source_type": str(prod_row.get("source_type") or ""),
+                "source_note": "curated_kaldewei_catalog_value" if manufacturer == "kaldewei" else "",
+                "source_excerpt": "",
+                "snippet": (f"value={params.get(k, '')}" if manufacturer == "kaldewei" else str(v)),
                 "source": url,
             })
 
@@ -3220,6 +3250,10 @@ def run_update(
                 "matched_component_ids": f"{pid},{cid}",
                 "source_url": str(base.get("product_url") or ""),
                 "sources": ",".join([str(base.get("product_url") or ""), str(trap.get("product_url") or "")]).strip(","),
+                "source_label": "kaldewei_bom_assembly",
+                "source_type": "derived_bom_value",
+                "source_status": "known",
+                "source_note": "derived_from_bom_assembly",
             })
             for k in ("flow_rate_lps", "outlet_dn", "height_adj_min_mm", "height_adj_max_mm", "water_seal_mm", "flow_rate_raw_text"):
                 if trap.get(k) not in (None, ""):
