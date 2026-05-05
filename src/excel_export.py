@@ -70,6 +70,37 @@ def _to_excel_cell(v: Any) -> Any:
     return v
 
 
+
+
+def _extract_source_checks(evidence_df: pd.DataFrame) -> pd.DataFrame:
+    required_cols = [
+        "manufacturer", "source_id", "family", "source_url", "source_type", "status_code",
+        "final_url", "content_hash_sha256", "content_length", "baseline_hash_sha256",
+        "baseline_content_length", "hash_changed", "length_changed", "expected_terms_found",
+        "expected_terms_missing", "new_source_candidate_count", "sample_new_source_candidates",
+        "review_required", "review_reason", "checked_at", "extraction_mode", "fetch_error",
+    ]
+    if evidence_df.empty or "label" not in evidence_df.columns or "snippet" not in evidence_df.columns:
+        return pd.DataFrame(columns=required_cols)
+    rows = []
+    for _, ev in evidence_df.iterrows():
+        label = str(ev.get("label") or "")
+        if not label.startswith("source_check:"):
+            continue
+        snippet = ev.get("snippet")
+        try:
+            payload = json.loads(snippet) if isinstance(snippet, str) else {}
+        except Exception:
+            payload = {}
+        row = {k: payload.get(k, "") for k in required_cols}
+        if not row.get("manufacturer"):
+            row["manufacturer"] = str(ev.get("manufacturer") or "")
+        if not row.get("source_id"):
+            row["source_id"] = label.split(":", 1)[-1]
+        rows.append(row)
+    return pd.DataFrame(rows, columns=required_cols)
+
+
 def export_excel(
     template_path: str,
     out_path: str,
@@ -130,6 +161,7 @@ def export_excel(
     write_df("Excluded", excluded_df)
     write_df("Evidence", evidence_df)
     write_df("BOM_Options", bom_options_df)
+    write_df("Source_Checks", _extract_source_checks(evidence_df))
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     wb.save(out_path)
