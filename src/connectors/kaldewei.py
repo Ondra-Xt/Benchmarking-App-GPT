@@ -59,7 +59,7 @@ CATALOG: List[Dict[str, Any]] = [
     {"product_id": "kaldewei-nexsys-design-cover-polished", "product_name": "KALDEWEI NEXSYS design cover polished", "product_url": SEEDS["nexsys"], "family": "nexsys", "candidate_type": "component", "system_role": "design_cover", "complete_system": "component", "promotion_reason": "cover_only_component"},
     {"product_id": "kaldewei-nexsys-design-cover-coated-white", "product_name": "KALDEWEI NEXSYS design cover coated white", "product_url": SEEDS["nexsys"], "family": "nexsys", "candidate_type": "component", "system_role": "design_cover", "complete_system": "component", "promotion_reason": "cover_only_component"},
     {"product_id": "kaldewei-ka-125-legacy", "product_name": "KALDEWEI KA 125", "product_url": SEEDS["waste"], "family": "ka_125", "candidate_type": "component", "system_role": "waste_fitting_legacy", "complete_system": "component", "current_status": "legacy_or_current_unclear"},
-    {"product_id": "kaldewei-xetis-ka-200", "product_name": "KALDEWEI XETIS / KA 200", "product_url": SEEDS["xetis"], "family": "xetis", "candidate_type": "drain", "system_role": "complete_system", "complete_system": "yes", "current_status": "current_unclear", "promotion_reason": "current_status_unclear"},
+    {"product_id": "kaldewei-xetis-ka-200", "product_name": "KALDEWEI XETIS / KA 200", "product_url": SEEDS["xetis"], "family": "xetis", "candidate_type": "drain", "system_role": "complete_system", "complete_system": "configuration", "current_status": "current_unclear", "promotion_reason": "current_status_unclear"},
 ]
 
 BOM = {
@@ -91,7 +91,10 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100) -
         row["product_family"] = str(row.get("family") or "unknown")
         base_url = str(row.get("product_url") or "")
         row["product_url"] = f"{base_url}#{row.get('product_id')}"
-        row.setdefault("selected_length_mm", target_length_mm)
+        if str(row.get("product_id") or "").startswith("kaldewei-flowline-zero") and "finish" not in str(row.get("product_id") or ""):
+            row.setdefault("selected_length_mm", target_length_mm)
+        else:
+            row["selected_length_mm"] = "not_applicable"
         rows.append(row)
     debug = [{"site": "kaldewei", "method": "seed_catalog", "candidates_found": len(rows), "seed_count": len(SEEDS)}]
     return rows, debug

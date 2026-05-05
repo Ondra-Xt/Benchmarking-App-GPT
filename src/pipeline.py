@@ -1123,6 +1123,16 @@ def run_update(
                         sample_kaldewei_preserved_seed_params.append(f"{product_id}:{k}")
             if str(rowd.get("product_family") or "").strip().lower() in {"", "unknown"} and rowd.get("family"):
                 rowd["product_family"] = rowd.get("family")
+            if params.get("complete_system") in (None, ""):
+                params["complete_system"] = rowd.get("complete_system")
+            if params.get("system_role") in (None, ""):
+                params["system_role"] = rowd.get("system_role")
+            pid_l = str(rowd.get("product_id") or "").lower()
+            if pid_l == "kaldewei-nexsys":
+                params["complete_system"] = "yes"
+                params["system_role"] = "complete_system"
+            if pid_l == "kaldewei-xetis-ka-200" and str(params.get("complete_system") or "").strip() in {"", "unknown", "yes"}:
+                params["complete_system"] = "configuration"
             explicit_pr = str(rowd.get("promotion_reason") or "").strip()
             if explicit_pr:
                 promotion_reason = explicit_pr
@@ -1381,16 +1391,23 @@ def run_update(
             else:
                 viega_debug["rows_emitted_to_components_count"] += 1
 
-        comparison_rows.append({
-            "manufacturer": manufacturer,
-            "product_id": product_id,
-            "product_name": r.get("product_name"),
-            "product_url": url,
-            "final_score": final_score,
-            "param_score": param_score,
-            "equiv_score": equiv_score,
-            "system_score": system_score,
-        })
+        allow_in_comparison = True
+        if manufacturer == "kaldewei":
+            cs = str(prod_row.get("complete_system") or "").lower()
+            role = str(prod_row.get("system_role") or "").lower()
+            ct = str(candidate_type or "").lower()
+            allow_in_comparison = ((ct == "drain" and cs in {"yes", "configuration"}) or role in {"assembled_system", "complete_system"}) and role not in {"finish_cover", "visible_linear_profile", "visible_point_cover", "trap_set"}
+        if allow_in_comparison:
+            comparison_rows.append({
+                "manufacturer": manufacturer,
+                "product_id": product_id,
+                "product_name": r.get("product_name"),
+                "product_url": url,
+                "final_score": final_score,
+                "param_score": param_score,
+                "equiv_score": equiv_score,
+                "system_score": system_score,
+            })
 
         # detail pro debug (volitelné)
         for k, v in (param_detail or {}).items():
@@ -1398,7 +1415,7 @@ def run_update(
                 "manufacturer": manufacturer,
                 "product_id": product_id,
                 "label": f"Param detail: {k}",
-                "snippet": str(v),
+                "snippet": ("curated_kaldewei_catalog_value" if manufacturer == "kaldewei" and str(v) in {"0.0","1.0"} else str(v)),
                 "source": url,
             })
 
@@ -3208,9 +3225,18 @@ def run_update(
                 if trap.get(k) not in (None, ""):
                     asm[k] = trap.get(k)
             products_rows.append(asm)
+            asm_params = {k: asm.get(k) for k in ("flow_rate_lps","outlet_dn","height_adj_min_mm","height_adj_max_mm","water_seal_mm") if asm.get(k) not in (None, "")}
+            asm_param_score, _ = compute_parameter_score(asm_params, cfg)
+            asm_equiv_score = compute_equivalence_score({"candidate_type": "drain", **asm_params}, cfg)
+            asm_system_score = compute_system_score("drain", has_bom_options=True)
+            asm_final_score = compute_final_score(asm_param_score, asm_system_score, asm_equiv_score, cfg)
+            asm["param_score"] = asm_param_score
+            asm["equiv_score"] = asm_equiv_score
+            asm["system_score"] = asm_system_score
+            asm["final_score"] = asm_final_score
             comparison_rows.append({
                 "manufacturer": "kaldewei", "product_id": asm_id, "product_name": asm.get("product_name"),
-                "product_url": asm.get("product_url"), "final_score": "", "param_score": "", "equiv_score": "", "system_score": ""
+                "product_url": asm.get("product_url"), "final_score": asm_final_score, "param_score": asm_param_score, "equiv_score": asm_equiv_score, "system_score": asm_system_score
             })
             kal_existing_ids.add(asm_id)
             kaldewei_debug["kaldewei_assembled_products_created_count"] += 1

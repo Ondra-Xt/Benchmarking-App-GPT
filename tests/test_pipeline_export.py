@@ -220,6 +220,35 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue((evidence["manufacturer"] == "hansgrohe").all())
         self.assertTrue(bom.empty)
 
+
+    def test_kaldewei_comparison_eligibility_and_assembled_scores(self):
+        rows, _ = kaldewei.discover_candidates()
+        registry = pd.DataFrame(rows)
+        with patch.dict(pipeline.CONNECTORS, {"kaldewei": kaldewei}, clear=True):
+            products, comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
+        kcomp = comparison[comparison["manufacturer"] == "kaldewei"]
+        self.assertFalse(any("finish" in str(x) for x in kcomp["product_id"]))
+        self.assertNotIn("kaldewei-flowdrain-horizontal-regular", set(kcomp["product_id"]))
+        self.assertNotIn("kaldewei-flowdrain-horizontal-flat", set(kcomp["product_id"]))
+        assembled = products[(products["manufacturer"] == "kaldewei") & (products["product_id"].astype(str).str.startswith("kaldewei-assembled-"))]
+        self.assertEqual(len(assembled), 4)
+        for col in ["param_score", "equiv_score", "system_score", "final_score"]:
+            self.assertTrue(assembled[col].notna().all())
+        reg = assembled[assembled["product_id"].astype(str).str.contains("regular")].iloc[0]
+        flat = assembled[assembled["product_id"].astype(str).str.contains("flat")].iloc[0]
+        self.assertEqual(float(reg.get("flow_rate_lps")), 0.8)
+        self.assertEqual(float(flat.get("flow_rate_lps")), 0.63)
+        self.assertGreater(float(reg.get("param_score")), float(flat.get("param_score")))
+        kprod = products[products["manufacturer"] == "kaldewei"]
+        na_ids = ["kaldewei-flowpoint-zero", "kaldewei-flowdrain-horizontal-regular", "kaldewei-flowdrain-horizontal-flat", "kaldewei-ka-90-horizontal", "kaldewei-ka-120-horizontal", "kaldewei-ka-300-horizontal", "kaldewei-xetis-ka-200"]
+        for pid in na_ids:
+            row = kprod[kprod["product_id"] == pid].iloc[0]
+            self.assertIn(str(row.get("selected_length_mm")), {"not_applicable", "", "nan", "None"})
+        self.assertEqual(str(kprod[kprod["product_id"] == "kaldewei-nexsys"].iloc[0].get("complete_system")), "yes")
+        self.assertTrue(str(kprod[kprod["product_id"] == "kaldewei-xetis-ka-200"].iloc[0].get("complete_system")) in {"configuration", "yes"})
+        kev = evidence[evidence["manufacturer"] == "kaldewei"]
+        self.assertFalse(any(str(x) == "0.0" for x in kev["snippet"]))
+
     def test_aco_role_based_promotion_splits_products_and_components(self):
         registry = pd.DataFrame(
             [
