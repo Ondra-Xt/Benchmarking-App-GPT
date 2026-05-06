@@ -113,10 +113,36 @@ def _scoring_field_coverage(products_df: pd.DataFrame, comparison_df: pd.DataFra
             "has_flow_rate_lps","has_material_data","has_din_en_1253_data","has_din_en_18534_data",
             "has_height_adjustability_data","has_price_data","has_outlet_flexibility_data","has_sealing_fleece_data",
             "has_colour_count_data","present_scoring_fields","missing_scoring_fields","scoring_readiness_pct","scoring_readiness_note"]
-    all_rows = pd.concat([products_df.assign(in_products=True, in_comparison=False), comparison_df.assign(in_products=False, in_comparison=True)], ignore_index=True, sort=False)
+    all_rows = pd.concat(
+        [
+            products_df.assign(in_products=True, in_comparison=False),
+            comparison_df.assign(in_products=False, in_comparison=True),
+        ],
+        ignore_index=True,
+        sort=False,
+    )
     if all_rows.empty:
         return pd.DataFrame(columns=cols)
-    all_rows = all_rows.sort_values(by=["manufacturer","product_id"]).drop_duplicates(subset=["manufacturer","product_id"], keep="first")
+    all_rows = all_rows.drop(columns=["in_products", "in_comparison"], errors="ignore")
+    all_rows = (
+        all_rows.sort_values(by=["manufacturer", "product_id"])
+        .groupby(["manufacturer", "product_id"], as_index=False)
+        .agg(lambda s: next((x for x in s if _present(x)), s.iloc[0] if len(s) else ""))
+    )
+    # Preserve membership flags when a row is present in both Products and Comparison.
+    in_products_map = products_df.groupby(["manufacturer", "product_id"]).size().reset_index(name="_n")
+    in_comparison_map = comparison_df.groupby(["manufacturer", "product_id"]).size().reset_index(name="_n")
+    all_rows = all_rows.merge(
+        in_products_map.assign(in_products=True)[["manufacturer", "product_id", "in_products"]],
+        on=["manufacturer", "product_id"],
+        how="left",
+    ).merge(
+        in_comparison_map.assign(in_comparison=True)[["manufacturer", "product_id", "in_comparison"]],
+        on=["manufacturer", "product_id"],
+        how="left",
+    )
+    all_rows["in_products"] = all_rows["in_products"].fillna(False)
+    all_rows["in_comparison"] = all_rows["in_comparison"].fillna(False)
     out = []
     groups = [
         ("has_flow_rate_lps", lambda r: (_present(r.get("flow_rate_lps")) and pd.to_numeric([r.get("flow_rate_lps")], errors="coerce")[0] > 0)),

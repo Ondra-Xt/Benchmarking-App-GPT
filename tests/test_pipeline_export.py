@@ -185,6 +185,9 @@ class PipelineExportTests(unittest.TestCase):
             rows = self._sheet_rows(out, "Scoring_Field_Coverage")
             self.assertEqual(rows[0][0], "manufacturer")
             self.assertTrue(any(r[1] == "kaldewei-assembled-flowline-zero__flowdrain-horizontal-regular" for r in rows[1:]))
+            cov = pd.DataFrame(rows[1:], columns=rows[0])
+            merged_row = cov[cov["product_id"] == "kaldewei-assembled-flowline-zero__flowdrain-horizontal-regular"].iloc[0]
+            self.assertEqual(bool(merged_row["in_comparison"]), True)
 
     def test_run_update_excludes_complete_system_no_and_normalizes_manufacturer(self):
         registry = pd.DataFrame(
