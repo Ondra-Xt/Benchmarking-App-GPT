@@ -166,6 +166,29 @@ class PipelineExportTests(unittest.TestCase):
             self.assertEqual(rows[0][0:4], ("manufacturer", "source_id", "family", "source_url"))
             self.assertEqual(rows[1][0:3], ("kaldewei", "kaldewei-flow-page", "flow"))
 
+    def test_export_writes_scoring_field_coverage_sheet(self):
+        with tempfile.TemporaryDirectory() as td:
+            template = Path(td) / "template.xlsx"
+            out = Path(td) / "out.xlsx"
+            self._make_template(template)
+            products = pd.DataFrame([{
+                "manufacturer": "kaldewei", "product_id": "kaldewei-flowdrain-horizontal-regular",
+                "product_name": "FLOWDRAIN regular", "candidate_type": "component", "complete_system": "component",
+                "flow_rate_lps": 0.8, "height_adj_min_mm": 78, "height_adj_max_mm": 179
+            }])
+            comparison = pd.DataFrame([{
+                "manufacturer": "kaldewei", "product_id": "kaldewei-assembled-flowline-zero__flowdrain-horizontal-regular",
+                "product_name": "assembled", "candidate_type": "drain", "complete_system": "yes",
+                "flow_rate_lps": 0.8
+            }])
+            export_excel(template, out, default_config(), products_df=products, comparison_df=comparison)
+            rows = self._sheet_rows(out, "Scoring_Field_Coverage")
+            self.assertEqual(rows[0][0], "manufacturer")
+            self.assertTrue(any(r[1] == "kaldewei-assembled-flowline-zero__flowdrain-horizontal-regular" for r in rows[1:]))
+            cov = pd.DataFrame(rows[1:], columns=rows[0])
+            merged_row = cov[cov["product_id"] == "kaldewei-assembled-flowline-zero__flowdrain-horizontal-regular"].iloc[0]
+            self.assertEqual(bool(merged_row["in_comparison"]), True)
+
     def test_run_update_excludes_complete_system_no_and_normalizes_manufacturer(self):
         registry = pd.DataFrame(
             [
@@ -310,6 +333,30 @@ class PipelineExportTests(unittest.TestCase):
         self.assertEqual(set(round(float(x), 2) for x in ka120["flow_rate_lps"]), {0.85, 1.4})
         self.assertEqual(set(int(float(x)) for x in ka120["water_seal_mm"]), {30, 50})
         self.assertEqual(set(int(float(x)) for x in ka120["construction_height_mm"]), {63, 83})
+
+    def test_scoring_coverage_flowdrain_and_construction_height_rule(self):
+        with tempfile.TemporaryDirectory() as td:
+            template = Path(td) / "template.xlsx"
+            out = Path(td) / "out.xlsx"
+            self._make_template(template)
+            products = pd.DataFrame([
+                {"manufacturer":"test","product_id":"p-adjust","product_name":"Adjustable","candidate_type":"drain","complete_system":"yes","flow_rate_lps":0.8,"height_adj_min_mm":78,"height_adj_max_mm":179},
+                {"manufacturer":"test","product_id":"p-fixed","product_name":"Fixed","candidate_type":"drain","complete_system":"yes","flow_rate_lps":0.7,"construction_height_mm":80},
+            ])
+            comparison = products.copy()
+            export_excel(template, out, default_config(), products_df=products, comparison_df=comparison)
+            cov = pd.DataFrame(self._sheet_rows(out, "Scoring_Field_Coverage")[1:], columns=self._sheet_rows(out, "Scoring_Field_Coverage")[0])
+        reg = cov[cov["product_id"] == "p-adjust"].iloc[0]
+        flat = cov[cov["product_id"] == "p-fixed"].iloc[0]
+        self.assertEqual(bool(reg["has_flow_rate_lps"]), True)
+        self.assertEqual(bool(reg["has_height_adjustability_data"]), True)
+        self.assertEqual(bool(flat["has_flow_rate_lps"]), True)
+        self.assertEqual(bool(flat["has_height_adjustability_data"]), False)
+        rows, _ = kaldewei.discover_candidates()
+        registry = pd.DataFrame(rows)
+        with patch.dict(pipeline.CONNECTORS, {"kaldewei": kaldewei}, clear=True):
+            _products, comparison, _excluded, _evidence, _bom = pipeline.run_update(registry, default_config())
+        self.assertFalse(any(x in set(comparison["product_id"]) for x in ["kaldewei-ka-90-horizontal", "kaldewei-ka-120-horizontal"]))
     def test_aco_role_based_promotion_splits_products_and_components(self):
         registry = pd.DataFrame(
             [

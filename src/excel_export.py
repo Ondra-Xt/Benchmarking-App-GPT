@@ -105,213 +105,104 @@ def _to_excel_cell(v: Any) -> Any:
     return v
 
 
-def _cfg_to_dict(cfg: Any) -> dict:
-    if cfg is None:
-        return {}
-
-    if hasattr(cfg, "to_dict") and callable(getattr(cfg, "to_dict")):
-        try:
-            d = cfg.to_dict()
-            return d if isinstance(d, dict) else {}
-        except Exception:
-            return {}
-
-    if isinstance(cfg, dict):
-        return dict(cfg)
-
-    return {}
-
-
-def _to_int_weight(value: Any, default: int) -> int:
-    try:
-        if value is None:
-            return int(default)
-
-        if isinstance(value, str) and value.strip() == "":
-            return int(default)
-
-        return int(round(float(value)))
-    except Exception:
-        return int(default)
-
-
-def _extract_final_scoring_weights(cfg: Any) -> pd.DataFrame:
-    """
-    Exportuje hlavní Benchmark Scoring V2 váhy.
-
-    Důležité:
-    - Do tohoto sheetu nesmí pronikat legacy klíče typu equivalence_overall,
-      flow_rate, din_18534, outlet_variants nebo sales_price.
-    - sales_price_score má zůstat ve vahách s defaultem 15 a enabled=True.
-      Pokud nejsou ceny v Comparison, vylučuje se až ve scoring denominatoru,
-      ne v config/exportu.
-    """
-    cfg_dict = _cfg_to_dict(cfg)
-
-    raw_weights = cfg_dict.get("final_weights_pct")
-    if not isinstance(raw_weights, dict):
-        raw_weights = {}
-
-    raw_enabled = cfg_dict.get("final_enabled")
-    if not isinstance(raw_enabled, dict):
-        raw_enabled = {}
-
-    rows = []
-
-    for key in BENCHMARK_SCORING_KEYS:
-        weight = _to_int_weight(raw_weights.get(key), DEFAULT_BENCHMARK_WEIGHTS_PCT[key])
-
-        enabled = raw_enabled.get(key, True)
-        if not isinstance(enabled, bool):
-            enabled = str(enabled).strip().lower() not in {"false", "no", "0", "disabled"}
-
-        note = "Configured benchmark scoring criterion."
-        if key == "sales_price_score":
-            note = (
-                "Configured weight. Missing prices are handled dynamically in the "
-                "effective scoring denominator."
-            )
-
-        rows.append(
-            {
-                "key": key,
-                "weight_pct": weight,
-                "enabled": bool(enabled),
-                "scoring_model": "benchmark_scoring_v2",
-                "note": note,
-            }
-        )
-
-    return pd.DataFrame(
-        rows,
-        columns=["key", "weight_pct", "enabled", "scoring_model", "note"],
-    )
-
-
-def _extract_legacy_equivalence_weights(cfg: Any) -> pd.DataFrame:
-    """
-    Volitelný oddělený sheet pro staré equivalence váhy.
-
-    Tyto hodnoty jsou pouze legacy/diagnostic a nemají ovlivňovat hlavní final_score.
-    """
-    cfg_dict = _cfg_to_dict(cfg)
-
-    raw_weights = cfg_dict.get("equivalence_weights_pct")
-    if not isinstance(raw_weights, dict):
-        raw_weights = {}
-
-    rows = []
-
-    for key in LEGACY_EQUIVALENCE_KEYS:
-        rows.append(
-            {
-                "key": key,
-                "weight_pct": _to_int_weight(raw_weights.get(key), 0),
-                "enabled": False,
-                "scoring_model": "legacy_equivalence_diagnostic_only",
-                "note": (
-                    "Legacy equivalence weight retained for diagnostics only; "
-                    "not used in benchmark final_score."
-                ),
-            }
-        )
-
-    return pd.DataFrame(
-        rows,
-        columns=["key", "weight_pct", "enabled", "scoring_model", "note"],
-    )
-
-
-def _extract_config_sheet() -> pd.DataFrame:
-    """
-    Exportuje auditovatelný Config sheet pro XLSX.
-
-    Nahrazuje staré odkazy na Equivalence_Weights jako hlavní scoring konfiguraci.
-    """
-    rows = [
-        {
-            "key": "active_scoring_model",
-            "value": "benchmark_scoring_v2",
-            "note": "Main final_score uses Benchmark Scoring V2 criteria.",
-        },
-        {
-            "key": "benchmark_scoring_weights_sheet",
-            "value": "Final_Scoring_Weights",
-            "note": "Active scoring weights used for final_score.",
-        },
-        {
-            "key": "legacy_equivalence_weights_sheet",
-            "value": "Legacy_Equivalence_Weights",
-            "note": "Diagnostic only; disabled and not used in final_score.",
-        },
-        {
-            "key": "sales_price_handling",
-            "value": "weight_configured_but_excluded_when_no_prices_available",
-            "note": (
-                "sales_price_score keeps configured weight 15, but is excluded from "
-                "the effective denominator when no Comparison prices exist."
-            ),
-        },
-    ]
-
-    return pd.DataFrame(rows, columns=["key", "value", "note"])
 
 
 def _extract_source_checks(evidence_df: pd.DataFrame) -> pd.DataFrame:
     required_cols = [
-        "manufacturer",
-        "source_id",
-        "family",
-        "source_url",
-        "source_type",
-        "status_code",
-        "final_url",
-        "content_hash_sha256",
-        "content_length",
-        "baseline_hash_sha256",
-        "baseline_content_length",
-        "hash_changed",
-        "length_changed",
-        "expected_terms_found",
-        "expected_terms_missing",
-        "new_source_candidate_count",
-        "sample_new_source_candidates",
-        "review_required",
-        "review_reason",
-        "checked_at",
-        "extraction_mode",
-        "fetch_error",
+        "manufacturer", "source_id", "family", "source_url", "source_type", "status_code",
+        "final_url", "content_hash_sha256", "content_length", "baseline_hash_sha256",
+        "baseline_content_length", "hash_changed", "length_changed", "expected_terms_found",
+        "expected_terms_missing", "new_source_candidate_count", "sample_new_source_candidates",
+        "review_required", "review_reason", "checked_at", "extraction_mode", "fetch_error",
     ]
-
     if evidence_df.empty or "label" not in evidence_df.columns or "snippet" not in evidence_df.columns:
         return pd.DataFrame(columns=required_cols)
-
     rows = []
-
     for _, ev in evidence_df.iterrows():
         label = str(ev.get("label") or "")
-
         if not label.startswith("source_check:"):
             continue
-
         snippet = ev.get("snippet")
-
         try:
             payload = json.loads(snippet) if isinstance(snippet, str) else {}
         except Exception:
             payload = {}
-
         row = {k: payload.get(k, "") for k in required_cols}
-
         if not row.get("manufacturer"):
             row["manufacturer"] = str(ev.get("manufacturer") or "")
-
         if not row.get("source_id"):
             row["source_id"] = label.split(":", 1)[-1]
-
         rows.append(row)
-
     return pd.DataFrame(rows, columns=required_cols)
+
+
+def _present(v: Any) -> bool:
+    if v is None or _is_nan(v):
+        return False
+    s = str(v).strip().lower()
+    return s not in {"", "nan", "none", "null", "unknown", "not_applicable"}
+
+
+def _scoring_field_coverage(products_df: pd.DataFrame, comparison_df: pd.DataFrame) -> pd.DataFrame:
+    cols = ["manufacturer","product_id","product_name","candidate_type","complete_system","in_products","in_comparison",
+            "has_flow_rate_lps","has_material_data","has_din_en_1253_data","has_din_en_18534_data",
+            "has_height_adjustability_data","has_price_data","has_outlet_flexibility_data","has_sealing_fleece_data",
+            "has_colour_count_data","present_scoring_fields","missing_scoring_fields","scoring_readiness_pct","scoring_readiness_note"]
+    all_rows = pd.concat(
+        [
+            products_df.assign(in_products=True, in_comparison=False),
+            comparison_df.assign(in_products=False, in_comparison=True),
+        ],
+        ignore_index=True,
+        sort=False,
+    )
+    if all_rows.empty:
+        return pd.DataFrame(columns=cols)
+    all_rows = all_rows.drop(columns=["in_products", "in_comparison"], errors="ignore")
+    all_rows = (
+        all_rows.sort_values(by=["manufacturer", "product_id"])
+        .groupby(["manufacturer", "product_id"], as_index=False)
+        .agg(lambda s: next((x for x in s if _present(x)), s.iloc[0] if len(s) else ""))
+    )
+    # Preserve membership flags when a row is present in both Products and Comparison.
+    in_products_map = products_df.groupby(["manufacturer", "product_id"]).size().reset_index(name="_n")
+    in_comparison_map = comparison_df.groupby(["manufacturer", "product_id"]).size().reset_index(name="_n")
+    all_rows = all_rows.merge(
+        in_products_map.assign(in_products=True)[["manufacturer", "product_id", "in_products"]],
+        on=["manufacturer", "product_id"],
+        how="left",
+    ).merge(
+        in_comparison_map.assign(in_comparison=True)[["manufacturer", "product_id", "in_comparison"]],
+        on=["manufacturer", "product_id"],
+        how="left",
+    )
+    all_rows["in_products"] = all_rows["in_products"].fillna(False)
+    all_rows["in_comparison"] = all_rows["in_comparison"].fillna(False)
+    out = []
+    groups = [
+        ("has_flow_rate_lps", lambda r: (_present(r.get("flow_rate_lps")) and pd.to_numeric([r.get("flow_rate_lps")], errors="coerce")[0] > 0)),
+        ("has_material_data", lambda r: any(_present(r.get(k)) for k in ("material_v4a","material_detail","material_class"))),
+        ("has_din_en_1253_data", lambda r: any(_present(r.get(k)) for k in ("din_en_1253","certification_din_en_1253","din_en_1253_cert","certifications","certificate_text"))),
+        ("has_din_en_18534_data", lambda r: any(_present(r.get(k)) for k in ("din_en_18534","certification_din_en_18534","din_18534_compliance","waterproofing_standard","certifications","certificate_text"))),
+        ("has_height_adjustability_data", lambda r: pd.notna(pd.to_numeric(r.get("height_adj_min_mm"), errors="coerce")) and pd.notna(pd.to_numeric(r.get("height_adj_max_mm"), errors="coerce")) and float(pd.to_numeric(r.get("height_adj_max_mm"), errors="coerce")) > float(pd.to_numeric(r.get("height_adj_min_mm"), errors="coerce"))),
+        ("has_price_data", lambda r: any(pd.notna(pd.to_numeric(r.get(k), errors="coerce")) for k in ("sales_price","sales_price_eur","price_eur","offer_price"))),
+        ("has_outlet_flexibility_data", lambda r: any(_present(r.get(k)) for k in ("vertical_outlet_available","side_outlet_available","outlet_orientation","outlet_options"))),
+        ("has_sealing_fleece_data", lambda r: any(_present(r.get(k)) for k in ("sealing_fleece_preassembled","sealing_fleece","waterproofing_fleece_preassembled"))),
+        ("has_colour_count_data", lambda r: any(_present(r.get(k)) for k in ("colours_count","color_count","available_colours","available_colors","finish_count"))),
+    ]
+    for _, r in all_rows.iterrows():
+        flags = {k: bool(fn(r)) for k, fn in groups}
+        present = [k for k, v in flags.items() if v]
+        missing = [k for k, v in flags.items() if not v]
+        rec = {c: r.get(c, "") for c in ("manufacturer","product_id","product_name","candidate_type","complete_system")}
+        rec.update({"in_products": bool(r.get("in_products", False)), "in_comparison": bool(r.get("in_comparison", False))})
+        rec.update(flags)
+        rec["present_scoring_fields"] = ",".join(present)
+        rec["missing_scoring_fields"] = ",".join(missing)
+        rec["scoring_readiness_pct"] = round((len(present) / len(groups)) * 100.0, 1)
+        rec["scoring_readiness_note"] = "ready" if len(missing) == 0 else f"missing:{len(missing)}"
+        out.append(rec)
+    return pd.DataFrame(out, columns=cols)
 
 
 def export_excel(
@@ -408,11 +299,7 @@ def export_excel(
     write_df("Evidence", evidence_df)
     write_df("BOM_Options", bom_options_df)
     write_df("Source_Checks", _extract_source_checks(evidence_df))
-
-    # Scoring/config sheets.
-    write_df("Final_Scoring_Weights", _extract_final_scoring_weights(cfg))
-    write_df("Legacy_Equivalence_Weights", _extract_legacy_equivalence_weights(cfg))
-    write_df("Config", _extract_config_sheet())
+    write_df("Scoring_Field_Coverage", _scoring_field_coverage(products_df, comparison_df))
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     wb.save(out_path)
