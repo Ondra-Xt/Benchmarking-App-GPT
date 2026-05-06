@@ -20,7 +20,18 @@ EQUIVALENCE_KEYS = [
 ]
 
 # Mix finálního skóre (app často chce, aby se to rovnalo 100 %)
-FINAL_KEYS = ["w_param", "w_equiv"]
+BENCHMARK_KEYS = [
+    "flow_rate_score",
+    "material_v4a_score",
+    "din_en_1253_score",
+    "din_en_18534_score",
+    "height_adjustability_score",
+    "sales_price_score",
+    "outlet_flexibility_score",
+    "sealing_fleece_score",
+    "colour_count_score",
+]
+FINAL_KEYS = BENCHMARK_KEYS
 
 
 @dataclass
@@ -77,7 +88,8 @@ def default_config_dict() -> Dict[str, Any]:
     return {
         # finální mix v % (součet 100)
         "w_param": 70.0,
-        "w_equiv": 30.0,
+        "w_equiv": 10.0,
+        "w_system": 20.0,
 
         # streamlit UI / penalizace unknown
         "unknown_penalty_score": 0.0,
@@ -90,15 +102,17 @@ def default_config_dict() -> Dict[str, Any]:
         "equiv_complete_system_bonus": 0.0,
 
         # váhy parametrů (škála je libovolná, scoring si to normalizuje)
-        "param_weights": {
-            "flow_rate_lps": 25,
-            "din_en_1253_cert": 10,
-            "din_18534_compliance": 10,
-            "material_v4a": 10,
-            "height_adjustability": 15,
-            "outlet_dn": 10,
-            "sealing_fleece_preassembled": 10,
-            "colours_count": 10,
+        "param_weights": {k: 0 for k in BENCHMARK_KEYS},
+        "final_weights_pct": {
+            "flow_rate_score": 25,
+            "material_v4a_score": 15,
+            "din_en_1253_score": 10,
+            "din_en_18534_score": 10,
+            "height_adjustability_score": 10,
+            "sales_price_score": 15,
+            "outlet_flexibility_score": 5,
+            "sealing_fleece_score": 5,
+            "colour_count_score": 5,
         },
     }
 
@@ -133,6 +147,12 @@ def _merge_defaults(user_cfg: Dict[str, Any], defaults: Dict[str, Any]) -> Dict[
     # 3) jistota: FINAL_KEYS existují
     for k in FINAL_KEYS:
         out.setdefault(k, 0.0)
+    fw = out.get("final_weights_pct")
+    if not isinstance(fw, dict):
+        fw = {}
+    for k, v in defaults.get("final_weights_pct", {}).items():
+        fw.setdefault(k, v)
+    out["final_weights_pct"] = fw
 
     # 4) unknown penalty
     out.setdefault("unknown_penalty_score", 0.0)
