@@ -1449,6 +1449,8 @@ def run_update(
             "equiv_score": equiv_score,
             "system_score": system_score,
             "final_score": final_score,
+            "final_score_pct": final_score * 100.0,
+            **{k: v for k, v in (param_detail or {}).items()},
         }
         if manufacturer == "aco" and candidate_type == "component" and promote_to_product:
             aco_debug["components_with_promote_yes_count"] += 1
@@ -3525,6 +3527,42 @@ def run_update(
 
     products_df = pd.DataFrame(products_rows)
     comparison_df = pd.DataFrame(comparison_rows)
+    if not comparison_df.empty and not products_df.empty:
+        extra_cols = [
+            "flow_rate_score","material_v4a_score","din_en_1253_score","din_en_18534_score",
+            "height_adjustability_score","sales_price_score","outlet_flexibility_score",
+            "sealing_fleece_score","colour_count_score","flow_rate_pass_0_8_lps",
+            "height_adjustability_range_mm","scoring_notes","sales_price","sales_price_eur","price_eur","offer_price"
+        ]
+        have = [c for c in extra_cols if c in products_df.columns]
+        if have:
+            comparison_df = comparison_df.merge(products_df[["manufacturer","product_id"]+have], on=["manufacturer","product_id"], how="left")
+        price_col = next((c for c in ("sales_price","sales_price_eur","price_eur","offer_price") if c in comparison_df.columns), None)
+        if price_col:
+            p = pd.to_numeric(comparison_df[price_col], errors="coerce")
+            valid = p.dropna()
+            if len(valid) >= 2 and float(valid.max()) > float(valid.min()):
+                comparison_df["sales_price_score"] = ((valid.max() - p) / (valid.max() - valid.min())).fillna(0.0)
+                comparison_df["scoring_price_available"] = "yes"
+            elif len(valid) == 1:
+                comparison_df["sales_price_score"] = p.apply(lambda x: 1.0 if pd.notna(x) else 0.0)
+                comparison_df["scoring_price_available"] = "yes"
+            else:
+                comparison_df["sales_price_score"] = 0.0
+                comparison_df["scoring_price_available"] = "no"
+        w = (cfg.get("final_weights_pct", {}) if hasattr(cfg, "get") else {}) or {}
+        crit = ["flow_rate_score","material_v4a_score","din_en_1253_score","din_en_18534_score","height_adjustability_score","sales_price_score","outlet_flexibility_score","sealing_fleece_score","colour_count_score"]
+        def _row_final(rr):
+            denom = 0.0; num = 0.0
+            for k in crit:
+                wk = float(w.get(k,0) or 0)
+                if k == "sales_price_score" and str(rr.get("scoring_price_available","")) == "no":
+                    continue
+                denom += wk
+                num += wk * float(rr.get(k,0) or 0)
+            return (num/denom) if denom>0 else 0.0
+        comparison_df["final_score"] = comparison_df.apply(_row_final, axis=1)
+        comparison_df["final_score_pct"] = comparison_df["final_score"] * 100.0
     excluded_df = pd.DataFrame(excluded_rows)
     evidence_df = pd.DataFrame(evidence_rows)
     bom_options_df = pd.DataFrame(bom_rows)

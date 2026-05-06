@@ -38,50 +38,34 @@ st.sidebar.subheader("Penalties")
 cfg.unknown_penalty_score = st.sidebar.number_input("Unknown score (0–1)", min_value=0.0, max_value=1.0, value=float(cfg.unknown_penalty_score), step=0.05)
 
 st.sidebar.divider()
-st.sidebar.subheader("Equivalence weights (sum 100%)")
-
-# Auto-balance key for equivalence
-eq_auto_key = st.sidebar.selectbox("Auto-balance key (equivalence)", options=EQUIVALENCE_KEYS, index=EQUIVALENCE_KEYS.index("length_mode_match"))
-
-eq_weights = dict(cfg.equivalence_weights_pct)
-eq_sum_manual = 0
-for k in EQUIVALENCE_KEYS:
-    if k == eq_auto_key:
-        continue
-    eq_weights[k] = st.sidebar.number_input(f"{k} (%)", min_value=0, max_value=100, value=int(eq_weights.get(k, 0)), step=1, key=f"eq_{k}")
-    eq_sum_manual += int(eq_weights[k])
-eq_weights[eq_auto_key] = max(0, 100 - eq_sum_manual)
-st.sidebar.caption(f"{eq_auto_key} auto-balanced to {eq_weights[eq_auto_key]} % (sum = 100%)")
-
-st.sidebar.divider()
-st.sidebar.subheader("Final scoring (sum 100%)")
-
-# Enabled flags: sales_price disabled until pricing
-cfg.final_enabled["sales_price"] = False
-
-final_auto_key = st.sidebar.selectbox("Auto-balance key (final scoring)", options=[k for k in FINAL_KEYS if k != "sales_price"], index=0)
+st.sidebar.subheader("Benchmark scoring weights (sum 100%)")
 
 fin_weights = dict(cfg.final_weights_pct)
+final_auto_key = st.sidebar.selectbox("Auto-balance key (benchmark scoring)", options=FINAL_KEYS, index=0)
 fin_sum_manual = 0
 for k in FINAL_KEYS:
-    if k == "sales_price":
-        continue
     if k == final_auto_key:
         continue
     fin_weights[k] = st.sidebar.number_input(f"{k} (%)", min_value=0, max_value=100, value=int(fin_weights.get(k, 0)), step=1, key=f"fin_{k}")
     fin_sum_manual += int(fin_weights[k])
-
 fin_weights[final_auto_key] = max(0, 100 - fin_sum_manual)
-
-# Sales price shown but disabled
-st.sidebar.caption("sales_price is currently ignored because the pricing module is not active.")
-fin_weights["sales_price"] = 0
-
 st.sidebar.caption(f"{final_auto_key} auto-balanced to {fin_weights[final_auto_key]} % (sum = 100%)")
+
+with st.sidebar.expander("Advanced / legacy equivalence scoring", expanded=False):
+    eq_auto_key = st.selectbox("Auto-balance key (legacy equivalence)", options=EQUIVALENCE_KEYS, index=EQUIVALENCE_KEYS.index("length_mode_match"))
+    eq_weights = dict(getattr(cfg, "equivalence_weights_pct", {}))
+    eq_sum_manual = 0
+    for k in EQUIVALENCE_KEYS:
+        if k == eq_auto_key:
+            continue
+        eq_weights[k] = st.number_input(f"{k} (%)", min_value=0, max_value=100, value=int(eq_weights.get(k, 0)), step=1, key=f"eq_{k}")
+        eq_sum_manual += int(eq_weights[k])
+    eq_weights[eq_auto_key] = max(0, 100 - eq_sum_manual)
+    st.caption(f"{eq_auto_key} auto-balanced to {eq_weights[eq_auto_key]} % (sum = 100%)")
 st.sidebar.divider()
 
 if st.sidebar.button("Save settings"):
-    cfg.equivalence_weights_pct = {k: int(eq_weights[k]) for k in EQUIVALENCE_KEYS}
+    cfg.equivalence_weights_pct = {k: int(eq_weights.get(k, 0)) for k in EQUIVALENCE_KEYS}
     cfg.final_weights_pct = {k: int(fin_weights.get(k, 0)) for k in FINAL_KEYS}
     save_config(CONFIG_PATH, cfg)
     st.sidebar.success("Settings saved.")
