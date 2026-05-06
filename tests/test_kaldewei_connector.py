@@ -98,10 +98,19 @@ class KaldeweiConnectorTests(unittest.TestCase):
         by_model = {str(r.get("model_number")): r for r in ka90}
         self.assertEqual(float(by_model["4103"]["flow_rate_lps"]), 0.71)
         self.assertEqual(str(by_model["4103"]["outlet_dn"]), "DN50")
+        self.assertEqual(str(by_model["4103"]["article_number"]), "687772560999")
+        self.assertEqual(int(by_model["4103"]["water_seal_mm"]), 50)
+        self.assertEqual(int(by_model["4103"]["construction_height_mm"]), 80)
         self.assertEqual(float(by_model["4104"]["flow_rate_lps"]), 0.68)
         self.assertEqual(str(by_model["4104"]["outlet_dn"]), "DN40")
+        self.assertEqual(str(by_model["4104"]["article_number"]), "687772540999")
+        self.assertEqual(int(by_model["4104"]["water_seal_mm"]), 30)
+        self.assertEqual(int(by_model["4104"]["construction_height_mm"]), 60)
         self.assertEqual(float(by_model["4105"]["flow_rate_lps"]), 1.22)
         self.assertEqual(str(by_model["4105"]["outlet_dn"]), "DN50")
+        self.assertEqual(str(by_model["4105"]["article_number"]), "687772550999")
+        self.assertEqual(int(by_model["4105"]["water_seal_mm"]), 50)
+        self.assertEqual(int(by_model["4105"]["construction_height_mm"]), 80)
 
 if __name__ == '__main__':
     unittest.main()

@@ -286,10 +286,12 @@ class PipelineExportTests(unittest.TestCase):
         self.assertEqual(str(by_model["4105"].outlet_dn), "DN50")
         self.assertEqual(float(by_model["4105"].flow_rate_lps), 1.22)
 
-        # Unknown fields remain blank unless present in curated sources.
-        self.assertTrue(ka90["article_number"].astype(str).isin({"", "nan", "None"}).all())
-        self.assertTrue(ka90["water_seal_mm"].astype(str).isin({"", "nan", "None"}).all())
-        self.assertTrue(ka90["construction_height_mm"].astype(str).isin({"", "nan", "None"}).all())
+        self.assertEqual(
+            {str(x) for x in ka90["article_number"].astype(str)},
+            {"687772560999", "687772540999", "687772550999"},
+        )
+        self.assertEqual({int(float(x)) for x in ka90["water_seal_mm"]}, {30, 50})
+        self.assertEqual({int(float(x)) for x in ka90["construction_height_mm"]}, {60, 80})
 
         kev = evidence[(evidence["manufacturer"] == "kaldewei") & (evidence["product_id"].isin(ka90["product_id"]))]
         for fld in ("model_number", "flow_rate_lps", "outlet_dn", "dn"):
