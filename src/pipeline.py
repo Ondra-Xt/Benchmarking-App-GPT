@@ -1305,8 +1305,14 @@ def run_update(
 
             tray_incomplete_signal = is_tray and role == "base_set" and (_is_known_or_signaled_incomplete_tray_base(rowd) or not tray_matches)
             promote = (role in {"complete_drain"}) and (not non_promotable) and (not explicit_override) and len(missing_required_parts) == 0
-            if is_tray:
+
+            # Tray families such as Tempoplex/Domoplex often need base + cover pairing and must not
+            # be promoted when they are only a base_set/cover. However, a row that is explicitly
+            # classified as complete_drain and has no missing required parts should still be allowed
+            # to promote. This preserves Varioplex complete-drain behavior.
+            if is_tray and role != "complete_drain":
                 promote = False
+
             if promote:
                 reason = "promoted_complete_assembly"
             elif explicit_override:
@@ -3527,42 +3533,191 @@ def run_update(
 
     products_df = pd.DataFrame(products_rows)
     comparison_df = pd.DataFrame(comparison_rows)
+
+    # ------------------------------------------------------------------
+    # Benchmark scoring V2 finalization
+    # ------------------------------------------------------------------
+    # Některé řádky vznikají synteticky až v pipeline (BOM assemblies,
+    # tray pairings, fallback seeds). Tyto řádky nemusejí mít po vytvoření
+    # vyplněné detailní score sloupce, i když mají technické parametry.
+    # Proto na konci vždy znovu dopočítáme benchmark scoring pro všechny
+    # řádky v products_df a následně stejná data přeneseme do comparison_df.
+    benchmark_score_cols = [
+        "flow_rate_score",
+        "material_v4a_score",
+        "din_en_1253_score",
+        "din_en_18534_score",
+        "height_adjustability_score",
+        "sales_price_score",
+        "outlet_flexibility_score",
+        "sealing_fleece_score",
+        "colour_count_score",
+        "flow_rate_pass_0_8_lps",
+        "height_adjustability_range_mm",
+        "scoring_price_available",
+        "benchmark_scoring_notes",
+        "scoring_notes",
+    ]
+    benchmark_value_cols = [
+        "sales_price",
+        "sales_price_eur",
+        "price_eur",
+        "offer_price",
+    ]
+    benchmark_final_cols = [
+        "param_score",
+        "equiv_score",
+        "system_score",
+        "final_score",
+        "final_score_pct",
+    ]
+    benchmark_criteria = [
+        "flow_rate_score",
+        "material_v4a_score",
+        "din_en_1253_score",
+        "din_en_18534_score",
+        "height_adjustability_score",
+        "sales_price_score",
+        "outlet_flexibility_score",
+        "sealing_fleece_score",
+        "colour_count_score",
+    ]
+
+    def _safe_float(value: Any, default: float = 0.0) -> float:
+        try:
+            if value is None or pd.isna(value):
+                return default
+        except Exception:
+            pass
+        try:
+            return float(value)
+        except Exception:
+            return default
+
+    def _get_final_weights() -> Dict[str, float]:
+        raw = cfg.get("final_weights_pct", {}) if hasattr(cfg, "get") else {}
+        if not isinstance(raw, dict):
+            raw = {}
+        defaults = {
+            "flow_rate_score": 25,
+            "material_v4a_score": 15,
+            "din_en_1253_score": 10,
+            "din_en_18534_score": 10,
+            "height_adjustability_score": 10,
+            "sales_price_score": 15,
+            "outlet_flexibility_score": 5,
+            "sealing_fleece_score": 5,
+            "colour_count_score": 5,
+        }
+        return {k: _safe_float(raw.get(k, defaults[k]), float(defaults[k])) for k in benchmark_criteria}
+
+    def _recompute_product_scores(df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            return df
+
+        out = df.copy()
+        for idx, row in out.iterrows():
+            row_dict = row.to_dict()
+            param_score, param_detail = compute_parameter_score(row_dict, cfg)
+            equiv_score = compute_equivalence_score(row_dict, cfg)
+            system_score = compute_system_score(str(row_dict.get("candidate_type") or ""), has_bom_options=False)
+            final_score = compute_final_score(param_score, system_score, equiv_score, cfg)
+
+            out.at[idx, "param_score"] = param_score
+            out.at[idx, "equiv_score"] = equiv_score
+            out.at[idx, "system_score"] = system_score
+            out.at[idx, "final_score"] = final_score
+            out.at[idx, "final_score_pct"] = final_score * 100.0
+
+            for key, value in (param_detail or {}).items():
+                out.at[idx, key] = value
+
+        return out
+
+    products_df = _recompute_product_scores(products_df)
+
     if not comparison_df.empty and not products_df.empty:
-        extra_cols = [
-            "flow_rate_score","material_v4a_score","din_en_1253_score","din_en_18534_score",
-            "height_adjustability_score","sales_price_score","outlet_flexibility_score",
-            "sealing_fleece_score","colour_count_score","flow_rate_pass_0_8_lps",
-            "height_adjustability_range_mm","scoring_notes","sales_price","sales_price_eur","price_eur","offer_price"
+        # Odstraň staré/částečné score sloupce z comparison_df a nahraď je
+        # výpočtem z products_df. Tím zajistíme, že Comparison neobsahuje
+        # final_score=0, zatímco Products mají score nenulové.
+        columns_to_refresh = [
+            c for c in (benchmark_score_cols + benchmark_value_cols + benchmark_final_cols)
+            if c in comparison_df.columns
         ]
-        have = [c for c in extra_cols if c in products_df.columns]
-        if have:
-            comparison_df = comparison_df.merge(products_df[["manufacturer","product_id"]+have], on=["manufacturer","product_id"], how="left")
-        price_col = next((c for c in ("sales_price","sales_price_eur","price_eur","offer_price") if c in comparison_df.columns), None)
+        if columns_to_refresh:
+            comparison_df = comparison_df.drop(columns=columns_to_refresh)
+
+        product_score_cols = [
+            c for c in (benchmark_score_cols + benchmark_value_cols + benchmark_final_cols)
+            if c in products_df.columns
+        ]
+        if product_score_cols:
+            score_source = products_df[["manufacturer", "product_id"] + product_score_cols].drop_duplicates(
+                subset=["manufacturer", "product_id"],
+                keep="last",
+            )
+            comparison_df = comparison_df.merge(
+                score_source,
+                on=["manufacturer", "product_id"],
+                how="left",
+            )
+
+        # Price normalization is comparison-set relative. Price weight remains
+        # configured as 15 %, but if no Comparison row has a valid price, the
+        # criterion is excluded from the effective denominator.
+        price_col = next(
+            (c for c in ("sales_price", "sales_price_eur", "price_eur", "offer_price") if c in comparison_df.columns),
+            None,
+        )
+
         if price_col:
-            p = pd.to_numeric(comparison_df[price_col], errors="coerce")
-            valid = p.dropna()
-            if len(valid) >= 2 and float(valid.max()) > float(valid.min()):
-                comparison_df["sales_price_score"] = ((valid.max() - p) / (valid.max() - valid.min())).fillna(0.0)
-                comparison_df["scoring_price_available"] = "yes"
-            elif len(valid) == 1:
-                comparison_df["sales_price_score"] = p.apply(lambda x: 1.0 if pd.notna(x) else 0.0)
-                comparison_df["scoring_price_available"] = "yes"
+            prices = pd.to_numeric(comparison_df[price_col], errors="coerce")
+            valid_prices = prices.dropna()
+
+            if len(valid_prices) >= 2 and float(valid_prices.max()) > float(valid_prices.min()):
+                comparison_df["sales_price_score"] = (
+                    (float(valid_prices.max()) - prices) / (float(valid_prices.max()) - float(valid_prices.min()))
+                ).fillna(0.0)
+                comparison_df["scoring_price_available"] = prices.apply(lambda x: "yes" if pd.notna(x) else "missing")
+
+            elif len(valid_prices) == 1:
+                comparison_df["sales_price_score"] = prices.apply(lambda x: 1.0 if pd.notna(x) else 0.0)
+                comparison_df["scoring_price_available"] = prices.apply(lambda x: "yes" if pd.notna(x) else "missing")
+
             else:
                 comparison_df["sales_price_score"] = 0.0
                 comparison_df["scoring_price_available"] = "no"
-        w = (cfg.get("final_weights_pct", {}) if hasattr(cfg, "get") else {}) or {}
-        crit = ["flow_rate_score","material_v4a_score","din_en_1253_score","din_en_18534_score","height_adjustability_score","sales_price_score","outlet_flexibility_score","sealing_fleece_score","colour_count_score"]
-        def _row_final(rr):
-            denom = 0.0; num = 0.0
-            for k in crit:
-                wk = float(w.get(k,0) or 0)
-                if k == "sales_price_score" and str(rr.get("scoring_price_available","")) == "no":
+        else:
+            comparison_df["sales_price_score"] = 0.0
+            comparison_df["scoring_price_available"] = "no"
+
+        weights = _get_final_weights()
+
+        def _row_final_score(row: pd.Series) -> float:
+            numerator = 0.0
+            denominator = 0.0
+
+            for key in benchmark_criteria:
+                weight = float(weights.get(key, 0.0) or 0.0)
+                if weight <= 0:
                     continue
-                denom += wk
-                num += wk * float(rr.get(k,0) or 0)
-            return (num/denom) if denom>0 else 0.0
-        comparison_df["final_score"] = comparison_df.apply(_row_final, axis=1)
+
+                if key == "sales_price_score" and str(row.get("scoring_price_available") or "").lower() == "no":
+                    continue
+
+                numerator += weight * _safe_float(row.get(key), 0.0)
+                denominator += weight
+
+            if denominator <= 0:
+                return 0.0
+
+            return max(0.0, min(1.0, float(numerator / denominator)))
+
+        comparison_df["final_score"] = comparison_df.apply(_row_final_score, axis=1)
         comparison_df["final_score_pct"] = comparison_df["final_score"] * 100.0
+        comparison_df["benchmark_scoring_notes"] = comparison_df.get("benchmark_scoring_notes", "benchmark_scoring_v2")
+        comparison_df["scoring_notes"] = comparison_df.get("scoring_notes", "benchmark_scoring_v2")
+
     excluded_df = pd.DataFrame(excluded_rows)
     evidence_df = pd.DataFrame(evidence_rows)
     bom_options_df = pd.DataFrame(bom_rows)
