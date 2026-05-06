@@ -1158,7 +1158,26 @@ def run_update(
         role = ""
         if manufacturer == "kaldewei":
             rowd = r.to_dict() if hasattr(r, "to_dict") else dict(r)
-            for k in ("flow_rate_lps", "outlet_dn", "height_adj_min_mm", "height_adj_max_mm", "water_seal_mm", "current_status", "compatibility_caution", "system_role", "product_family", "finish_name", "finish_code"):
+            for k in (
+                "model_number",
+                "article_number",
+                "outlet_orientation",
+                "outlet_dn",
+                "dn",
+                "flow_rate_lps",
+                "water_seal_mm",
+                "construction_height_mm",
+                "product_category",
+                "system_role",
+                "complete_system",
+                "height_adj_min_mm",
+                "height_adj_max_mm",
+                "current_status",
+                "compatibility_caution",
+                "product_family",
+                "finish_name",
+                "finish_code",
+            ):
                 if params.get(k) in (None, "") and rowd.get(k) not in (None, ""):
                     params[k] = rowd.get(k)
                     kaldewei_seed_param_preservation_count += 1

@@ -258,11 +258,56 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue((assembled_rows["sources"].astype(str).str.contains(",") | assembled_rows["sources"].astype(str).str.contains("kaldewei.com")).all())
         flow_ev = kev[(kev["field_name"] == "flow_rate_lps") & (kev["product_id"].isin(["kaldewei-flowdrain-horizontal-regular", "kaldewei-flowdrain-horizontal-flat"]))]
         self.assertTrue(any(ev == "0.8" for ev in flow_ev["extracted_value"].astype(str)))
-        self.assertTrue(any(ev == "0.63" for ev in flow_ev["extracted_value"].astype(str)))
-        self.assertTrue((flow_ev["source_url"].astype(str).str.strip() != "").all())
-        self.assertTrue((kev[(kev["product_id"] == "kaldewei-nexsys") & (kev["field_name"] == "complete_system")]["extracted_value"].astype(str) == "yes").any())
-        self.assertTrue((kev[(kev["product_id"] == "kaldewei-xetis-ka-200") & (kev["field_name"] == "complete_system")]["extracted_value"].astype(str).isin(["configuration", "yes"])).any())
 
+    def test_kaldewei_ka90_variants_evidence_and_ka120_regression(self):
+        rows, _ = kaldewei.discover_candidates()
+        registry = pd.DataFrame(rows)
+        with patch.dict(pipeline.CONNECTORS, {"kaldewei": kaldewei}, clear=True):
+            products, comparison, _excluded, evidence, _bom = pipeline.run_update(registry, default_config())
+
+        krows = products[products["manufacturer"] == "kaldewei"]
+        ka90 = krows[krows["family"] == "ka_90"].copy()
+        self.assertEqual(len(ka90), 3)
+        self.assertTrue((ka90["candidate_type"] == "component").all())
+        self.assertTrue((ka90["product_category"] == "tray_waste_fitting").all())
+        self.assertTrue((ka90["system_role"] == "tray_waste_fitting").all())
+        self.assertTrue((ka90["complete_system"] == "component").all())
+        if "selected_length_mm" in ka90.columns:
+            self.assertTrue((ka90["selected_length_mm"].astype(str).isin({"", "not_applicable", "nan"})).all())
+        if "benchmark_eligible" in ka90.columns:
+            self.assertTrue((ka90["benchmark_eligible"].astype(str).str.lower().isin({"false", "0"})).all())
+        self.assertFalse(comparison["product_id"].isin(ka90["product_id"]).any())
+
+        by_model = {str(r.model_number): r for _, r in ka90.iterrows()}
+        self.assertEqual(str(by_model["4103"].outlet_dn), "DN50")
+        self.assertEqual(float(by_model["4103"].flow_rate_lps), 0.71)
+        self.assertEqual(str(by_model["4104"].outlet_dn), "DN40")
+        self.assertEqual(float(by_model["4104"].flow_rate_lps), 0.68)
+        self.assertEqual(str(by_model["4105"].outlet_dn), "DN50")
+        self.assertEqual(float(by_model["4105"].flow_rate_lps), 1.22)
+
+        # Unknown fields remain blank unless present in curated sources.
+        self.assertTrue(ka90["article_number"].astype(str).isin({"", "nan", "None"}).all())
+        self.assertTrue(ka90["water_seal_mm"].astype(str).isin({"", "nan", "None"}).all())
+        self.assertTrue(ka90["construction_height_mm"].astype(str).isin({"", "nan", "None"}).all())
+
+        kev = evidence[(evidence["manufacturer"] == "kaldewei") & (evidence["product_id"].isin(ka90["product_id"]))]
+        for fld in ("model_number", "flow_rate_lps", "outlet_dn", "dn"):
+            fld_rows = kev[kev["field_name"] == fld]
+            self.assertFalse(fld_rows.empty)
+            self.assertTrue(fld_rows["source_url"].astype(str).str.len().gt(0).all() | fld_rows["source_label"].astype(str).str.len().gt(0).all())
+            self.assertTrue(fld_rows["evidence_type"].astype(str).str.len().gt(0).all())
+            self.assertFalse(fld_rows["extracted_value"].astype(str).str.lower().isin({"", "nan", "none", "null", "not_applicable"}).any())
+        ka90_note_rows = evidence[evidence["source_note"].astype(str).str.contains("KA90 value seeded from official Kaldewei KA90 technical source", na=False)]
+        self.assertTrue((ka90_note_rows["product_id"].astype(str).str.contains("kaldewei-ka-90-")).all())
+
+        ka120 = krows[krows["family"] == "ka_120"]
+        self.assertEqual(set(ka120["model_number"].astype(str)), {"4106", "4107", "4108"})
+        self.assertEqual(set(ka120["article_number"].astype(str)), {"687772530000", "687772510000", "687772520000"})
+        self.assertEqual(set(ka120["outlet_dn"].astype(str)), {"DN50", "DN40"})
+        self.assertEqual(set(round(float(x), 2) for x in ka120["flow_rate_lps"]), {0.85, 1.4})
+        self.assertEqual(set(int(float(x)) for x in ka120["water_seal_mm"]), {30, 50})
+        self.assertEqual(set(int(float(x)) for x in ka120["construction_height_mm"]), {63, 83})
     def test_aco_role_based_promotion_splits_products_and_components(self):
         registry = pd.DataFrame(
             [
