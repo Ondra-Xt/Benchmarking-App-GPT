@@ -281,6 +281,50 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue((assembled_rows["sources"].astype(str).str.contains(",") | assembled_rows["sources"].astype(str).str.contains("kaldewei.com")).all())
         flow_ev = kev[(kev["field_name"] == "flow_rate_lps") & (kev["product_id"].isin(["kaldewei-flowdrain-horizontal-regular", "kaldewei-flowdrain-horizontal-flat"]))]
         self.assertTrue(any(ev == "0.8" for ev in flow_ev["extracted_value"].astype(str)))
+        self.assertTrue(set(comparison["product_id"].astype(str)).issubset(set(products["product_id"].astype(str))))
+        comp_ids = set(products[products["candidate_type"].astype(str).str.lower().isin(["component", "base_set"])]["product_id"].astype(str))
+        self.assertTrue(set(comparison["product_id"].astype(str)).isdisjoint(comp_ids))
+
+    def test_comparison_subset_products_and_scoring_regression(self):
+        rows, _ = kaldewei.discover_candidates()
+        registry = pd.DataFrame(rows)
+        with patch.dict(pipeline.CONNECTORS, {"kaldewei": kaldewei}, clear=True):
+            products, comparison, _excluded, _evidence, _bom = pipeline.run_update(registry, default_config())
+
+        self.assertTrue(set(comparison["product_id"].astype(str)).issubset(set(products["product_id"].astype(str))))
+        component_ids = set(products[products["candidate_type"].astype(str).str.lower().isin({"component", "base_set"})]["product_id"].astype(str))
+        self.assertTrue(set(comparison["product_id"].astype(str)).isdisjoint(component_ids))
+        self.assertFalse(any(pid in set(comparison["product_id"]) for pid in ["kaldewei-ka-90-horizontal", "kaldewei-ka-120-horizontal"]))
+        self.assertTrue(any("kaldewei-assembled-flowline-zero" in str(pid) for pid in comparison["product_id"]))
+        self.assertTrue(any("kaldewei-assembled-flowpoint-zero" in str(pid) for pid in comparison["product_id"]))
+        self.assertFalse(any("finish" in str(pid) for pid in comparison["product_id"]))
+
+        reg = products[products["product_id"] == "kaldewei-flowdrain-horizontal-regular"].iloc[0]
+        flat = products[products["product_id"] == "kaldewei-flowdrain-horizontal-flat"].iloc[0]
+        self.assertEqual(float(reg["flow_rate_score"]), 1.0)
+        self.assertEqual(str(reg["flow_rate_pass_0_8_lps"]), "yes")
+        self.assertEqual(float(reg["height_adjustability_range_mm"]), 101.0)
+        self.assertEqual(float(reg["height_adjustability_score"]), 1.0)
+        self.assertAlmostEqual(float(flat["flow_rate_score"]), 0.7875, 4)
+        self.assertEqual(str(flat["flow_rate_pass_0_8_lps"]), "no")
+        self.assertEqual(float(flat["height_adjustability_range_mm"]), 20.0)
+        self.assertEqual(float(flat["height_adjustability_score"]), 0.2)
+        self.assertAlmostEqual(float(reg["final_score_pct"]), float(reg["final_score"]) * 100.0, 6)
+
+    def test_scoring_field_coverage_respects_cleaned_comparison_membership(self):
+        with tempfile.TemporaryDirectory() as td:
+            template = Path(td) / "template.xlsx"
+            out = Path(td) / "out.xlsx"
+            self._make_template(template)
+            rows, _ = kaldewei.discover_candidates()
+            registry = pd.DataFrame(rows)
+            with patch.dict(pipeline.CONNECTORS, {"kaldewei": kaldewei}, clear=True):
+                products, comparison, _excluded, _evidence, _bom = pipeline.run_update(registry, default_config())
+            export_excel(template, out, default_config(), products_df=products, comparison_df=comparison)
+            cov = pd.DataFrame(self._sheet_rows(out, "Scoring_Field_Coverage")[1:], columns=self._sheet_rows(out, "Scoring_Field_Coverage")[0])
+            comp_ids = set(comparison["product_id"].astype(str))
+            self.assertTrue((cov[cov["in_comparison"] == True]["product_id"].astype(str).isin(comp_ids)).all())
+            self.assertFalse(((cov["candidate_type"].astype(str).str.lower().isin(["component", "base_set"])) & (cov["in_comparison"] == True)).any())
 
     def test_kaldewei_ka90_variants_evidence_and_ka120_regression(self):
         rows, _ = kaldewei.discover_candidates()
@@ -463,7 +507,7 @@ class PipelineExportTests(unittest.TestCase):
         self.assertFalse(products.empty)
         self.assertTrue((products["candidate_type"] == "component").all())
         self.assertTrue((products["promote_to_product"] == "no").all())
-        self.assertFalse(comparison.empty)
+        self.assertTrue(comparison.empty)
         self.assertTrue(excluded.empty)
         self.assertIn("Viega promotion", evidence["label"].tolist())
         self.assertTrue(bom.empty)
@@ -570,7 +614,13 @@ class PipelineExportTests(unittest.TestCase):
         aco_ids = set(products[products["manufacturer"] == "aco"]["product_id"].tolist())
         self.assertIn("aco-90108544", aco_ids)
         self.assertFalse(any(re.match(r"^aco-(?:comp|fam)-\\d+$", pid) for pid in aco_ids))
-        self.assertEqual(set(comparison["product_id"].tolist()), aco_ids)
+        non_component_aco_ids = set(
+            products[
+                (products["manufacturer"] == "aco")
+                & (~products["candidate_type"].astype(str).str.lower().isin({"component", "base_set"}))
+            ]["product_id"].tolist()
+        )
+        self.assertEqual(set(comparison["product_id"].tolist()), non_component_aco_ids)
         aco_ev = evidence[evidence["manufacturer"] == "aco"].set_index("label")
         self.assertGreaterEqual(int(aco_ev.loc["aco_stable_id_migration_count", "snippet"]), 1)
         self.assertEqual(str(aco_ev.loc["aco_hash_like_ids_after_count", "snippet"]), "0")

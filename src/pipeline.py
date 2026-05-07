@@ -3573,4 +3573,18 @@ def run_update(
     evidence_df = pd.DataFrame(evidence_rows)
     bom_options_df = pd.DataFrame(bom_rows)
 
+    # Final safety guard: Comparison must be a subset of benchmark-eligible Products only.
+    if not comparison_df.empty and not products_df.empty and "product_id" in comparison_df.columns and "product_id" in products_df.columns:
+        allowed_product_ids = set(products_df["product_id"].astype(str))
+        comparison_df = comparison_df[comparison_df["product_id"].astype(str).isin(allowed_product_ids)].copy()
+        if "candidate_type" in products_df.columns:
+            component_ids = set(
+                products_df.loc[
+                    products_df["candidate_type"].astype(str).str.lower().isin({"component", "base_set"}),
+                    "product_id",
+                ].astype(str)
+            )
+            if component_ids:
+                comparison_df = comparison_df[~comparison_df["product_id"].astype(str).isin(component_ids)].copy()
+
     return products_df, comparison_df, excluded_df, evidence_df, bom_options_df
