@@ -3533,58 +3533,49 @@ def run_update(
 
     products_df = pd.DataFrame(products_rows)
     comparison_df = pd.DataFrame(comparison_rows)
-    if not comparison_df.empty and not products_df.empty:
-        extra_cols = [
-            "flow_rate_score","material_v4a_score","din_en_1253_score","din_en_18534_score",
-            "height_adjustability_score","sales_price_score","outlet_flexibility_score",
-            "sealing_fleece_score","colour_count_score","flow_rate_pass_0_8_lps",
-            "height_adjustability_range_mm","scoring_notes","sales_price","sales_price_eur","price_eur","offer_price"
-        ]
-        have = [c for c in extra_cols if c in products_df.columns]
-        if have:
-            comparison_df = comparison_df.merge(products_df[["manufacturer","product_id"]+have], on=["manufacturer","product_id"], how="left")
-        price_col = next((c for c in ("sales_price","sales_price_eur","price_eur","offer_price") if c in comparison_df.columns), None)
-        if price_col:
-            p = pd.to_numeric(comparison_df[price_col], errors="coerce")
-            valid = p.dropna()
-            if len(valid) >= 2 and float(valid.max()) > float(valid.min()):
-                comparison_df["sales_price_score"] = ((valid.max() - p) / (valid.max() - valid.min())).fillna(0.0)
-                comparison_df["scoring_price_available"] = "yes"
-            elif len(valid) == 1:
-                comparison_df["sales_price_score"] = p.apply(lambda x: 1.0 if pd.notna(x) else 0.0)
-                comparison_df["scoring_price_available"] = "yes"
-            else:
-                comparison_df["sales_price_score"] = 0.0
-                comparison_df["scoring_price_available"] = "no"
-        w = (cfg.get("final_weights_pct", {}) if hasattr(cfg, "get") else {}) or {}
-        crit = ["flow_rate_score","material_v4a_score","din_en_1253_score","din_en_18534_score","height_adjustability_score","sales_price_score","outlet_flexibility_score","sealing_fleece_score","colour_count_score"]
-        def _row_final(rr):
-            denom = 0.0; num = 0.0
-            for k in crit:
-                wk = float(w.get(k,0) or 0)
-                if k == "sales_price_score" and str(rr.get("scoring_price_available","")) == "no":
-                    continue
-                denom += wk
-                num += wk * float(rr.get(k,0) or 0)
-            return (num/denom) if denom>0 else 0.0
-        comparison_df["final_score"] = comparison_df.apply(_row_final, axis=1)
-        comparison_df["final_score_pct"] = comparison_df["final_score"] * 100.0
+
+    # Final safety guard + score synchronization:
+    # Comparison must be built from the finalized Products rows only.
+    # This prevents component/base_set rows from entering Comparison and ensures
+    # all scoring columns in Comparison are identical to Products for the same row.
+    if not products_df.empty and "final_score" in products_df.columns:
+        products_df["final_score_pct"] = pd.to_numeric(products_df["final_score"], errors="coerce").fillna(0.0) * 100.0
+
+    if not comparison_df.empty and not products_df.empty and "product_id" in comparison_df.columns and "product_id" in products_df.columns:
+        key_cols = ["product_id"]
+        if "manufacturer" in comparison_df.columns and "manufacturer" in products_df.columns:
+            key_cols = ["manufacturer", "product_id"]
+
+        comparison_keys = set(
+            tuple(str(row.get(k, "")) for k in key_cols)
+            for _, row in comparison_df[key_cols].fillna("").iterrows()
+        )
+
+        def _row_key(row: pd.Series) -> tuple:
+            return tuple(str(row.get(k, "")) for k in key_cols)
+
+        product_mask = products_df.apply(lambda row: _row_key(row) in comparison_keys, axis=1)
+
+        if "candidate_type" in products_df.columns:
+            product_mask &= ~products_df["candidate_type"].astype(str).str.lower().isin({"component", "base_set"})
+
+        if "promote_to_product" in products_df.columns:
+            # Keep explicit benchmark products and synthetic/assembled products, but do not let
+            # rows marked promote_to_product=no leak into Comparison. Missing value is allowed
+            # for legacy rows that are otherwise valid product rows.
+            promote = products_df["promote_to_product"].astype(str).str.lower()
+            product_mask &= promote.isin({"", "nan", "none", "yes", "true", "1"})
+
+        comparison_df = products_df.loc[product_mask].copy().reset_index(drop=True)
+
+        if "final_score" in comparison_df.columns:
+            comparison_df["final_score"] = pd.to_numeric(comparison_df["final_score"], errors="coerce").fillna(0.0)
+            comparison_df["final_score_pct"] = comparison_df["final_score"] * 100.0
+    else:
+        comparison_df = pd.DataFrame(columns=list(products_df.columns)) if not products_df.empty else comparison_df
+
     excluded_df = pd.DataFrame(excluded_rows)
     evidence_df = pd.DataFrame(evidence_rows)
     bom_options_df = pd.DataFrame(bom_rows)
-
-    # Final safety guard: Comparison must be a subset of benchmark-eligible Products only.
-    if not comparison_df.empty and not products_df.empty and "product_id" in comparison_df.columns and "product_id" in products_df.columns:
-        allowed_product_ids = set(products_df["product_id"].astype(str))
-        comparison_df = comparison_df[comparison_df["product_id"].astype(str).isin(allowed_product_ids)].copy()
-        if "candidate_type" in products_df.columns:
-            component_ids = set(
-                products_df.loc[
-                    products_df["candidate_type"].astype(str).str.lower().isin({"component", "base_set"}),
-                    "product_id",
-                ].astype(str)
-            )
-            if component_ids:
-                comparison_df = comparison_df[~comparison_df["product_id"].astype(str).isin(component_ids)].copy()
 
     return products_df, comparison_df, excluded_df, evidence_df, bom_options_df
