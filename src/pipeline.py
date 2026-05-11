@@ -1305,6 +1305,14 @@ def run_update(
 
             tray_incomplete_signal = is_tray and role == "base_set" and (_is_known_or_signaled_incomplete_tray_base(rowd) or not tray_matches)
             promote = (role in {"complete_drain"}) and (not non_promotable) and (not explicit_override) and len(missing_required_parts) == 0
+
+            # Tray families such as Tempoplex/Domoplex often need base + cover pairing and must not
+            # be promoted when they are only a base_set/cover. However, a row that is explicitly
+            # classified as complete_drain and has no missing required parts should still be allowed
+            # to promote. This preserves Varioplex complete-drain behavior.
+            if is_tray and role != "complete_drain":
+                promote = False
+
             if promote:
                 reason = "promoted_complete_assembly"
             elif explicit_override:

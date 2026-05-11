@@ -1,5 +1,8 @@
 from __future__ import annotations
 from typing import Any, Dict, Optional, Tuple, Union
+import math
+import re
+
 from .config import WeightConfig
 
 def _cfg_get(cfg, key, default=None):
@@ -10,6 +13,14 @@ def _to_float(x):
         if x is None or str(x).strip()=="": return None
         return float(x)
     except Exception:
+        pass
+
+    text = str(value).strip().lower()
+    return text in {"", "nan", "none", "null", "unknown", "not_applicable", "n/a"}
+
+
+def _to_float(value: Any) -> Optional[float]:
+    if _is_missing(value):
         return None
 
 def _truthy(x):

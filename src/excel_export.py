@@ -13,6 +13,38 @@ _ILLEGAL_EXCEL_XML_CHARS_RE = re.compile(r"[\x00-\x08\x0B-\x0C\x0E-\x1F]")
 _ILLEGAL_ESCAPED_UNICODE_RE = re.compile(r"\\u00(?:0[0-8BCEFbcef]|1[0-9A-Fa-f])")
 _EXCEL_MAX_CELL_LEN = 32767
 
+BENCHMARK_SCORING_KEYS = [
+    "flow_rate_score",
+    "material_v4a_score",
+    "din_en_1253_score",
+    "din_en_18534_score",
+    "height_adjustability_score",
+    "sales_price_score",
+    "outlet_flexibility_score",
+    "sealing_fleece_score",
+    "colour_count_score",
+]
+
+DEFAULT_BENCHMARK_WEIGHTS_PCT = {
+    "flow_rate_score": 25,
+    "material_v4a_score": 15,
+    "din_en_1253_score": 10,
+    "din_en_18534_score": 10,
+    "height_adjustability_score": 10,
+    "sales_price_score": 15,
+    "outlet_flexibility_score": 5,
+    "sealing_fleece_score": 5,
+    "colour_count_score": 5,
+}
+
+LEGACY_EQUIVALENCE_KEYS = [
+    "length_mode_match",
+    "selected_length_match",
+    "length_delta_within_tolerance",
+    "equiv_finish_set_requires_base",
+    "equiv_complete_system_bonus",
+]
+
 
 def _is_nan(x: Any) -> bool:
     try:
@@ -25,14 +57,17 @@ def _sanitize_excel_string(value: str) -> str:
     s = value or ""
     s = _ILLEGAL_EXCEL_XML_CHARS_RE.sub("", s)
     s = _ILLEGAL_ESCAPED_UNICODE_RE.sub("", s)
+
     if len(s) > _EXCEL_MAX_CELL_LEN:
         s = s[:_EXCEL_MAX_CELL_LEN]
+
     return s
 
 
 def _to_excel_cell(v: Any) -> Any:
     """
     Převede hodnotu z DataFrame na hodnotu, kterou openpyxl umí uložit do buňky.
+
     - None/NaN -> None
     - list/tuple/set/dict -> JSON string
     - Path -> str
@@ -184,8 +219,19 @@ def export_excel(
 ) -> None:
     """
     Exportuje výsledky do XLSX.
-    - Products: jen benchmarkované produkty (bez base_set)
-    - Components: base_set produkty
+
+    Sheets:
+    - Candidates_All
+    - Products
+    - Components
+    - Comparison
+    - Excluded
+    - Evidence
+    - BOM_Options
+    - Source_Checks
+    - Final_Scoring_Weights
+    - Legacy_Equivalence_Weights
+    - Config
     """
     wb = openpyxl.load_workbook(template_path)
 
@@ -197,29 +243,51 @@ def export_excel(
     bom_options_df = pd.DataFrame() if bom_options_df is None else bom_options_df.copy()
     components_df = pd.DataFrame() if components_df is None else components_df.copy()
 
-    # --- AUTO split base_set -> Components ---
+    # Odstranit staré template listy, které už nemají být součástí hlavního scoringu.
+    # Legacy equivalence data se exportuje explicitně do Legacy_Equivalence_Weights
+    # s enabled=False.
+    for obsolete_sheet in ["Equivalence_Weights"]:
+        if obsolete_sheet in wb.sheetnames:
+            ws_old = wb[obsolete_sheet]
+            wb.remove(ws_old)
+
+    # --- AUTO split base_set/component -> Components ---
     if not products_df.empty and components_df.empty:
         df = products_df.copy()
 
-        cand = df["candidate_type"].astype(str).str.lower() if "candidate_type" in df.columns else pd.Series([""] * len(df))
-        comp = df["complete_system"].astype(str).str.lower() if "complete_system" in df.columns else pd.Series([""] * len(df))
+        if "candidate_type" in df.columns:
+            cand = df["candidate_type"].astype(str).str.lower()
+        else:
+            cand = pd.Series([""] * len(df), index=df.index)
 
-        is_component = cand.isin(["base_set", "component"]) | comp.str.contains("component/base-set", na=False) | comp.str.contains("component", na=False)
+        if "complete_system" in df.columns:
+            comp = df["complete_system"].astype(str).str.lower()
+        else:
+            comp = pd.Series([""] * len(df), index=df.index)
+
+        is_component = (
+            cand.isin(["base_set", "component"])
+            | comp.str.contains("component/base-set", na=False)
+            | comp.str.contains("component", na=False)
+        )
 
         components_df = df[is_component].copy()
         products_df = df[~is_component].copy()
 
-    def write_df(sheet_name: str, df: pd.DataFrame):
-        # přepiš sheet
+    def write_df(sheet_name: str, df: pd.DataFrame) -> None:
+        # Přepiš sheet, aby v template nezůstávaly staré/hybridní hodnoty.
         if sheet_name in wb.sheetnames:
             ws_old = wb[sheet_name]
             wb.remove(ws_old)
+
         ws = wb.create_sheet(sheet_name)
 
-        # hlavička
+        df = pd.DataFrame() if df is None else df.copy()
+
+        # Hlavička
         ws.append([_sanitize_excel_string(str(c)) for c in df.columns])
 
-        # řádky
+        # Řádky
         for _, row in df.iterrows():
             ws.append([_to_excel_cell(v) for v in row.tolist()])
 
