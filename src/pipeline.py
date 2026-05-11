@@ -3363,7 +3363,6 @@ def run_update(
             for k in ("flow_rate_lps", "outlet_dn", "height_adj_min_mm", "height_adj_max_mm", "water_seal_mm", "flow_rate_raw_text"):
                 if trap.get(k) not in (None, ""):
                     asm[k] = trap.get(k)
-            products_rows.append(asm)
             asm_params = {k: asm.get(k) for k in ("flow_rate_lps","outlet_dn","height_adj_min_mm","height_adj_max_mm","water_seal_mm") if asm.get(k) not in (None, "")}
             asm_param_score, asm_param_detail = compute_parameter_score(asm_params, cfg)
             asm_equiv_score = compute_equivalence_score({"candidate_type": "drain", **asm_params}, cfg)
@@ -3378,9 +3377,16 @@ def run_update(
                 asm.update(asm_param_detail)
                 if "benchmark_scoring_notes" not in asm:
                     asm["benchmark_scoring_notes"] = asm_param_detail.get("scoring_notes", "")
+            products_rows.append(asm)
             comparison_rows.append({
                 "manufacturer": "kaldewei", "product_id": asm_id, "product_name": asm.get("product_name"),
-                "product_url": asm.get("product_url"), "final_score": asm_final_score, "param_score": asm_param_score, "equiv_score": asm_equiv_score, "system_score": asm_system_score,
+                "product_url": asm.get("product_url"),
+                "candidate_type": asm.get("candidate_type"),
+                "system_role": asm.get("system_role"),
+                "flow_rate_lps": asm.get("flow_rate_lps"),
+                "height_adj_min_mm": asm.get("height_adj_min_mm"),
+                "height_adj_max_mm": asm.get("height_adj_max_mm"),
+                "final_score": asm_final_score, "param_score": asm_param_score, "equiv_score": asm_equiv_score, "system_score": asm_system_score,
                 "final_score_pct": asm_final_score * 100.0,
                 **{k: v for k, v in (asm_param_detail or {}).items()},
             })
@@ -3544,10 +3550,34 @@ def run_update(
     comparison_df = pd.DataFrame(comparison_rows)
     if not comparison_df.empty and not products_df.empty:
         extra_cols = [
-            "flow_rate_score","material_v4a_score","din_en_1253_score","din_en_18534_score",
-            "height_adjustability_score","sales_price_score","outlet_flexibility_score",
-            "sealing_fleece_score","colour_count_score","flow_rate_pass_0_8_lps",
-            "height_adjustability_range_mm","scoring_notes","sales_price","sales_price_eur","price_eur","offer_price"
+            # Product validation / audit fields required in Comparison exports.
+            "candidate_type",
+            "system_role",
+            "complete_system",
+            "promote_to_product",
+            "promotion_reason",
+            "flow_rate_lps",
+            "height_adj_min_mm",
+            "height_adj_max_mm",
+
+            # Benchmark Scoring V2 detail fields.
+            "flow_rate_score",
+            "material_v4a_score",
+            "din_en_1253_score",
+            "din_en_18534_score",
+            "height_adjustability_score",
+            "sales_price_score",
+            "outlet_flexibility_score",
+            "sealing_fleece_score",
+            "colour_count_score",
+            "flow_rate_pass_0_8_lps",
+            "height_adjustability_range_mm",
+            "scoring_notes",
+            "benchmark_scoring_notes",
+            "sales_price",
+            "sales_price_eur",
+            "price_eur",
+            "offer_price",
         ]
         have = [c for c in extra_cols if c in products_df.columns]
         if have:
