@@ -254,7 +254,7 @@ class PipelineExportTests(unittest.TestCase):
         self.assertNotIn("kaldewei-flowdrain-horizontal-regular", set(kcomp["product_id"]))
         self.assertNotIn("kaldewei-flowdrain-horizontal-flat", set(kcomp["product_id"]))
         assembled = products[(products["manufacturer"] == "kaldewei") & (products["product_id"].astype(str).str.startswith("kaldewei-assembled-"))]
-        self.assertEqual(len(assembled), 4)
+        self.assertEqual(len(assembled), 6)
         for col in ["param_score", "equiv_score", "system_score", "final_score"]:
             self.assertTrue(assembled[col].notna().all())
         reg = assembled[assembled["product_id"].astype(str).str.contains("regular")].iloc[0]
@@ -686,11 +686,22 @@ class PipelineExportTests(unittest.TestCase):
         self.assertEqual(set(finish_components["finish_name"].tolist()), {"brushed steel", "brushed champagne", "brushed graphite", "alpine white matt", "black matt 100"})
         self.assertTrue({"930", "931", "932", "711", "676"}.issubset(set(finish_components["finish_code"].astype(str).tolist())))
         assembled = products[(products["manufacturer"] == "kaldewei") & (products["promotion_reason"] == "assembled_from_bom")]
-        self.assertEqual(len(assembled), 4)
-        self.assertTrue(set(assembled["product_family"].tolist()) == {"flowline_zero", "flowpoint_zero"})
+        self.assertEqual(len(assembled), 6)
+        self.assertEqual(
+            set(assembled["product_family"].tolist()),
+            {"flowline_zero", "flowpoint_zero", "nexsys"},
+        )
         self.assertTrue((assembled["candidate_type"] == "drain").all())
         self.assertTrue((assembled["promote_to_product"] == "yes").all())
-        self.assertEqual(set(assembled["trap_component_id"].tolist()), {"kaldewei-flowdrain-horizontal-regular", "kaldewei-flowdrain-horizontal-flat"})
+        self.assertEqual(
+            set(assembled["trap_component_id"].tolist()),
+            {
+                "kaldewei-flowdrain-horizontal-regular",
+                "kaldewei-flowdrain-horizontal-flat",
+                "kaldewei-ka-4121",
+                "kaldewei-ka-4122",
+            },
+        )
         self.assertTrue(((assembled["product_id"] == "kaldewei-assembled-flowline-zero__flowdrain-horizontal-regular") & (assembled["flow_rate_lps"] == 0.8)).any())
         self.assertTrue(((assembled["product_id"] == "kaldewei-assembled-flowpoint-zero__flowdrain-horizontal-flat") & (assembled["flow_rate_lps"] == 0.63)).any())
         self.assertTrue(((bom["product_id"] == "kaldewei-flowline-zero") & (bom["component_id"] == "kaldewei-flowdrain-horizontal-regular")).any())
@@ -700,7 +711,21 @@ class PipelineExportTests(unittest.TestCase):
         self.assertEqual(len(bom[(bom["product_id"] == "kaldewei-flowline-zero") & (bom["option_type"] == "compatible_finish")]), 5)
         self.assertEqual(len(bom[(bom["product_id"] == "kaldewei-flowpoint-zero") & (bom["option_type"] == "compatible_finish")]), 5)
         self.assertFalse(((bom["product_id"] == "kaldewei-ka-4121") | (bom["product_id"] == "kaldewei-ka-4122")).any())
-        self.assertFalse(((assembled["product_id"].astype(str).str.contains("nexsys"))).any())
+        nexsys_assembled = assembled[assembled["product_id"].astype(str).str.contains("nexsys")]
+        self.assertEqual(len(nexsys_assembled), 2)
+        self.assertEqual(
+            set(nexsys_assembled["product_id"].tolist()),
+            {
+                "kaldewei-assembled-nexsys__ka-4121",
+                "kaldewei-assembled-nexsys__ka-4122",
+            },
+        )
+        self.assertEqual(
+            set(nexsys_assembled["trap_component_id"].tolist()),
+            {"kaldewei-ka-4121", "kaldewei-ka-4122"},
+        )
+        self.assertTrue((nexsys_assembled["candidate_type"] == "drain").all())
+        self.assertTrue((nexsys_assembled["system_role"] == "assembled_system").all())
         comp = products[products["candidate_type"] == "component"].set_index("product_id")
         self.assertEqual(float(comp.loc["kaldewei-flowdrain-horizontal-flat", "flow_rate_lps"]), 0.63)
         self.assertEqual(str(comp.loc["kaldewei-flowdrain-horizontal-flat", "outlet_dn"]), "DN40")
@@ -753,7 +778,7 @@ class PipelineExportTests(unittest.TestCase):
         ev = evidence[evidence["manufacturer"] == "kaldewei"].set_index("label")
         self.assertEqual(str(ev.loc["kaldewei_registry_candidates_count", "snippet"]), str(len(registry)))
         self.assertEqual(str(ev.loc["kaldewei_final_rows_count", "snippet"]), str(len(products)))
-        self.assertEqual(str(ev.loc["kaldewei_assembled_products_created_count", "snippet"]), "4")
+        self.assertEqual(str(ev.loc["kaldewei_assembled_products_created_count", "snippet"]), "6")
         self.assertEqual(str(ev.loc["kaldewei_assembled_products_left_in_components_count", "snippet"]), "0")
         self.assertEqual(str(ev.loc["kaldewei_nexsys_drain_sets_count", "snippet"]), "2")
         self.assertEqual(str(ev.loc["kaldewei_flowline_finish_components_count", "snippet"]), "5")

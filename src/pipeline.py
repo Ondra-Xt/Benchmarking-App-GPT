@@ -3309,14 +3309,20 @@ def run_update(
         kal_existing_ids = set(kal_rows_map.keys())
         kal_seen_keys: Set[Tuple[str, str]] = set()
         for br in [r for r in bom_rows if str(r.get("manufacturer") or "").lower() == "kaldewei"]:
-            if str(br.get("option_type") or "") != "required_trap_set":
-                continue
+            opt_type = str(br.get("option_type") or "")
             fam = str(br.get("parent_family") or "")
-            if fam not in {"flowline_zero", "flowpoint_zero"}:
+            allowed_pairs = {
+                ("flowline_zero", "required_trap_set"),
+                ("flowpoint_zero", "required_trap_set"),
+                ("nexsys", "compatible_drain_set"),
+            }
+            if (fam, opt_type) not in allowed_pairs:
                 continue
             pid = str(br.get("product_id") or "")
             cid = str(br.get("component_id") or "")
-            if cid not in {"kaldewei-flowdrain-horizontal-regular", "kaldewei-flowdrain-horizontal-flat"}:
+            if fam in {"flowline_zero", "flowpoint_zero"} and cid not in {"kaldewei-flowdrain-horizontal-regular", "kaldewei-flowdrain-horizontal-flat"}:
+                continue
+            if fam == "nexsys" and cid not in {"kaldewei-ka-4121", "kaldewei-ka-4122"}:
                 continue
             base = kal_rows_map.get(pid)
             trap = kal_rows_map.get(cid)
@@ -3345,11 +3351,15 @@ def run_update(
                 "complete_system": "yes",
                 "promote_to_product": "yes",
                 "promotion_reason": "assembled_from_bom",
-                "assembly_reason": "kaldewei_flow_visible_drain_with_flowdrain",
+                "assembly_reason": (
+                    "kaldewei_nexsys_with_ka_drain_set"
+                    if fam == "nexsys"
+                    else "kaldewei_flow_visible_drain_with_flowdrain"
+                ),
                 "assembled_from_bom": "true",
                 "product_family": fam,
                 "parent_family": fam,
-                "option_family": "flowdrain",
+                "option_family": "nexsys" if fam == "nexsys" else "flowdrain",
                 "base_component_id": pid,
                 "trap_component_id": cid,
                 "matched_component_ids": f"{pid},{cid}",
@@ -3360,10 +3370,41 @@ def run_update(
                 "source_status": "known",
                 "source_note": "derived_from_bom_assembly",
             })
-            for k in ("flow_rate_lps", "outlet_dn", "height_adj_min_mm", "height_adj_max_mm", "water_seal_mm", "flow_rate_raw_text"):
+            for k in (
+                "flow_rate_lps",
+                "flow_rate_10mm_lps",
+                "flow_rate_20mm_lps",
+                "outlet_dn",
+                "dn",
+                "height_adj_min_mm",
+                "height_adj_max_mm",
+                "water_seal_mm",
+                "flow_rate_raw_text",
+                "din_en_1253",
+                "din_en_1253_cert",
+                "certification_din_en_1253",
+                "certifications",
+                "article_number",
+                "model_number",
+            ):
                 if trap.get(k) not in (None, ""):
                     asm[k] = trap.get(k)
-            asm_params = {k: asm.get(k) for k in ("flow_rate_lps","outlet_dn","height_adj_min_mm","height_adj_max_mm","water_seal_mm") if asm.get(k) not in (None, "")}
+            asm_params = {
+                k: asm.get(k)
+                for k in (
+                    "flow_rate_lps",
+                    "outlet_dn",
+                    "dn",
+                    "height_adj_min_mm",
+                    "height_adj_max_mm",
+                    "water_seal_mm",
+                    "din_en_1253",
+                    "din_en_1253_cert",
+                    "certification_din_en_1253",
+                    "certifications",
+                )
+                if asm.get(k) not in (None, "")
+            }
             asm_param_score, asm_param_detail = compute_parameter_score(asm_params, cfg)
             asm_equiv_score = compute_equivalence_score({"candidate_type": "drain", **asm_params}, cfg)
             asm_system_score = compute_system_score("drain", has_bom_options=True)
@@ -3379,14 +3420,29 @@ def run_update(
                     asm["benchmark_scoring_notes"] = asm_param_detail.get("scoring_notes", "")
             products_rows.append(asm)
             comparison_rows.append({
-                "manufacturer": "kaldewei", "product_id": asm_id, "product_name": asm.get("product_name"),
+                "manufacturer": "kaldewei",
+                "product_id": asm_id,
+                "product_name": asm.get("product_name"),
                 "product_url": asm.get("product_url"),
                 "candidate_type": asm.get("candidate_type"),
                 "system_role": asm.get("system_role"),
+                "complete_system": asm.get("complete_system"),
+                "promote_to_product": asm.get("promote_to_product"),
+                "promotion_reason": asm.get("promotion_reason"),
+                "assembled_from_bom": asm.get("assembled_from_bom"),
+                "base_component_id": asm.get("base_component_id"),
+                "trap_component_id": asm.get("trap_component_id"),
                 "flow_rate_lps": asm.get("flow_rate_lps"),
                 "height_adj_min_mm": asm.get("height_adj_min_mm"),
                 "height_adj_max_mm": asm.get("height_adj_max_mm"),
-                "final_score": asm_final_score, "param_score": asm_param_score, "equiv_score": asm_equiv_score, "system_score": asm_system_score,
+                "water_seal_mm": asm.get("water_seal_mm"),
+                "din_en_1253": asm.get("din_en_1253"),
+                "certification_din_en_1253": asm.get("certification_din_en_1253"),
+                "certifications": asm.get("certifications"),
+                "final_score": asm_final_score,
+                "param_score": asm_param_score,
+                "equiv_score": asm_equiv_score,
+                "system_score": asm_system_score,
                 "final_score_pct": asm_final_score * 100.0,
                 **{k: v for k, v in (asm_param_detail or {}).items()},
             })
@@ -3656,5 +3712,21 @@ def run_update(
             )
             if component_ids:
                 comparison_df = comparison_df[~comparison_df["product_id"].astype(str).isin(component_ids)].copy()
+
+        # If concrete NEXSYS + KA4121/KA4122 assembled benchmark rows exist,
+        # remove the generic base NEXSYS row from Comparison. Otherwise it would
+        # remain as a zero-score configuration row without drain-set inputs.
+        nexsys_assembled_ids = {
+            "kaldewei-assembled-nexsys__ka-4121",
+            "kaldewei-assembled-nexsys__ka-4122",
+        }
+        comparison_ids = set(comparison_df["product_id"].astype(str))
+        if comparison_ids.intersection(nexsys_assembled_ids):
+            comparison_df = comparison_df[
+                ~(
+                    (comparison_df["manufacturer"].astype(str).str.lower() == "kaldewei")
+                    & (comparison_df["product_id"].astype(str) == "kaldewei-nexsys")
+                )
+            ].copy()
 
     return products_df, comparison_df, excluded_df, evidence_df, bom_options_df
