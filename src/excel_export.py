@@ -143,72 +143,6 @@ def _present(v: Any) -> bool:
     return s not in {"", "nan", "none", "null", "unknown", "not_applicable"}
 
 
-
-
-def _cfg_get(cfg: Any, key: str, default: Any = None) -> Any:
-    if cfg is None:
-        return default
-    if hasattr(cfg, "get") and callable(getattr(cfg, "get")):
-        try:
-            return cfg.get(key, default)
-        except Exception:
-            pass
-    return getattr(cfg, key, default)
-
-
-def _extract_final_scoring_weights(cfg: Any) -> pd.DataFrame:
-    raw = _cfg_get(cfg, "final_weights_pct", {}) or {}
-    if not isinstance(raw, dict):
-        raw = {}
-
-    rows = []
-    for key in BENCHMARK_SCORING_KEYS:
-        val = raw.get(key, DEFAULT_BENCHMARK_WEIGHTS_PCT[key])
-        try:
-            val = float(val)
-        except Exception:
-            val = float(DEFAULT_BENCHMARK_WEIGHTS_PCT[key])
-        rows.append({
-            "key": key,
-            "weight_pct": val,
-            "enabled": True,
-            "scoring_model": "benchmark_scoring_v2",
-            "note": "active benchmark scoring criterion",
-        })
-
-    return pd.DataFrame(rows, columns=["key", "weight_pct", "enabled", "scoring_model", "note"])
-
-
-def _extract_legacy_equivalence_weights(cfg: Any) -> pd.DataFrame:
-    raw = _cfg_get(cfg, "equivalence_weights_pct", {}) or {}
-    if not isinstance(raw, dict):
-        raw = {}
-
-    rows = []
-    for key in LEGACY_EQUIVALENCE_KEYS:
-        try:
-            legacy_val = float(raw.get(key, 0) or 0)
-        except Exception:
-            legacy_val = 0.0
-        rows.append({
-            "key": key,
-            "weight_pct": 0.0,
-            "legacy_weight_pct": legacy_val,
-            "enabled": False,
-            "scoring_model": "legacy_equivalence_diagnostic_only",
-            "note": "disabled; not used by benchmark_scoring_v2 final_score",
-        })
-
-    return pd.DataFrame(rows, columns=["key", "weight_pct", "legacy_weight_pct", "enabled", "scoring_model", "note"])
-
-
-def _extract_config_sheet() -> pd.DataFrame:
-    rows = [
-        {"key": "active_scoring_model", "value": "benchmark_scoring_v2", "note": "active scoring model"},
-        {"key": "benchmark_scoring_weights_sheet", "value": "Final_Scoring_Weights", "note": "active benchmark scoring weights"},
-        {"key": "legacy_equivalence_weights_sheet", "value": "Legacy_Equivalence_Weights", "note": "disabled diagnostic-only legacy weights"},
-    ]
-    return pd.DataFrame(rows, columns=["key", "value", "note"])
 def _scoring_field_coverage(products_df: pd.DataFrame, comparison_df: pd.DataFrame) -> pd.DataFrame:
     cols = ["manufacturer","product_id","product_name","candidate_type","complete_system","in_products","in_comparison",
             "has_flow_rate_lps","has_material_data","has_din_en_1253_data","has_din_en_18534_data",
@@ -242,8 +176,8 @@ def _scoring_field_coverage(products_df: pd.DataFrame, comparison_df: pd.DataFra
         on=["manufacturer", "product_id"],
         how="left",
     )
-    all_rows["in_products"] = all_rows["in_products"].where(pd.notna(all_rows["in_products"]), False).astype(bool)
-    all_rows["in_comparison"] = all_rows["in_comparison"].where(pd.notna(all_rows["in_comparison"]), False).astype(bool)
+    all_rows["in_products"] = all_rows["in_products"].fillna(False)
+    all_rows["in_comparison"] = all_rows["in_comparison"].fillna(False)
     out = []
     groups = [
         ("has_flow_rate_lps", lambda r: (_present(r.get("flow_rate_lps")) and pd.to_numeric([r.get("flow_rate_lps")], errors="coerce")[0] > 0)),
@@ -365,9 +299,6 @@ def export_excel(
     write_df("Evidence", evidence_df)
     write_df("BOM_Options", bom_options_df)
     write_df("Source_Checks", _extract_source_checks(evidence_df))
-    write_df("Final_Scoring_Weights", _extract_final_scoring_weights(cfg))
-    write_df("Legacy_Equivalence_Weights", _extract_legacy_equivalence_weights(cfg))
-    write_df("Config", _extract_config_sheet())
     write_df("Scoring_Field_Coverage", _scoring_field_coverage(products_df, comparison_df))
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)

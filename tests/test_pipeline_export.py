@@ -262,6 +262,23 @@ class PipelineExportTests(unittest.TestCase):
         self.assertEqual(float(reg.get("flow_rate_lps")), 0.8)
         self.assertEqual(float(flat.get("flow_rate_lps")), 0.63)
         self.assertGreater(float(reg.get("param_score")), float(flat.get("param_score")))
+        self.assertEqual(float(reg.get("flow_rate_score")), 1.0)
+        self.assertEqual(str(reg.get("flow_rate_pass_0_8_lps")), "yes")
+        self.assertEqual(float(reg.get("height_adjustability_range_mm")), 101.0)
+        self.assertEqual(float(reg.get("height_adjustability_score")), 1.0)
+        self.assertAlmostEqual(float(reg.get("final_score")), 0.4117647058823529, 12)
+        self.assertAlmostEqual(float(reg.get("final_score_pct")), float(reg.get("final_score")) * 100.0, 10)
+        self.assertAlmostEqual(float(flat.get("flow_rate_score")), 0.7875, 4)
+        self.assertEqual(str(flat.get("flow_rate_pass_0_8_lps")), "no")
+        self.assertEqual(float(flat.get("height_adjustability_range_mm")), 20.0)
+        self.assertEqual(float(flat.get("height_adjustability_score")), 0.2)
+        self.assertAlmostEqual(float(flat.get("final_score")), 0.2551470588235294, 12)
+        self.assertAlmostEqual(float(flat.get("final_score_pct")), float(flat.get("final_score")) * 100.0, 10)
+        reg_cmp = comparison[comparison["product_id"] == reg["product_id"]].iloc[0]
+        flat_cmp = comparison[comparison["product_id"] == flat["product_id"]].iloc[0]
+        for col in ["final_score", "final_score_pct", "flow_rate_score", "flow_rate_pass_0_8_lps", "height_adjustability_range_mm", "height_adjustability_score"]:
+            self.assertEqual(str(reg_cmp.get(col)), str(reg.get(col)))
+            self.assertEqual(str(flat_cmp.get(col)), str(flat.get(col)))
         kprod = products[products["manufacturer"] == "kaldewei"]
         na_ids = ["kaldewei-flowpoint-zero", "kaldewei-flowdrain-horizontal-regular", "kaldewei-flowdrain-horizontal-flat", "kaldewei-ka-90-horizontal", "kaldewei-ka-120-horizontal", "kaldewei-ka-300-horizontal", "kaldewei-xetis-ka-200"]
         for pid in na_ids:
