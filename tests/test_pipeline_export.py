@@ -43,6 +43,22 @@ class _FakeViegaConnector:
         return []
 
 
+class _FakeAcoConnector:
+    @staticmethod
+    def extract_parameters(url):
+        if "57-128" in url or "ws25" in url:
+            return {"flow_rate_lps": 0.62, "flow_rate_10mm_lps": 0.56, "flow_rate_20mm_lps": 0.62, "evidence": [("flow", "0,56/0,62 l/s", "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/")]}
+        if "80-128" in url or "ws50" in url:
+            return {"flow_rate_lps": 0.91, "flow_rate_10mm_lps": 0.72, "flow_rate_20mm_lps": 0.91, "evidence": [("flow", "0,72/0,91 l/s", "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/")]}
+        if "public" in url:
+            return {"flow_rate_lps": None, "din_en_1253_cert": None, "evidence": [("public", "official product page", "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/")]}
+        return {"flow_rate_lps": 0.8, "evidence": [("splus", "official", "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/")]}
+
+    @staticmethod
+    def get_bom_options(url, params=None):
+        return []
+
+
 class PipelineExportTests(unittest.TestCase):
     def _make_template(self, path: Path):
         wb = openpyxl.Workbook()
@@ -271,6 +287,47 @@ class PipelineExportTests(unittest.TestCase):
         self.assertNotIn("non_promotable_accessory", set(products["why_not_product_reason"].tolist()))
         self.assertTrue(excluded.empty)
         self.assertTrue(bom.empty)
+
+    def test_aco_showerdrain_c_low_and_standard_variants_not_mixed(self):
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "aco", "product_id": "a-low", "product_name": "ShowerDrain C WS25", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-57-128-mm-ws25/", "candidate_type": "drain", "complete_system": "yes"},
+                {"manufacturer": "aco", "product_id": "a-std", "product_name": "ShowerDrain C WS50", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-80-128-mm-ws50/", "candidate_type": "drain", "complete_system": "yes"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"aco": _FakeAcoConnector()}, clear=True):
+            products, comparison, _, _, _ = pipeline.run_update(registry, default_config())
+        low = products[products["product_id"] == "a-low"].iloc[0]
+        std = products[products["product_id"] == "a-std"].iloc[0]
+        self.assertEqual(low["flow_rate_20mm_lps"], 0.62)
+        self.assertNotEqual(low["flow_rate_lps"], 0.91)
+        self.assertEqual(std["flow_rate_20mm_lps"], 0.91)
+        self.assertEqual(set(comparison["product_id"].tolist()), {"a-low", "a-std"})
+
+    def test_aco_comparison_excludes_component_only_rows(self):
+        registry = pd.DataFrame(
+            [
+                {"manufacturer": "aco", "product_id": "a-splus", "product_name": "ShowerDrain S+", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/", "candidate_type": "drain", "complete_system": "yes"},
+                {"manufacturer": "aco", "product_id": "a-mplus-body", "product_name": "ShowerDrain M+ body", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/", "candidate_type": "component", "system_role": "base_set", "complete_system": "yes"},
+                {"manufacturer": "aco", "product_id": "a-mplus-grate", "product_name": "ShowerDrain M+ grate", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/", "candidate_type": "component", "system_role": "grate", "complete_system": "yes"},
+            ]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"aco": _FakeAcoConnector()}, clear=True):
+            products, comparison, excluded, evidence, _ = pipeline.run_update(registry, default_config())
+        self.assertEqual(set(products["product_id"].tolist()), {"a-splus", "a-mplus-body", "a-mplus-grate"})
+        self.assertEqual(comparison["product_id"].tolist(), ["a-splus"])
+        self.assertTrue(excluded.empty)
+        self.assertTrue(all(("aco-haustechnik.de" in s) for s in evidence["source"].tolist()))
+
+    def test_aco_public_products_not_excluded_when_flow_missing(self):
+        registry = pd.DataFrame(
+            [{"manufacturer": "aco", "product_id": "a-public80", "product_name": "Public 80", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/public-80/", "candidate_type": "drain", "complete_system": "yes"}]
+        )
+        with patch.dict(pipeline.CONNECTORS, {"aco": _FakeAcoConnector()}, clear=True):
+            products, comparison, excluded, _, _ = pipeline.run_update(registry, default_config())
+        self.assertEqual(products["product_id"].tolist(), ["a-public80"])
+        self.assertEqual(comparison["product_id"].tolist(), ["a-public80"])
+        self.assertTrue(excluded.empty)
 
 
 if __name__ == "__main__":

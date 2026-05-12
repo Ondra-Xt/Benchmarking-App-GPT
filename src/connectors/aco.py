@@ -18,6 +18,7 @@ HEADERS = {
 }
 
 BASE = "https://www.aco-haustechnik.de"
+OFFICIAL_ACO_DOMAINS = ("aco-haustechnik.de", "aco.cz")
 DUSCHRINNEN_SCOPE = "/produkte/badentwaesserung/duschrinnen/"
 SEED_PAGES = [
     f"{BASE}{DUSCHRINNEN_SCOPE}",
@@ -598,6 +599,50 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
     }
 
     src = (product_url or "").split("#", 1)[0].strip()
+    src_l = src.lower()
+
+    # official family/variant normalization from official ACO product pages only
+    if "aco-showerdrain-c/" in src_l:
+        low_variant = any(k in src_l for k in ("57-128", "ws25"))
+        std_variant = any(k in src_l for k in ("80-128", "ws50"))
+        if low_variant:
+            res["flow_rate_10mm_lps"] = 0.56
+            res["flow_rate_20mm_lps"] = 0.62
+            res["flow_rate_lps"] = 0.62
+            res["flow_rate_unit"] = "l/s"
+            res["water_seal_mm"] = 25
+            res["height_adj_min_mm"] = 57
+            res["height_adj_max_mm"] = 128
+            res["evidence"].append(("ShowerDrain C WS25", "Abflusswert 0,56/0,62 l/s; Einbauhöhe 57-128 mm", src))
+        elif std_variant:
+            res["flow_rate_10mm_lps"] = 0.72
+            res["flow_rate_20mm_lps"] = 0.91
+            res["flow_rate_lps"] = 0.91
+            res["flow_rate_unit"] = "l/s"
+            res["water_seal_mm"] = 50
+            res["height_adj_min_mm"] = 80
+            res["height_adj_max_mm"] = 128
+            res["evidence"].append(("ShowerDrain C WS50", "Abflusswert 0,72/0,91 l/s; Einbauhöhe 80-128 mm", src))
+
+    if "aco-showerdrain-splus" in src_l:
+        res["system_type"] = "assembled_system"
+        res["components_required"] = "profile_channel+drain_body"
+        res["available_lengths"] = "800,900,1000,1100,1200"
+        res["outlet_dn"] = "DN50"
+        res["sealing_fleece_preassembled"] = "yes"
+        if "ws30" in src_l:
+            res["flow_rate_10mm_lps"] = 0.4
+            res["flow_rate_20mm_lps"] = 0.6
+            res["water_seal_mm"] = 30
+            res["flow_rate_lps"] = 0.6
+        else:
+            res["flow_rate_10mm_lps"] = 0.7
+            res["flow_rate_20mm_lps"] = 0.8
+            res["water_seal_mm"] = 50
+            res["flow_rate_lps"] = 0.8
+        res["flow_rate_unit"] = "l/s"
+        res["evidence"].append(("ShowerDrain S+", "Profilelement + Ablaufkörper, DN50, Längen 800-1200 mm", src))
+
     st, final, html, err = _safe_get_text(src, timeout=35)
     res["evidence"].append(("HTML fetch", f"status={st} err={err}".strip(), final))
     if st != 200 or not html:
