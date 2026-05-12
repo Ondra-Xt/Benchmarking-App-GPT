@@ -766,7 +766,10 @@ class PipelineExportTests(unittest.TestCase):
         self.assertFalse(comparison[comparison["manufacturer"] == "kaldewei"]["product_id"].astype(str).str.startswith("kaldewei-ka-120-").any())
         drains = products[products["candidate_type"] == "drain"].set_index("product_id")
         self.assertEqual(str(drains.loc["kaldewei-nexsys", "promotion_reason"]), "integrated_shower_surface_system")
-        self.assertIn("unclear", str(drains.loc["kaldewei-xetis-ka-200", "promotion_reason"]))
+        self.assertEqual(
+            str(drains.loc["kaldewei-xetis-ka-200", "promotion_reason"]),
+            "xetis_configuration_with_ka200",
+)
         labels = set(evidence[evidence["manufacturer"] == "kaldewei"]["label"].tolist())
         self.assertIn("kaldewei_registry_candidates_count", labels)
         self.assertIn("kaldewei_final_rows_count", labels)
