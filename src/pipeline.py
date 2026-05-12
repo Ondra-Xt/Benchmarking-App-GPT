@@ -394,8 +394,18 @@ def run_update(
 
         params = connector.extract_parameters(url) or {}
 
-        # ACO benchmark rows may legitimately miss selected technical values.
-        # Do not exclude only due to missing flow; keep score coverage honest.
+        # ACO cleanup: drains without flow should be excluded
+        if manufacturer == "aco" and candidate_type == "drain" and params.get("flow_rate_lps") in (None, ""):
+            excluded_rows.append({
+                "manufacturer": manufacturer,
+                "product_id": product_id,
+                "product_name": r.get("product_name"),
+                "product_url": url,
+                "candidate_type": candidate_type,
+                "complete_system": complete_system,
+                "excluded_reason": "missing_flow_after_html",
+            })
+            continue
         # get_bom_options je volitelné
         options = []
         if hasattr(connector, "get_bom_options"):
@@ -576,21 +586,16 @@ def run_update(
             else:
                 viega_debug["rows_emitted_to_components_count"] += 1
 
-        include_in_comparison = True
-        if manufacturer == "aco":
-            role = str(r.get("system_role") or "").strip().lower()
-            include_in_comparison = candidate_type != "component" and role not in {"cover", "grate", "accessory", "base_set"}
-        if include_in_comparison:
-            comparison_rows.append({
-                "manufacturer": manufacturer,
-                "product_id": product_id,
-                "product_name": r.get("product_name"),
-                "product_url": url,
-                "final_score": final_score,
-                "param_score": param_score,
-                "equiv_score": equiv_score,
-                "system_score": system_score,
-            })
+        comparison_rows.append({
+            "manufacturer": manufacturer,
+            "product_id": product_id,
+            "product_name": r.get("product_name"),
+            "product_url": url,
+            "final_score": final_score,
+            "param_score": param_score,
+            "equiv_score": equiv_score,
+            "system_score": system_score,
+        })
 
         # detail pro debug (volitelné)
         for k, v in (param_detail or {}).items():
