@@ -4,7 +4,7 @@ import csv
 import re
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Tuple
 
 import requests
 from bs4 import BeautifulSoup
@@ -20,8 +20,6 @@ URLS = {
 ARTICLE_RE = re.compile(r"\b(?:\d{4}\.\d{2}\.\d{2}|\d{8})\b")
 LEN_RE = re.compile(r"\b(\d{3,4})\s*mm\b", re.IGNORECASE)
 FLOW_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*l\s*/\s*s", re.IGNORECASE)
-FLOW10_RE = re.compile(r"10\s*mm[^\d]{0,20}(\d+(?:[.,]\d+)?)\s*l\s*/\s*s", re.IGNORECASE)
-FLOW20_RE = re.compile(r"20\s*mm[^\d]{0,20}(\d+(?:[.,]\d+)?)\s*l\s*/\s*s", re.IGNORECASE)
 WS_RE = re.compile(r"(?:sperrwasserh(?:ö|oe)he|geruchverschluss)[^\d]{0,20}(\d{2,3})\s*mm", re.IGNORECASE)
 DN_RE = re.compile(r"\bDN\s*(\d{2})\b", re.IGNORECASE)
 HEIGHT_RE = re.compile(r"(\d{2,3})\s*[-–]\s*(\d{2,3})\s*mm")
@@ -33,6 +31,8 @@ class Row:
     source: str
     source_type: str
     page_ref: str
+    source_refs: str = ""
+    component_role: str = "unknown"
     article_no: str = ""
     product_name: str = ""
     length_mm: str = ""
@@ -44,6 +44,8 @@ class Row:
     outlet_orientation: str = ""
     height_range_mm: str = ""
     compatibility_excerpt: str = ""
+    flow_mapping_status: str = "unknown"
+    assembly_ready: str = "source_only_family_level"
     notes: str = ""
 
 
@@ -53,87 +55,185 @@ def fetch(url: str) -> str:
     return r.text
 
 
+def _classify_role(text: str) -> str:
+    t = (text or "").lower()
+    if any(k in t for k in ("ablaufk", "einzelablauf", "drain body")):
+        return "drain_body"
+    if any(k in t for k in ("rinnenprofil", "duschrinnenprofil", "profil", "rinnenk", "channel")):
+        return "profile_channel"
+    if any(k in t for k in ("rost", "abdeckung", "grate", "cover")):
+        return "grate_cover"
+    if any(k in t for k in ("zubeh", "accessory", "showerstep", "keil")):
+        return "accessory"
+    return "unknown"
+
+
+def _determine_assembly_ready(row: Row) -> str:
+    if not row.article_no:
+        return "no_drain_article" if row.component_role == "drain_body" else "no_profile_article"
+    if row.flow_mapping_status == "ambiguous":
+        return "ambiguous_flow_mapping"
+    if not row.compatibility_excerpt:
+        return "no_article_to_article_compatibility"
+    return "yes"
+
+
+def _parse_flow_by_headers(headers: List[str], cells: List[str]) -> Tuple[str, str, str, str]:
+    idx10 = idx20 = None
+    for i, h in enumerate(headers):
+        hh = h.lower()
+        if "10" in hh and "mm" in hh and ("abfluss" in hh or "ablauf" in hh):
+            idx10 = i
+        if "20" in hh and "mm" in hh and ("abfluss" in hh or "ablauf" in hh):
+            idx20 = i
+
+    flow = ""
+    flow10 = ""
+    flow20 = ""
+    status = "unknown"
+
+    if idx10 is not None and idx10 < len(cells):
+        m10 = FLOW_RE.search(cells[idx10])
+        if m10:
+            flow10 = m10.group(1).replace(",", ".")
+    if idx20 is not None and idx20 < len(cells):
+        m20 = FLOW_RE.search(cells[idx20])
+        if m20:
+            flow20 = m20.group(1).replace(",", ".")
+
+    if flow10 or flow20:
+        status = "confirmed"
+        vals = [v for v in (flow10, flow20) if v]
+        flow = max(vals, key=lambda x: float(x)) if vals else ""
+        return flow, flow10, flow20, status
+
+    # fallback generic flow (ambiguous mapping)
+    joined = " ".join(cells)
+    mg = FLOW_RE.search(joined)
+    if mg:
+        flow = mg.group(1).replace(",", ".")
+        status = "ambiguous"
+    return flow, flow10, flow20, status
+
+
 def parse_html(url: str, html: str) -> List[Row]:
     soup = BeautifulSoup(html, "lxml")
     rows: List[Row] = []
 
     title = (soup.select_one("h1").get_text(" ", strip=True) if soup.select_one("h1") else "")
+    title_role = _classify_role(title + " " + url)
     flat = " ".join(soup.get_text(" ", strip=True).split())
     dn = next((f"DN{m.group(1)}" for m in DN_RE.finditer(flat)), "")
     ws = next((m.group(1) for m in WS_RE.finditer(flat)), "")
-    f10 = next((m.group(1).replace(",", ".") for m in FLOW10_RE.finditer(flat)), "")
-    f20 = next((m.group(1).replace(",", ".") for m in FLOW20_RE.finditer(flat)), "")
-    flow_generic = next((m.group(1).replace(",", ".") for m in FLOW_RE.finditer(flat)), "")
     h = next((f"{m.group(1)}-{m.group(2)}" for m in HEIGHT_RE.finditer(flat)), "")
     compat = next((m.group(0) for m in COMPAT_RE.finditer(flat)), "")
 
     table_count = 0
     for t in soup.select("table"):
         table_count += 1
-        for tr in t.select("tr"):
-            txt = " ".join(tr.get_text(" ", strip=True).split())
+        trs = t.select("tr")
+        if not trs:
+            continue
+        header_cells = [" ".join(c.get_text(" ", strip=True).split()) for c in trs[0].select("th,td")]
+        for tr in trs[1:]:
+            cell_texts = [" ".join(c.get_text(" ", strip=True).split()) for c in tr.select("th,td")]
+            txt = " ".join(cell_texts)
             if not txt:
                 continue
             am = ARTICLE_RE.search(txt)
             lm = LEN_RE.search(txt)
+            flow, flow10, flow20, flow_status = _parse_flow_by_headers(header_cells, cell_texts)
+            role = _classify_role(title + " " + txt + " " + url)
             row = Row(
                 source=url,
                 source_type="html_table",
                 page_ref=f"table_{table_count}",
+                source_refs=f"table_{table_count}",
+                component_role=role,
                 article_no=(am.group(0) if am else ""),
                 product_name=title,
                 length_mm=(lm.group(1) if lm else ""),
                 water_seal_mm=ws,
-                flow_rate_lps=flow_generic,
-                flow_rate_10mm_lps=f10,
-                flow_rate_20mm_lps=f20,
+                flow_rate_lps=flow,
+                flow_rate_10mm_lps=flow10,
+                flow_rate_20mm_lps=flow20,
                 outlet_dn=dn,
                 outlet_orientation=("horizontal" if "waagerecht" in flat.lower() else ""),
                 height_range_mm=h,
                 compatibility_excerpt=compat,
-                notes=("compatibility wording present" if compat else ""),
+                flow_mapping_status=flow_status,
+                notes=("flow mapping from headers" if flow_status == "confirmed" else ""),
             )
+            row.assembly_ready = _determine_assembly_ready(row)
             if row.article_no or row.length_mm:
                 rows.append(row)
 
     if not rows:
-        rows.append(Row(
+        row = Row(
             source=url,
             source_type="html_page",
             page_ref="main",
+            source_refs="main",
+            component_role=title_role,
             product_name=title,
             water_seal_mm=ws,
-            flow_rate_lps=flow_generic,
-            flow_rate_10mm_lps=f10,
-            flow_rate_20mm_lps=f20,
             outlet_dn=dn,
             outlet_orientation=("horizontal" if "waagerecht" in flat.lower() else ""),
             height_range_mm=h,
             compatibility_excerpt=compat,
             notes="no article table rows parsed",
-        ))
+        )
+        row.assembly_ready = _determine_assembly_ready(row)
+        rows.append(row)
     return rows
 
 
-def parse_pdf(url: str, blob: bytes) -> List[Row]:
-    rows: List[Row] = []
-    text_pages: List[str] = []
-    try:
-        import pdfplumber  # type: ignore
-
-        with pdfplumber.open(Path("/tmp/aco_tmp.pdf")) as _:
-            pass
-    except Exception:
-        pass
-
-    # minimal fallback: only record that PDF was reached.
-    rows.append(Row(
+def parse_pdf(url: str, _blob: bytes) -> List[Row]:
+    row = Row(
         source=url,
         source_type="pdf",
         page_ref="n/a",
-        notes="PDF fetched; full table extraction requires optional local PDF parser (e.g. pdfplumber) in runtime environment.",
-    ))
-    return rows
+        source_refs="n/a",
+        notes="PDF fetched; table extraction not guaranteed without optional parser/runtime OCR.",
+        assembly_ready="source_only_family_level",
+    )
+    return [row]
+
+
+def deduplicate(rows: List[Row]) -> List[Row]:
+    key_map: Dict[Tuple[str, str, str, str, str, str, str], Row] = {}
+    refs: Dict[Tuple[str, str, str, str, str, str, str], List[str]] = {}
+    for r in rows:
+        key = (
+            r.source,
+            r.article_no,
+            r.product_name,
+            r.water_seal_mm,
+            r.outlet_dn,
+            r.outlet_orientation,
+            r.height_range_mm,
+        )
+        if key not in key_map:
+            key_map[key] = r
+            refs[key] = [r.page_ref]
+        else:
+            refs[key].append(r.page_ref)
+            # merge best flow certainty
+            if key_map[key].flow_mapping_status != "confirmed" and r.flow_mapping_status == "confirmed":
+                key_map[key].flow_mapping_status = "confirmed"
+                key_map[key].flow_rate_10mm_lps = r.flow_rate_10mm_lps or key_map[key].flow_rate_10mm_lps
+                key_map[key].flow_rate_20mm_lps = r.flow_rate_20mm_lps or key_map[key].flow_rate_20mm_lps
+                key_map[key].flow_rate_lps = r.flow_rate_lps or key_map[key].flow_rate_lps
+    out = []
+    for k, r in key_map.items():
+        merged = sorted(set(refs[k]))
+        if len(merged) > 1:
+            suffix = f" merged_refs={','.join(merged)}"
+            r.notes = (r.notes + suffix).strip()
+        r.source_refs = ",".join(merged)
+        r.assembly_ready = _determine_assembly_ready(r)
+        out.append(r)
+    return out
 
 
 def write_outputs(rows: List[Row]) -> None:
@@ -147,21 +247,29 @@ def write_outputs(rows: List[Row]) -> None:
         for r in rows:
             w.writerow(asdict(r))
 
-    compat_rows = [r for r in rows if r.compatibility_excerpt]
-    has_safe_matrix = any(r.article_no and r.compatibility_excerpt for r in rows)
+    unique_articles = sorted({r.article_no for r in rows if r.article_no})
+    profile_articles = sorted({r.article_no for r in rows if r.article_no and r.component_role == "profile_channel"})
+    drain_articles = sorted({r.article_no for r in rows if r.article_no and r.component_role == "drain_body"})
+    has_article_compat = any(r.article_no and r.compatibility_excerpt for r in rows)
+    flow_confirmed = any(r.flow_mapping_status == "confirmed" for r in rows if r.article_no)
+    flow_ambiguous = any(r.flow_mapping_status == "ambiguous" for r in rows if r.article_no)
 
     with out_md.open("w", encoding="utf-8") as f:
         f.write("# ACO S+ Extracted Tables (Diagnostic)\n\n")
         f.write("## Sources scanned\n")
         for k, v in URLS.items():
             f.write(f"- {k}: {v}\n")
-        f.write("\n## Extracted rows\n")
-        f.write(f"- Total rows: {len(rows)}\n")
-        f.write(f"- Rows with article numbers: {sum(1 for r in rows if r.article_no)}\n")
-        f.write(f"- Rows with compatibility wording: {len(compat_rows)}\n")
+        f.write("\n## Extraction summary\n")
+        f.write(f"- Total deduplicated rows: {len(rows)}\n")
+        f.write(f"- Unique article numbers: {', '.join(unique_articles) if unique_articles else '(none)'}\n")
+        f.write(f"- Profile/channel article numbers found: {', '.join(profile_articles) if profile_articles else 'no'}\n")
+        f.write(f"- Drain-body article numbers found: {', '.join(drain_articles) if drain_articles else 'no'}\n")
+        f.write(f"- Article-to-article compatibility found: {'yes' if has_article_compat else 'no'}\n")
+        f.write(f"- Flow mapping confirmed from headers: {'yes' if flow_confirmed else 'no'}\n")
+        f.write(f"- Flow mapping ambiguous present: {'yes' if flow_ambiguous else 'no'}\n")
         f.write("\n## Conclusion\n")
-        if has_safe_matrix:
-            f.write("Potential article-level compatibility evidence exists; manual validation still required before production assembly.\n")
+        if profile_articles and drain_articles and has_article_compat and flow_confirmed and not flow_ambiguous:
+            f.write("S+ assembled implementation may be considered after manual review of extracted rows.\n")
         else:
             f.write("no safe assembled S+ implementation yet\n")
 
@@ -174,7 +282,7 @@ def main() -> None:
             html = fetch(url)
             rows.extend(parse_html(url, html))
         except Exception as e:
-            rows.append(Row(source=url, source_type="html_error", page_ref="n/a", notes=f"fetch failed: {type(e).__name__}: {e}"))
+            rows.append(Row(source=url, source_type="html_error", page_ref="n/a", source_refs="n/a", notes=f"fetch failed: {type(e).__name__}: {e}"))
 
     for key in ("pdf_splus", "pdf_line"):
         url = URLS[key]
@@ -183,11 +291,11 @@ def main() -> None:
             r.raise_for_status()
             rows.extend(parse_pdf(url, r.content))
         except Exception as e:
-            rows.append(Row(source=url, source_type="pdf_error", page_ref="n/a", notes=f"fetch failed: {type(e).__name__}: {e}"))
+            rows.append(Row(source=url, source_type="pdf_error", page_ref="n/a", source_refs="n/a", notes=f"fetch failed: {type(e).__name__}: {e}"))
 
     if not rows:
-        rows = [Row(source="n/a", source_type="none", page_ref="n/a", notes="no rows")]
-    write_outputs(rows)
+        rows = [Row(source="n/a", source_type="none", page_ref="n/a", source_refs="n/a", notes="no rows")]
+    write_outputs(deduplicate(rows))
 
 
 if __name__ == "__main__":

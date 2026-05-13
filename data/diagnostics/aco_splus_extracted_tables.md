@@ -7,10 +7,14 @@
 - pdf_splus: https://www.aco-haustechnik.de/fileadmin/aco_haustechnik/documents/Prospekte-PDF/Prospekt-ACO_Sanit%C3%A4r_Duschrinne_ShowerDrain_S-Plus.pdf
 - pdf_line: https://www.aco-haustechnik.de/fileadmin/aco_haustechnik/documents/Prospekte-PDF/Prospekt-ACO_Sanit%C3%A4r_Badentwaesserung_Linie.pdf
 
-## Extracted rows
-- Total rows: 5
-- Rows with article numbers: 0
-- Rows with compatibility wording: 0
+## Extraction summary
+- Total deduplicated rows: 5
+- Unique article numbers: (none)
+- Profile/channel article numbers found: no
+- Drain-body article numbers found: no
+- Article-to-article compatibility found: no
+- Flow mapping confirmed from headers: no
+- Flow mapping ambiguous present: no
 
 ## Conclusion
 no safe assembled S+ implementation yet
