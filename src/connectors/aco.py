@@ -802,8 +802,6 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
 
     flat = _main_flat_text_from_html(html)
 
-    article_row_matched = False
-    article_row_explicit_flow = False
     # article-row specific extraction if article token is available from discovery URL anchor
     if article_token:
         soup = BeautifulSoup(html or "", "lxml")
@@ -820,7 +818,6 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
                 row_text = _clean_text(tr.get_text(" ", strip=True))
                 if article_token not in _digits_only(row_text):
                     continue
-                article_row_matched = True
                 def _parse_flow_from_cell(ix):
                     if ix is None or ix >= len(cells):
                         return None
@@ -839,7 +836,6 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
                 if f20 is not None:
                     res["flow_rate_20mm_lps"] = f20
                 row_has_hydraulic = (f10 is not None) or (f20 is not None)
-                article_row_explicit_flow = article_row_explicit_flow or (f10 is not None) or (f20 is not None)
                 if idx_ws is not None and idx_ws < len(cells):
                     wsm = re.search(r"(\d{2,3})\s*mm", _clean_text(cells[idx_ws].get_text(" ", strip=True)), re.IGNORECASE)
                     if wsm:
@@ -862,7 +858,6 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
                     res["flow_rate_lps"] = max(flows)
                     res["flow_rate_unit"] = "l/s"
                     res["flow_rate_status"] = "ok"
-                    article_row_explicit_flow = True
                 res["evidence"].append(("Article row", row_text[:280], final))
                 if not row_has_hydraulic:
                     res["evidence"].append(("Article row hydraulics", "article row contains dimensions/price style data but no explicit 10mm/20mm flow or water seal field", final))
@@ -921,18 +916,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
             lps_values.append(v)
             res["evidence"].append(("Flow rate option (Abflusswert l/s)", _snippet(flat, m.start(), m.end()), final))
 
-    allow_page_level_flow = True
-    if article_token and article_row_matched and not article_row_explicit_flow:
-        ws = res.get("water_seal_mm")
-        # prevent generic max-flow attribution for WS25 article rows without explicit article-level hydraulics
-        if ws == 25:
-            allow_page_level_flow = False
-            res["evidence"].append(("Flow attribution limited", "WS25 article row has no explicit hydraulic columns; generic page-level max flow not attributed", final))
-        elif ws is None:
-            allow_page_level_flow = False
-            res["evidence"].append(("Flow attribution limited", "article row has no explicit hydraulics and water-seal class is ambiguous; generic page-level max flow not attributed", final))
-
-    if lps_values and allow_page_level_flow:
+    if lps_values:
         opts = sorted(set(lps_values))
         res["flow_rate_lps_options"] = json.dumps(opts, ensure_ascii=False)
         res["flow_rate_lps"] = max(opts)
