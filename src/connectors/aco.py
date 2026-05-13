@@ -619,6 +619,84 @@ def _extract_row_specific_flow_values(html: str, article_digits: str) -> List[fl
                 values.append(v)
     return sorted(set(values))
 
+
+def _extract_article_row_metadata(html: str, article_digits: str) -> Dict[str, Any]:
+    soup = BeautifulSoup(html or "", "lxml")
+    target = article_digits or ""
+    if not target:
+        return {}
+
+    def _parse_float(v: str) -> Optional[float]:
+        m = re.search(r"(\d+(?:[.,]\d+)?)", v or "")
+        if not m:
+            return None
+        try:
+            return float(m.group(1).replace(",", "."))
+        except Exception:
+            return None
+
+    def _parse_int(v: str) -> Optional[int]:
+        m = re.search(r"(\d{2,3})", v or "")
+        if not m:
+            return None
+        try:
+            return int(m.group(1))
+        except Exception:
+            return None
+
+    for table in soup.select("table"):
+        rows = table.select("tr")
+        if not rows:
+            continue
+        header_cells = rows[0].select("th,td")
+        headers = [_clean_text(c.get_text(" ", strip=True)).lower() for c in header_cells]
+        if not headers or not any("artikel" in h for h in headers):
+            continue
+
+        for tr in rows[1:]:
+            cells = tr.select("th,td")
+            if not cells:
+                continue
+            row_texts = [_clean_text(c.get_text(" ", strip=True)) for c in cells]
+            row_joined = " | ".join(row_texts)
+            am = ARTICLE_RE.search(row_joined)
+            if not am or _digits_only(am.group(0)) != target:
+                continue
+
+            meta: Dict[str, Any] = {}
+            for idx, raw in enumerate(row_texts):
+                key = headers[idx] if idx < len(headers) else ""
+                key = key.replace("\xa0", " ").strip().lower()
+
+                if not key:
+                    continue
+                fv = _parse_float(raw)
+                iv = _parse_int(raw)
+
+                if ("10" in key and "mm" in key and "l/s" in key) or ("abfluss" in key and "10" in key):
+                    if fv is not None:
+                        meta["flow_rate_10mm_lps"] = fv
+                elif ("20" in key and "mm" in key and "l/s" in key) or ("abfluss" in key and "20" in key):
+                    if fv is not None:
+                        meta["flow_rate_20mm_lps"] = fv
+                elif "l/s" in key and ("abfluss" in key or "ablauf" in key or "leistung" in key):
+                    if fv is not None:
+                        meta["flow_rate_lps"] = fv
+                elif "geruch" in key or "wasserverschluss" in key:
+                    if iv is not None:
+                        meta["water_seal_mm"] = iv
+                elif "einbauh" in key or ("höhe" in key and "mm" in key) or ("hoehe" in key and "mm" in key):
+                    hm = re.search(r"(\d{2,3})\s*[-–]\s*(\d{2,3})", raw)
+                    if hm:
+                        a, b = int(hm.group(1)), int(hm.group(2))
+                        lo, hi = (a, b) if a <= b else (b, a)
+                        meta["height_adj_min_mm"] = lo
+                        meta["height_adj_max_mm"] = hi
+                    elif iv is not None and meta.get("height_adj_min_mm") is None:
+                        meta["height_adj_min_mm"] = iv
+            return meta
+    return {}
+
 def extract_parameters(product_url: str) -> Dict[str, Any]:
     res: Dict[str, Any] = {
         "flow_rate_lps": None,
@@ -626,6 +704,9 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
         "flow_rate_unit": None,
         "flow_rate_status": None,
         "flow_rate_lps_options": None,
+        "flow_rate_10mm_lps": None,
+        "flow_rate_20mm_lps": None,
+        "water_seal_mm": None,
         "material_detail": None,
         "material_v4a": None,
         "din_en_1253_cert": None,
@@ -680,12 +761,18 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
     row_specific_lps_values: List[float] = []
     if requested_article_digits:
         row_specific_lps_values = _extract_row_specific_flow_values(html, requested_article_digits)
+        row_meta = _extract_article_row_metadata(html, requested_article_digits)
+        for k in ["flow_rate_lps", "flow_rate_10mm_lps", "flow_rate_20mm_lps", "water_seal_mm", "height_adj_min_mm", "height_adj_max_mm"]:
+            if row_meta.get(k) is not None:
+                res[k] = row_meta[k]
         if row_specific_lps_values:
             res["evidence"].append((
                 "Flow rate option (article row l/s)",
                 f"article={requested_article_digits} values={row_specific_lps_values}",
                 final,
             ))
+        if row_meta:
+            res["evidence"].append(("Article row metadata", f"article={requested_article_digits} meta={row_meta}", final))
 
     # flow rate options from Abflusswert/Ablaufleistung snippets only
     lps_values: List[float] = []
@@ -703,7 +790,11 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
             lps_values.append(v)
             res["evidence"].append(("Flow rate option (Abflusswert l/s)", _snippet(flat, m.start(), m.end()), final))
 
-    if row_specific_lps_values:
+    if res.get("flow_rate_lps") is not None:
+        res["flow_rate_lps_options"] = json.dumps(sorted(set(row_specific_lps_values)) if row_specific_lps_values else [res["flow_rate_lps"]], ensure_ascii=False)
+        res["flow_rate_unit"] = "l/s"
+        res["flow_rate_status"] = "ok"
+    elif row_specific_lps_values:
         opts = row_specific_lps_values
         res["flow_rate_lps_options"] = json.dumps(opts, ensure_ascii=False)
         res["flow_rate_lps"] = max(opts)
