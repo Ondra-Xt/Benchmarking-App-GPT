@@ -13,8 +13,12 @@
 - Profile/channel article numbers found: no
 - Drain-body article numbers found: no
 - Article-to-article compatibility found: no
+- Profile article -> drain-body article compatibility proven: no
 - Flow mapping confirmed from headers: no
 - Flow mapping ambiguous present: no
 
 ## Conclusion
 no safe assembled S+ implementation yet
+
+## Next recommendation
+Continue official PDF/table extraction to find profile/channel article numbers and explicit article-to-article compatibility.

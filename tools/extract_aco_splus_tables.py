@@ -188,16 +188,76 @@ def parse_html(url: str, html: str) -> List[Row]:
     return rows
 
 
-def parse_pdf(url: str, _blob: bytes) -> List[Row]:
-    row = Row(
-        source=url,
-        source_type="pdf",
-        page_ref="n/a",
-        source_refs="n/a",
-        notes="PDF fetched; table extraction not guaranteed without optional parser/runtime OCR.",
-        assembly_ready="source_only_family_level",
-    )
-    return [row]
+def parse_pdf(url: str, blob: bytes) -> List[Row]:
+    rows: List[Row] = []
+    extracted_any = False
+    try:
+        from pypdf import PdfReader  # type: ignore
+        import io
+
+        reader = PdfReader(io.BytesIO(blob))
+        for i, page in enumerate(reader.pages, start=1):
+            txt = " ".join((page.extract_text() or "").split())
+            if not txt:
+                continue
+            page_ref = f"pdf_page_{i}"
+            role = _classify_role(txt)
+            compat = next((m.group(0) for m in COMPAT_RE.finditer(txt)), "")
+            dn = next((f"DN{m.group(1)}" for m in DN_RE.finditer(txt)), "")
+            ws = next((m.group(1) for m in WS_RE.finditer(txt)), "")
+            h = next((f"{m.group(1)}-{m.group(2)}" for m in HEIGHT_RE.finditer(txt)), "")
+
+            # extract article numbers with local context windows
+            for am in ARTICLE_RE.finditer(txt):
+                art = am.group(0)
+                lo = max(0, am.start() - 120)
+                hi = min(len(txt), am.end() + 140)
+                ctx = txt[lo:hi]
+                ctx_role = _classify_role(ctx)
+                if ctx_role == "unknown" and role != "unknown":
+                    ctx_role = role
+                if ctx_role != "profile_channel" and not re.search(r"profil|rinnenprofil|duschrinnenprofil|profilk[oö]rper|channel", ctx, re.IGNORECASE):
+                    continue
+                lm = LEN_RE.search(ctx)
+                row = Row(
+                    source=url,
+                    source_type="pdf",
+                    page_ref=page_ref,
+                    source_refs=page_ref,
+                    component_role="profile_channel" if ctx_role == "profile_channel" else ctx_role,
+                    article_no=art,
+                    product_name="ACO ShowerDrain S+ PDF extract",
+                    length_mm=(lm.group(1) if lm else ""),
+                    water_seal_mm=ws,
+                    outlet_dn=dn,
+                    height_range_mm=h,
+                    compatibility_excerpt=compat,
+                    flow_mapping_status="unknown",
+                    notes=f"pdf context: {ctx[:180]}",
+                )
+                row.assembly_ready = _determine_assembly_ready(row)
+                rows.append(row)
+                extracted_any = True
+
+        if not extracted_any:
+            rows.append(Row(
+                source=url,
+                source_type="pdf",
+                page_ref="n/a",
+                source_refs="n/a",
+                notes="PDF parsed but no profile/channel article-number context found.",
+                assembly_ready="source_only_family_level",
+            ))
+    except Exception as e:
+        rows.append(Row(
+            source=url,
+            source_type="pdf",
+            page_ref="n/a",
+            source_refs="n/a",
+            notes=f"PDF extraction unavailable: {type(e).__name__}: {e}",
+            assembly_ready="source_only_family_level",
+        ))
+    return rows
 
 
 def deduplicate(rows: List[Row]) -> List[Row]:
@@ -265,13 +325,17 @@ def write_outputs(rows: List[Row]) -> None:
         f.write(f"- Profile/channel article numbers found: {', '.join(profile_articles) if profile_articles else 'no'}\n")
         f.write(f"- Drain-body article numbers found: {', '.join(drain_articles) if drain_articles else 'no'}\n")
         f.write(f"- Article-to-article compatibility found: {'yes' if has_article_compat else 'no'}\n")
+        prof_to_drain = bool(profile_articles and drain_articles and has_article_compat)
+        f.write(f"- Profile article -> drain-body article compatibility proven: {'yes' if prof_to_drain else 'no'}\n")
         f.write(f"- Flow mapping confirmed from headers: {'yes' if flow_confirmed else 'no'}\n")
         f.write(f"- Flow mapping ambiguous present: {'yes' if flow_ambiguous else 'no'}\n")
         f.write("\n## Conclusion\n")
         if profile_articles and drain_articles and has_article_compat and flow_confirmed and not flow_ambiguous:
-            f.write("S+ assembled implementation may be considered after manual review of extracted rows.\n")
+            f.write("S+ assembled implementation may be possible after manual validation\n")
+            f.write("\n## Next recommendation\nProceed with controlled implementation design, but keep manual source validation for every compatibility pair.\n")
         else:
             f.write("no safe assembled S+ implementation yet\n")
+            f.write("\n## Next recommendation\nContinue official PDF/table extraction to find profile/channel article numbers and explicit article-to-article compatibility.\n")
 
 
 def main() -> None:
