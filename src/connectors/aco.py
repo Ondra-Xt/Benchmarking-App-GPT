@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 import json
 import re
-from urllib.parse import urljoin, urlparse, parse_qs
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -607,7 +607,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                     "product_id": pid,
                     "product_family": family if family != "unknown" else "ShowerDrain",
                     "product_name": f"{title_base} {nominal_length_mm} mm (Artikel-Nr. {article_no})",
-                    "product_url": f"{final_c}#article={article_digits}",
+                    "product_url": final_c,
                     "sources": final_c,
                     "candidate_type": "drain",
                     "system_role": "drain_unit",
@@ -761,49 +761,6 @@ def _is_valid_flow_context(flat: str, start: int, end: int) -> bool:
     return True
 
 
-
-def _extract_requested_article_id(product_url: str) -> Optional[str]:
-    raw = (product_url or "").strip()
-    if not raw:
-        return None
-    parsed = urlparse(raw)
-    frag = parsed.fragment or ""
-    if frag:
-        q = parse_qs(frag)
-        article = (q.get("article") or [None])[0]
-        if article:
-            digits = _digits_only(article)
-            if len(digits) >= 6:
-                return digits
-        m = ARTICLE_RE.search(frag)
-        if m:
-            digits = _digits_only(m.group(0))
-            if len(digits) >= 6:
-                return digits
-    return None
-
-
-def _extract_row_specific_flow_values(html: str, article_digits: str) -> List[float]:
-    soup = BeautifulSoup(html or "", "lxml")
-    values: List[float] = []
-    for tr in soup.select("tr"):
-        row_text = _clean_text(tr.get_text(" ", strip=True))
-        if not row_text:
-            continue
-        am = ARTICLE_RE.search(row_text)
-        if not am:
-            continue
-        if _digits_only(am.group(0)) != article_digits:
-            continue
-        for fm in FLOW_LPS_RE.finditer(row_text):
-            try:
-                v = float(fm.group(1).replace(",", "."))
-            except Exception:
-                continue
-            if 0.10 <= v <= 3.0:
-                values.append(v)
-    return sorted(set(values))
-
 def extract_parameters(product_url: str) -> Dict[str, Any]:
     res: Dict[str, Any] = {
         "flow_rate_lps": None,
@@ -825,7 +782,6 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
         "evidence": [],
     }
 
-    requested_article_digits = _extract_requested_article_id(product_url)
     src = (product_url or "").split("#", 1)[0].strip()
     st, final, html, err = _safe_get_text(src, timeout=35)
     res["evidence"].append(("HTML fetch", f"status={st} err={err}".strip(), final))
@@ -861,17 +817,6 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
         if first:
             res["evidence"].append(("Outlet DN", _snippet(flat, first.start(), first.end()), final))
 
-    # Prefer row-specific flow values for concrete article variants when available
-    row_specific_lps_values: List[float] = []
-    if requested_article_digits:
-        row_specific_lps_values = _extract_row_specific_flow_values(html, requested_article_digits)
-        if row_specific_lps_values:
-            res["evidence"].append((
-                "Flow rate option (article row l/s)",
-                f"article={requested_article_digits} values={row_specific_lps_values}",
-                final,
-            ))
-
     # flow rate options from Abflusswert/Ablaufleistung snippets only
     lps_values: List[float] = []
     for m in FLOW_LPS_RE.finditer(flat):
@@ -888,13 +833,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
             lps_values.append(v)
             res["evidence"].append(("Flow rate option (Abflusswert l/s)", _snippet(flat, m.start(), m.end()), final))
 
-    if row_specific_lps_values:
-        opts = row_specific_lps_values
-        res["flow_rate_lps_options"] = json.dumps(opts, ensure_ascii=False)
-        res["flow_rate_lps"] = max(opts)
-        res["flow_rate_unit"] = "l/s"
-        res["flow_rate_status"] = "ok"
-    elif lps_values:
+    if lps_values:
         opts = sorted(set(lps_values))
         res["flow_rate_lps_options"] = json.dumps(opts, ensure_ascii=False)
         res["flow_rate_lps"] = max(opts)
