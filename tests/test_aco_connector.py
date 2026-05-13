@@ -173,6 +173,27 @@ class AcoConnectorDiscoveryTests(unittest.TestCase):
             opts_yes = aco.get_bom_options("https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/")
         self.assertTrue(any(o.get("option_type") == "compatible_drain_body" for o in opts_yes))
         self.assertTrue(any(o.get("option_type") == "compatible_grate" for o in opts_yes))
+        self.assertTrue(all(str(o.get("option_label") or "").strip().lower() != "direkt zur hauptnavigation springen" for o in opts_yes))
+
+    def test_splus_bom_options_ignore_navigation_and_self_reference(self):
+        html = """<html><body>
+            <header><a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/'>Direkt zur Hauptnavigation springen</a></header>
+            <main>
+                <p>Kompatibel mit folgenden Ablaufkörpern</p>
+                <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/'>ACO ShowerDrain S+</a>
+                <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus/'>Ablaufkörper zu ACO Duschrinnenprofil ShowerDrain S+</a>
+            </main>
+        </body></html>"""
+        with patch("src.connectors.aco._safe_get_text", return_value=(200, "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/", html, "")):
+            opts = aco.get_bom_options("https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/")
+        self.assertFalse(any((o.get("option_label") or "").strip().lower() == "direkt zur hauptnavigation springen" for o in opts))
+        parent_id = aco._stable_aco_id(
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/",
+            "showerdrain_splus",
+            "configuration_family",
+            "ACO ShowerDrain S+",
+        )
+        self.assertFalse(any(o.get("component_id") == parent_id for o in opts))
 
 
 if __name__ == "__main__":

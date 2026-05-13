@@ -953,19 +953,50 @@ def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -
 
     options: List[Dict[str, Any]] = []
     seen = set()
-    compatibility_sections = soup.find_all(string=re.compile(r"kompatibel|geeignet\s+f[üu]r|passend\s+zu", re.IGNORECASE))
+    compatibility_sections = soup.find_all(string=re.compile(r"kompatibel|geeignet\s+f[üu]r|passend\s+zu|zubeh[öo]r|ablaufk[öo]rper", re.IGNORECASE))
     if not compatibility_sections:
         return []
 
-    for a in soup.select("a[href]"):
+    parent_id = _stable_aco_id(final, family, "configuration_family", title)
+    nav_noise_re = re.compile(r"hauptnavigation|skip|direkt\s+zur|cookie|datenschutz|impressum|suche|login|konto|warenkorb|men[üu]|footer|header", re.IGNORECASE)
+
+    main = soup.select_one("main") or soup
+    for sel in ("header", "nav", "footer"):
+        for n in main.select(sel):
+            n.decompose()
+
+    candidate_anchors = []
+    for s in compatibility_sections:
+        p = getattr(s, "parent", None)
+        if p is None:
+            continue
+        context_nodes = [p]
+        if getattr(p, "parent", None) is not None:
+            context_nodes.append(p.parent)
+        for node in context_nodes:
+            for a in node.select("a[href]"):
+                candidate_anchors.append((a, _clean_text(node.get_text(" ", strip=True))))
+
+    if not candidate_anchors:
+        return []
+
+    for a, ctx_text in candidate_anchors:
         href = _abs(a.get("href") or "", final)
         if not _in_scope(href):
             continue
         link_txt = _clean_text(a.get_text(" ", strip=True))
+        if not link_txt or nav_noise_re.search(link_txt):
+            continue
+        if nav_noise_re.search(ctx_text or ""):
+            continue
+        if not re.search(r"kompatibel|geeignet\s+f[üu]r|passend\s+zu|zubeh[öo]r|ablaufk[öo]rper", ctx_text or "", re.IGNORECASE):
+            continue
         role, _reason = _classify_role(href, link_txt, "", family)
         if role not in {"drain_body", "grate", "accessory"}:
             continue
         comp_id = _stable_aco_id(href, family, role, link_txt)
+        if comp_id == parent_id:
+            continue
         key = (comp_id, role)
         if key in seen:
             continue
