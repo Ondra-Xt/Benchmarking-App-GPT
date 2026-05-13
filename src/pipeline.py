@@ -1141,12 +1141,28 @@ def run_update(
                 label, snippet, source = ev
             except Exception:
                 continue
+            ev_type = "source_excerpt"
+            source_excerpt = ""
+            if manufacturer == "aco":
+                ll = str(label).strip().lower()
+                if ll == "article row hydraulics":
+                    ev_type = "source_limitation"
+                    source_excerpt = str(snippet)
+                elif ll == "flow attribution limited":
+                    ev_type = "diagnostic"
+                    source_excerpt = str(snippet)
+                elif ll == "article row":
+                    ev_type = "article_row_hydraulics"
+                    source_excerpt = str(snippet)
             evidence_rows.append({
                 "manufacturer": manufacturer,
                 "product_id": product_id,
                 "label": str(label),
                 "snippet": str(snippet),
                 "source": str(source),
+                "evidence_type": ev_type,
+                "source_excerpt": source_excerpt,
+                "source_url": str(source),
             })
 
         # default promotion flags
