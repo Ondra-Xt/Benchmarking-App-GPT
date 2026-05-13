@@ -2,6 +2,10 @@ import json
 import unittest
 from unittest.mock import patch
 
+import pandas as pd
+
+from src import pipeline
+from src.config import default_config
 from src.connectors import aco
 
 
@@ -95,5 +99,90 @@ class AcoConnectorDiscoveryTests(unittest.TestCase):
         self.assertTrue(fam_cov.get("passavant"))
 
 
+    def test_extract_parameters_reads_article_row_when_url_contains_article_anchor(self):
+        html = """<html><body><main><h1>ACO ShowerDrain C</h1>
+            <p>Einbauhöhe Oberkante Estrich 57-128 mm</p>
+            <table>
+                <tr><th>Artikel</th><th>Abflusswert 10 mm</th><th>Abflusswert 20 mm</th><th>Sperrwasserhöhe</th></tr>
+                <tr><td>90108544</td><td>0,70 l/s</td><td>0,80 l/s</td><td>25 mm</td></tr>
+                <tr><td>90108554</td><td>0,72 l/s</td><td>0,92 l/s</td><td>50 mm</td></tr>
+            </table>
+        </main></body></html>"""
+
+        with patch("src.connectors.aco._safe_get_text", return_value=(200, "https://www.aco-haustechnik.de/p/", html, "")):
+            p25 = aco.extract_parameters("https://www.aco-haustechnik.de/p/#article-90108544")
+            p50 = aco.extract_parameters("https://www.aco-haustechnik.de/p/#article-90108554")
+
+        self.assertEqual(float(p25["flow_rate_10mm_lps"]), 0.70)
+        self.assertEqual(float(p25["flow_rate_20mm_lps"]), 0.80)
+        self.assertEqual(int(p25["water_seal_mm"]), 25)
+        self.assertEqual(float(p50["flow_rate_10mm_lps"]), 0.72)
+        self.assertEqual(float(p50["flow_rate_20mm_lps"]), 0.92)
+        self.assertEqual(int(p50["water_seal_mm"]), 50)
+        self.assertNotEqual(p25["flow_rate_20mm_lps"], p50["flow_rate_20mm_lps"])
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class AcoConnectorEndToEndRegressionTests(unittest.TestCase):
+    def test_real_connector_path_preserves_broad_discovery_and_pipeline_outputs(self):
+        pages = {
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/": """<html><body><main><h1>Badentwässerung</h1>
+                <a href="/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm-200-mm/">C body</a>
+                <a href="/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/">S+</a>
+                <a href="/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/">M+</a>
+                <a href="/produkte/badentwaesserung/badablaeufe/aco-easyflow-plus-komplettablauf-dn50/">Easyflow+</a>
+                <a href="/produkte/badentwaesserung/badablaeufe/aco-easyflow-komplettablauf-dn50/">Easyflow</a>
+                <a href="/produkte/badentwaesserung/badablaeufe/aco-renovierungsablauf-passino/">Passino</a>
+                <a href="/produkte/badentwaesserung/badablaeufe/aco-bodenablauf-passavant/">Passavant</a>
+                <a href="/produkte/badentwaesserung/reihenduschrinnen/aco-showerdrain-public-80/">Public80</a>
+            </main></body></html>""",
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm-200-mm/": """<html><body><main><h1>ACO ShowerDrain C Rinnenkörper</h1>
+                <p>Einbauhöhe Oberkante Estrich 57-128 mm</p><p>Ablaufstutzen DN 50</p><p>Ablaufleistung 0,80 l/s</p>
+                <table><tr><th>L1</th><th>Artikel</th></tr>
+                    <tr><td>1185 mm</td><td>90108544</td></tr><tr><td>1185 mm</td><td>90108554</td></tr>
+                    <tr><td>985 mm</td><td>90108524</td></tr><tr><td>985 mm</td><td>90108534</td></tr></table>
+            </main></body></html>""",
+        }
+        for url, name in [
+            ("https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/", "ACO ShowerDrain S+"),
+            ("https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/", "ACO ShowerDrain M+"),
+            ("https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-plus-komplettablauf-dn50/", "ACO Easyflow+ Komplettablauf"),
+            ("https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-komplettablauf-dn50/", "ACO Easyflow Komplettablauf"),
+            ("https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-renovierungsablauf-passino/", "ACO Passino"),
+            ("https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-bodenablauf-passavant/", "ACO Passavant"),
+            ("https://www.aco-haustechnik.de/produkte/badentwaesserung/reihenduschrinnen/aco-showerdrain-public-80/", "ACO ShowerDrain Public 80"),
+            ("https://www.aco.cz/produkty/odvodneni-koupelen/", "Odvodnění koupelen"),
+        ]:
+            pages[url] = f"<html><body><main><h1>{name}</h1></main></body></html>"
+
+        def _fake_get(url, timeout=35):
+            key = aco._canonicalize_url(url)
+            html = pages.get(key)
+            if html is None:
+                return 404, key, "", "not found"
+            return 200, key, html, ""
+
+        with patch("src.connectors.aco._safe_get_text", side_effect=_fake_get):
+            rows, _dbg = aco.discover_candidates(target_length_mm=1200, tolerance_mm=100)
+            self.assertGreaterEqual(len(rows), 8)
+            registry = pd.DataFrame(rows)
+            with patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
+                products, comparison, _excluded, evidence, bom = pipeline.run_update(registry, default_config())
+
+        self.assertGreaterEqual(len(products), 6)
+        self.assertGreaterEqual(len(comparison), 4)
+        self.assertIn("candidate_type", products.columns)
+        self.assertTrue((products["candidate_type"].astype(str) == "component").any())
+        self.assertTrue((products["candidate_type"].astype(str) == "drain").any())
+        families = set(products["product_family"].astype(str).str.lower())
+        for fam in ["showerdrain_c", "showerdrain_splus", "showerdrain_mplus", "easyflowplus", "easyflow", "passino", "passavant", "showerdrain_public_80"]:
+            self.assertIn(fam, families)
+        c_rows = products[products["product_id"].astype(str).isin(["aco-90108544", "aco-90108554"]) ]
+        self.assertEqual(len(c_rows), 2)
+        self.assertTrue((c_rows["flow_rate_lps"].notna()).all())
+        self.assertTrue((c_rows["height_adj_min_mm"].notna()).all())
+        self.assertTrue((c_rows["height_adj_max_mm"].notna()).all())
+        self.assertFalse(evidence[evidence["manufacturer"] == "aco"].empty)
