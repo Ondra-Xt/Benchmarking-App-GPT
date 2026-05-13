@@ -99,6 +99,29 @@ class AcoConnectorDiscoveryTests(unittest.TestCase):
         self.assertTrue(fam_cov.get("passavant"))
 
 
+    def test_extract_parameters_reads_article_row_when_url_contains_article_anchor(self):
+        html = """<html><body><main><h1>ACO ShowerDrain C</h1>
+            <p>Einbauhöhe Oberkante Estrich 57-128 mm</p>
+            <table>
+                <tr><th>Artikel</th><th>Abflusswert 10 mm</th><th>Abflusswert 20 mm</th><th>Sperrwasserhöhe</th></tr>
+                <tr><td>90108544</td><td>0,70 l/s</td><td>0,80 l/s</td><td>25 mm</td></tr>
+                <tr><td>90108554</td><td>0,72 l/s</td><td>0,92 l/s</td><td>50 mm</td></tr>
+            </table>
+        </main></body></html>"""
+
+        with patch("src.connectors.aco._safe_get_text", return_value=(200, "https://www.aco-haustechnik.de/p/", html, "")):
+            p25 = aco.extract_parameters("https://www.aco-haustechnik.de/p/#article-90108544")
+            p50 = aco.extract_parameters("https://www.aco-haustechnik.de/p/#article-90108554")
+
+        self.assertEqual(float(p25["flow_rate_10mm_lps"]), 0.70)
+        self.assertEqual(float(p25["flow_rate_20mm_lps"]), 0.80)
+        self.assertEqual(int(p25["water_seal_mm"]), 25)
+        self.assertEqual(float(p50["flow_rate_10mm_lps"]), 0.72)
+        self.assertEqual(float(p50["flow_rate_20mm_lps"]), 0.92)
+        self.assertEqual(int(p50["water_seal_mm"]), 50)
+        self.assertNotEqual(p25["flow_rate_20mm_lps"], p50["flow_rate_20mm_lps"])
+
+
 if __name__ == "__main__":
     unittest.main()
 
