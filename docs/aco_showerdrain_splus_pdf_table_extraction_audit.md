@@ -1,98 +1,98 @@
-# ACO ShowerDrain S+ PDF/Table Extraction Audit
+# ACO ShowerDrain S+ PDF/Table Extraction Audit (Dedicated Pass)
 
 ## 1) Executive summary
-**Can S+ assembled systems be created after this extraction?** **Partial / not yet fully safe**.
+**Can S+ assembled systems be created after this extraction pass?** **Partial / no (not yet safely)**.
 
-Official ACO sources provide strong evidence that ShowerDrain S+ is modular (profile + Ablaufkörper) and expose meaningful technical values for at least the Ablaufkörper branch. However, a full article-to-article compatibility matrix (profile/article ↔ drain-body/article) is still not conclusively extracted in a machine-safe form from currently inspected official pages/PDF references.
+This pass confirms official modular wording and confirms that official S+ Ablaufkörper sources expose technical values (flow/water-seal/DN/DIN context).  
+However, this pass still does **not** produce a complete article-number-level compatibility matrix (`profile/channel article -> drain-body article`) from official S+ tables/PDFs that can be safely wired into benchmark assembled rows.
 
 ---
 
 ## 2) Official PDFs/tables checked
 
-| Source | Type | What was extracted | Gaps |
-|---|---|---|---|
-| https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ | Family product page | Modular wording (profile + Ablauf), S+ family context, product structure hints. | No complete normalized article-compatibility matrix in inspected view. |
-| https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus/ | Detail page (Ablaufkörper) | Explicit “zu … ShowerDrain S+” relation; DN/flow/water-seal/DIN context evidence in official wording. | Full per-article profile↔drain mapping not fully extracted. |
-| https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/ | Category page | Official S+ family placement in shower channels. | Not a technical article table source. |
-| https://www.aco-haustechnik.de/downloads/ | Download index | Official source of brochures/datasheets. | Directly parseable S+ compatibility table not confirmed in this pass. |
-| https://www.aco-haustechnik.de/fileadmin/aco_haustechnik/documents/Prospekte-PDF/Prospekt-ACO_Sanit%C3%A4r_Duschrinne_ShowerDrain_S-Plus.pdf | Official brochure PDF | S+ product/brochure source confirmed. | Stable extracted article compatibility matrix still missing. |
-| https://www.aco-haustechnik.de/fileadmin/aco_haustechnik/documents/Prospekte-PDF/Prospekt-ACO_Sanit%C3%A4r_Badentwaesserung_Linie.pdf | Official line brochure PDF | Family-level technical comparisons/signals available. | Article-level compatibility mapping remains incomplete. |
+| URL | Type | Extraction target | What was found | What was still missing |
+|---|---|---|---|---|
+| https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ | Official family page | Profile/channel articles + system structure | Explicit modular/system wording for S+ family (profile + Ablauf); family structure visible. | Stable per-article profile table and explicit article-by-article compatibility mapping not extracted in a machine-safe way. |
+| https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus/ | Official detail page | Drain-body articles + hydraulics | Explicit “zu … ShowerDrain S+” relation; explicit hydraulic evidence exists (10/20 mm branch values in source text), water-seal branch values, DN50 context, DIN EN 1253-1 context. | Full normalized drain-body article table with complete profile compatibility links still incomplete. |
+| https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/ | Official category page | Family coverage + table links | S+ appears as official family in category scope. | Not a direct article compatibility source. |
+| https://www.aco-haustechnik.de/downloads/ | Official download index | Locate technical PDFs/tables | Official download hub confirmed. | No fully normalized S+ compatibility matrix extracted in this pass from linked assets. |
+| https://www.aco-haustechnik.de/fileadmin/aco_haustechnik/documents/Prospekte-PDF/Prospekt-ACO_Sanit%C3%A4r_Duschrinne_ShowerDrain_S-Plus.pdf | Official S+ brochure PDF | Profile+drain article tables | Official brochure source confirmed for S+ family. | Dedicated article-table normalization (article columns + explicit compatibility pairs) still incomplete. |
+| https://www.aco-haustechnik.de/fileadmin/aco_haustechnik/documents/Prospekte-PDF/Prospekt-ACO_Sanit%C3%A4r_Badentwaesserung_Linie.pdf | Official line brochure PDF | Technical parameter cross-check | Family-level technical comparison signals visible. | Not yet converted into per-article compatibility rows. |
 
 ---
 
 ## 3) Extracted profile/channel article table
 
-> Result: **No complete article-level table confirmed in this pass** (family-level + brochure-level structure found, but not full machine-safe profile article matrix).
+> Result of dedicated pass: **no complete source-backed article list could be normalized yet** for S+ profile/channel rows.
 
-| Role | Article no. | Product name | Length | Material | Sealing / W3-I | Source | Confidence | Notes |
+| Component role | Article number | Product name | Length | Material | Sealing / W3-I | Source URL/PDF | Confidence | Notes |
 |---|---|---|---|---|---|---|---|---|
-| Profile/channel/base | Not fully extracted | ShowerDrain S+ profile/channel family | Not fully extracted | Family-level indications only | W3-I context appears at family/brochure level | S+ family page + brochures | Medium-Low | Requires dedicated table/PDF parsing pass for article-normalized rows. |
+| Profile/channel/base | Not conclusively extracted | ACO ShowerDrain S+ profile/channel family | Not normalized | Not normalized | W3-I context exists at family/doc level | S+ family page + brochures | Medium-Low | Requires explicit table extraction with article columns. |
 
 ---
 
 ## 4) Extracted drain body article table
 
-| Role | Article no. | Product name | water_seal_mm | flow_rate_lps | flow_rate_10mm_lps | flow_rate_20mm_lps | outlet_dn | outlet_orientation | height range | DIN EN 1253 evidence | Source | Confidence |
+| Component role | Article number | Product name | water_seal_mm | flow_rate_lps | flow_rate_10mm_lps | flow_rate_20mm_lps | outlet_dn | outlet_orientation | height range | DIN EN 1253 | Source URL/PDF | Confidence |
 |---|---|---|---:|---:|---:|---:|---|---|---|---|---|---|
-| Drain body (Ablaufkörper to S+) | Not fully normalized in this pass | Ablaufkörper zu ACO Duschrinnenprofil ShowerDrain S+ | 50 (WS50 branch evidence) | 0.8 (from 20mm evidence branch) | 0.7 | 0.8 | DN50 | Horizontal/waagerecht evidence | Not fully extracted | DIN EN 1253-1 context present | Ablaufkörper detail page | High (for visible branch values), Medium (for complete variant set) |
-| Drain body (alternate branch) | Not fully normalized | Ablaufkörper … S+ | 30 mentioned in branch text | Incomplete in extracted snippet | Incomplete | Incomplete | DN50 page-level context | Likely horizontal | Not fully extracted | DIN context on page | Ablaufkörper detail page | Medium |
+| Drain body (S+ compatible branch, WS50 evidence) | Not fully normalized | Ablaufkörper zu ACO Duschrinnenprofil ShowerDrain S+ | 50 | 0.8 (from visible 20mm branch value) | 0.7 | 0.8 | DN50 | Horizontal/waagerecht context | Not fully extracted | DIN EN 1253-1 context present | S+ Ablaufkörper detail page | High (visible values), Medium (full-variant normalization) |
+| Drain body (alternate branch evidence) | Not fully normalized | Ablaufkörper … ShowerDrain S+ | 30 (branch text visible) | Incomplete in current extracted snippet | Incomplete | Incomplete | DN50 context | Likely horizontal | Not fully extracted | DIN context present | S+ Ablaufkörper detail page | Medium |
 
 ---
 
-## 5) Compatibility matrix (current extraction state)
+## 5) Compatibility matrix (explicitly evidenced)
 
-| Base/profile family/article | Compatible drain-body family/article | Exact wording / excerpt | Source | Confidence |
+| Profile/channel article or family | Compatible drain-body article or family | Exact source wording (short excerpt) | Source URL/PDF | Confidence |
 |---|---|---|---|---|
-| ShowerDrain S+ profile family | S+ Ablaufkörper family | “Ablaufkörper zu ACO Duschrinnenprofil ShowerDrain S+” | Ablaufkörper detail page | High |
-| S+ modular system | Profile + Ablauf relation | “Baukastensystem bestehend aus Duschrinnenprofil und Ablauf” | S+ family page | High |
+| ShowerDrain S+ family (profile side) | S+ Ablaufkörper family | “Ablaufkörper zu ACO Duschrinnenprofil ShowerDrain S+” | S+ Ablaufkörper detail page | High |
+| ShowerDrain S+ family | Profile + Ablauf modular relation | “Baukastensystem bestehend aus Duschrinnenprofil und Ablauf” | S+ family page | High |
 
-**Missing for full assembly safety:** explicit article-number-level mapping from each profile/channel article to each compatible drain-body article.
-
----
-
-## 6) Technical parameter table (source-backed status)
-
-| Parameter | Evidence status | Best source | Notes |
-|---|---|---|---|
-| flow_rate_lps | Partial | S+ Ablaufkörper detail page | Branch-specific values visible; needs article-normalized extraction. |
-| flow_rate_10mm_lps | Partial | S+ Ablaufkörper detail page | Explicit in at least one branch; full variant coverage missing. |
-| flow_rate_20mm_lps | Partial | S+ Ablaufkörper detail page | Explicit in at least one branch; full variant coverage missing. |
-| water_seal_mm | Partial-Strong | S+ Ablaufkörper detail page | WS values visible (e.g., 50 and 30 branches), but full article matrix incomplete. |
-| outlet_dn | Strong | S+ Ablaufkörper detail page | DN50 context present. |
-| outlet_orientation | Partial | S+ Ablaufkörper detail page | Horizontal context present; variant table normalization incomplete. |
-| height_adj_min/max | Weak | S+ pages/PDF | Not conclusively extracted in this pass. |
-| material | Weak-Partial | Family/PDF content | Family-level indications only in current extraction. |
-| sealing fleece / W3-I | Partial | Family/PDF/page text | Evidence exists, article-level normalization incomplete. |
-| DIN EN 1253 | Partial-Strong | Ablaufkörper detail page | Explicit DIN EN 1253-1 wording present. |
+**Still missing for safe assembled generation:** explicit article-to-article compatibility entries (e.g., `profile article X -> drain body article Y`).
 
 ---
 
-## 7) Missing evidence blocking full assembled-system creation
+## 6) Technical parameter evidence table (consolidated)
 
-1. **Article-level compatibility matrix missing**:
-   - profile/article → compatible drain-body/article mapping not fully extracted.
-2. **Complete article tables missing for profile/channel branch**:
-   - lengths/material/technical values not fully normalized by article number.
-3. **Incomplete full-variant technical normalization for drain bodies**:
-   - some branch values visible, but complete per-article coverage not yet proven.
+| Parameter | Explicit official evidence in this pass? | Best source | Confidence | Notes |
+|---|---|---|---|---|
+| flow_rate_lps | Partial | S+ Ablaufkörper detail page | Medium-High | Present for at least one visible branch; not fully normalized by article. |
+| flow_rate_10mm_lps | Partial | S+ Ablaufkörper detail page | Medium | Visible for at least one branch; not complete across all variants. |
+| flow_rate_20mm_lps | Partial | S+ Ablaufkörper detail page | Medium | Visible for at least one branch; not complete across all variants. |
+| water_seal_mm | Partial-Strong | S+ Ablaufkörper detail page | High (branch-level), Medium (matrix-level) | WS values visible (e.g., 50/30 branches). |
+| outlet_dn | Strong | S+ Ablaufkörper detail page | High | DN50 context explicit. |
+| outlet_orientation | Partial | S+ Ablaufkörper detail page | Medium | Horizontal context visible. |
+| height_adj_min_mm / max | Weak | Family/PDF context | Low | Not extracted in complete numeric article table. |
+| material | Weak-Partial | Family/PDF context | Low-Medium | Not normalized by article. |
+| sealing / W3-I | Partial | Family/PDF context | Medium | Mentioned but not article-mapped. |
+| DIN EN 1253 | Partial-Strong | S+ Ablaufkörper detail page | Medium-High | Explicit DIN EN 1253-1 context. |
+
+---
+
+## 7) Missing evidence and blocker assessment
+
+### Missing evidence
+1. Full S+ **profile/channel article table** with stable article numbers.
+2. Full S+ **drain body article table** normalized by article across all variants.
+3. Explicit **profile-article ↔ drain-body-article** compatibility matrix.
+
+### Does missing data block assembled-system creation?
+**Yes (for safe production-level benchmark assembly).**
+
+Without article-level compatibility mapping, assembled rows would risk unsafe relationships and unreliable technical attribution.
 
 ---
 
 ## 8) Recommendation
-**Recommendation:** **Defer full assembled product implementation for now**.
+**Recommendation:** **Defer full assembled-system implementation**.
 
-Suggested next step (implementation-prep only):
-1. Add a dedicated extraction helper (offline/audit script) for official S+ PDFs/tables.
-2. Normalize article numbers and explicit compatibility links/matrices.
-3. Only after matrix is complete, add assembled-system rows in production logic.
-
-At current confidence, **BOM hints may be acceptable**, but **full benchmark assembled systems are not yet fully safe**.
+Suggested next step (parser-preparation only):
+1. Run a dedicated extraction helper against official S+ PDFs/tables to capture article columns and compatibility mappings.
+2. Normalize article numbers and deduplicate by official article keys.
+3. Only then create source-backed assembled S+ rows.
 
 ---
 
-## 9) Regression guardrails
-Any future implementation must preserve:
-
+## 9) Regression guardrails (must remain true in future implementation)
 - Candidates_All >= 69
 - Products >= 27
 - Components >= 54
