@@ -137,6 +137,24 @@ class AcoConnectorDiscoveryTests(unittest.TestCase):
         labels = [ev[0] for ev in (p25.get("evidence") or [])]
         self.assertIn("Article row hydraulics", labels)
 
+    def test_extract_parameters_marks_generic_page_flow_when_article_row_lacks_hydraulics(self):
+        html = """<html><body><main><h1>ACO ShowerDrain C</h1>
+            <p>Ablaufleistung bis zu 0,91 l/s</p>
+            <p>Sperrwasserhöhe 25 mm</p>
+            <table>
+                <tr><th>L1</th><th>Artikel</th><th>Preis</th></tr>
+                <tr><td>1185 mm</td><td>90108544</td><td>405,53 €</td></tr>
+            </table>
+        </main></body></html>"""
+        with patch("src.connectors.aco._safe_get_text", return_value=(200, "https://www.aco-haustechnik.de/p/", html, "")):
+            p25 = aco.extract_parameters("https://www.aco-haustechnik.de/p/#article-90108544")
+        self.assertEqual(int(p25.get("water_seal_mm")), 25)
+        self.assertIsNone(p25.get("flow_rate_10mm_lps"))
+        self.assertIsNone(p25.get("flow_rate_20mm_lps"))
+        self.assertEqual(float(p25.get("flow_rate_lps")), 0.91)
+        labels = [ev[0] for ev in (p25.get("evidence") or [])]
+        self.assertIn("Flow attribution limited", labels)
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -157,9 +175,9 @@ class AcoConnectorEndToEndRegressionTests(unittest.TestCase):
             </main></body></html>""",
             "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm-200-mm/": """<html><body><main><h1>ACO ShowerDrain C Rinnenkörper</h1>
                 <p>Einbauhöhe Oberkante Estrich 57-128 mm</p><p>Ablaufstutzen DN 50</p><p>Ablaufleistung 0,80 l/s</p>
-                <table><tr><th>L1</th><th>Artikel</th></tr>
-                    <tr><td>1185 mm</td><td>90108544</td></tr><tr><td>1185 mm</td><td>90108554</td></tr>
-                    <tr><td>985 mm</td><td>90108524</td></tr><tr><td>985 mm</td><td>90108534</td></tr></table>
+                <table><tr><th>L1</th><th>Artikel</th><th>Abflusswert 20 mm</th></tr>
+                    <tr><td>1185 mm</td><td>90108544</td><td>0,80 l/s</td></tr><tr><td>1185 mm</td><td>90108554</td><td>0,80 l/s</td></tr>
+                    <tr><td>985 mm</td><td>90108524</td><td>0,91 l/s</td></tr><tr><td>985 mm</td><td>90108534</td><td>0,91 l/s</td></tr></table>
             </main></body></html>""",
         }
         for url, name in [
