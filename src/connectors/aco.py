@@ -835,6 +835,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
                     res["flow_rate_10mm_lps"] = f10
                 if f20 is not None:
                     res["flow_rate_20mm_lps"] = f20
+                row_has_hydraulic = (f10 is not None) or (f20 is not None)
                 if idx_ws is not None and idx_ws < len(cells):
                     wsm = re.search(r"(\d{2,3})\s*mm", _clean_text(cells[idx_ws].get_text(" ", strip=True)), re.IGNORECASE)
                     if wsm:
@@ -842,6 +843,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
                             ws = int(wsm.group(1))
                             if 20 <= ws <= 100:
                                 res["water_seal_mm"] = ws
+                                row_has_hydraulic = True
                         except Exception:
                             pass
                 flows = []
@@ -857,7 +859,20 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
                     res["flow_rate_unit"] = "l/s"
                     res["flow_rate_status"] = "ok"
                 res["evidence"].append(("Article row", row_text[:280], final))
+                if not row_has_hydraulic:
+                    res["evidence"].append(("Article row hydraulics", "article row contains dimensions/price style data but no explicit 10mm/20mm flow or water seal field", final))
                 break
+
+    wsm_page = WATER_SEAL_RE.search(flat)
+    if wsm_page:
+        try:
+            ws = int(wsm_page.group(1))
+            if 20 <= ws <= 100:
+                res["water_seal_mm"] = ws
+                res["evidence"].append(("Sperrwasserhöhe (mm)", _snippet(flat, wsm_page.start(), wsm_page.end()), final))
+        except Exception:
+            pass
+
     # height (prefer Oberkante Estrich phrase)
     hm = HEIGHT_OE_RE.search(flat) or HEIGHT_RE.search(flat)
     if hm:

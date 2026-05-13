@@ -121,6 +121,22 @@ class AcoConnectorDiscoveryTests(unittest.TestCase):
         self.assertEqual(int(p50["water_seal_mm"]), 50)
         self.assertNotEqual(p25["flow_rate_20mm_lps"], p50["flow_rate_20mm_lps"])
 
+    def test_extract_parameters_adds_diagnostic_when_article_row_has_no_hydraulic_fields(self):
+        html = """<html><body><main><h1>ACO ShowerDrain C</h1>
+            <table>
+                <tr><th>L1</th><th>Artikel</th><th>Preis</th></tr>
+                <tr><td>1185 mm</td><td>90108544</td><td>405,53 €</td></tr>
+            </table>
+            <p>Einbauhöhen (Sperrwasserhöhe 25 mm)</p>
+        </main></body></html>"""
+        with patch("src.connectors.aco._safe_get_text", return_value=(200, "https://www.aco-haustechnik.de/p/", html, "")):
+            p25 = aco.extract_parameters("https://www.aco-haustechnik.de/p/#article-90108544")
+        self.assertIsNone(p25.get("flow_rate_10mm_lps"))
+        self.assertIsNone(p25.get("flow_rate_20mm_lps"))
+        self.assertEqual(int(p25.get("water_seal_mm")), 25)
+        labels = [ev[0] for ev in (p25.get("evidence") or [])]
+        self.assertIn("Article row hydraulics", labels)
+
 
 if __name__ == "__main__":
     unittest.main()
