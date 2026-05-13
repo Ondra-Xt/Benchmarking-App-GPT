@@ -51,6 +51,8 @@ SEED_PAGES = [
 ARTICLE_RE = re.compile(r"\b(?:\d{4}\.?\d{2}\.?\d{2}|\d{8})\b")
 L1_RE = re.compile(r"\b(\d{3,4})\s*mm\b", re.IGNORECASE)
 FLOW_LPS_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*l\s*/\s*s\b", re.IGNORECASE)
+FLOW_AT_RE = re.compile(r"(10|20)\s*mm[^\d]{0,20}(\d+(?:[.,]\d+)?)\s*l\s*/\s*s", re.IGNORECASE)
+WATER_SEAL_RE = re.compile(r"(?:geruchverschluss|sperrwasserh(?:oe|ö)he)[^\d]{0,20}(\d{2,3})\s*mm", re.IGNORECASE)
 HEIGHT_OE_RE = re.compile(
     r"einbauh(?:ö|oe)he[^.]{0,80}oberkante\s+estrich[^\d]{0,20}(\d{2,3})\s*[-–]\s*(\d{2,3})\s*mm",
     re.IGNORECASE,
@@ -607,7 +609,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                     "product_id": pid,
                     "product_family": family if family != "unknown" else "ShowerDrain",
                     "product_name": f"{title_base} {nominal_length_mm} mm (Artikel-Nr. {article_no})",
-                    "product_url": final_c,
+                    "product_url": f"{final_c}#article-{article_digits}",
                     "sources": final_c,
                     "candidate_type": "drain",
                     "system_role": "drain_unit",
@@ -764,6 +766,8 @@ def _is_valid_flow_context(flat: str, start: int, end: int) -> bool:
 def extract_parameters(product_url: str) -> Dict[str, Any]:
     res: Dict[str, Any] = {
         "flow_rate_lps": None,
+        "flow_rate_10mm_lps": None,
+        "flow_rate_20mm_lps": None,
         "flow_rate_raw_text": None,
         "flow_rate_unit": None,
         "flow_rate_status": None,
@@ -774,6 +778,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
         "din_18534_compliance": None,
         "height_adj_min_mm": None,
         "height_adj_max_mm": None,
+        "water_seal_mm": None,
         "outlet_dn": None,
         "outlet_dn_default": None,
         "outlet_dn_options_json": None,
@@ -782,13 +787,91 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
         "evidence": [],
     }
 
-    src = (product_url or "").split("#", 1)[0].strip()
+    src_full = (product_url or "").strip()
+    src = src_full.split("#", 1)[0].strip()
+    article_token = ""
+    if "#" in src_full:
+        frag = src_full.split("#", 1)[1]
+        mfrag = re.search(r"(\d{6,10})", frag)
+        if mfrag:
+            article_token = mfrag.group(1)
     st, final, html, err = _safe_get_text(src, timeout=35)
     res["evidence"].append(("HTML fetch", f"status={st} err={err}".strip(), final))
     if st != 200 or not html:
         return res
 
     flat = _main_flat_text_from_html(html)
+
+    # article-row specific extraction if article token is available from discovery URL anchor
+    if article_token:
+        soup = BeautifulSoup(html or "", "lxml")
+        for table in soup.select("table"):
+            rows = table.select("tr")
+            if not rows:
+                continue
+            header_cells = [(_clean_text(c.get_text(" ", strip=True)).lower()) for c in rows[0].select("th,td")]
+            idx_10 = next((i for i, h in enumerate(header_cells) if "10" in h and "mm" in h and ("abfluss" in h or "ablauf" in h)), None)
+            idx_20 = next((i for i, h in enumerate(header_cells) if "20" in h and "mm" in h and ("abfluss" in h or "ablauf" in h)), None)
+            idx_ws = next((i for i, h in enumerate(header_cells) if "geruch" in h or "sperrwasser" in h), None)
+            for tr in rows[1:]:
+                cells = tr.select("th,td")
+                row_text = _clean_text(tr.get_text(" ", strip=True))
+                if article_token not in _digits_only(row_text):
+                    continue
+                def _parse_flow_from_cell(ix):
+                    if ix is None or ix >= len(cells):
+                        return None
+                    cm = FLOW_LPS_RE.search(_clean_text(cells[ix].get_text(" ", strip=True)))
+                    if not cm:
+                        return None
+                    try:
+                        fv = float(cm.group(1).replace(",", "."))
+                        return fv if 0.10 <= fv <= 3.0 else None
+                    except Exception:
+                        return None
+                f10 = _parse_flow_from_cell(idx_10)
+                f20 = _parse_flow_from_cell(idx_20)
+                if f10 is not None:
+                    res["flow_rate_10mm_lps"] = f10
+                if f20 is not None:
+                    res["flow_rate_20mm_lps"] = f20
+                row_has_hydraulic = (f10 is not None) or (f20 is not None)
+                if idx_ws is not None and idx_ws < len(cells):
+                    wsm = re.search(r"(\d{2,3})\s*mm", _clean_text(cells[idx_ws].get_text(" ", strip=True)), re.IGNORECASE)
+                    if wsm:
+                        try:
+                            ws = int(wsm.group(1))
+                            if 20 <= ws <= 100:
+                                res["water_seal_mm"] = ws
+                                row_has_hydraulic = True
+                        except Exception:
+                            pass
+                flows = []
+                for m in FLOW_LPS_RE.finditer(row_text):
+                    try:
+                        fv = float(m.group(1).replace(",", "."))
+                    except Exception:
+                        continue
+                    if 0.10 <= fv <= 3.0:
+                        flows.append(fv)
+                if flows:
+                    res["flow_rate_lps"] = max(flows)
+                    res["flow_rate_unit"] = "l/s"
+                    res["flow_rate_status"] = "ok"
+                res["evidence"].append(("Article row", row_text[:280], final))
+                if not row_has_hydraulic:
+                    res["evidence"].append(("Article row hydraulics", "article row contains dimensions/price style data but no explicit 10mm/20mm flow or water seal field", final))
+                break
+
+    wsm_page = WATER_SEAL_RE.search(flat)
+    if wsm_page:
+        try:
+            ws = int(wsm_page.group(1))
+            if 20 <= ws <= 100:
+                res["water_seal_mm"] = ws
+                res["evidence"].append(("Sperrwasserhöhe (mm)", _snippet(flat, wsm_page.start(), wsm_page.end()), final))
+        except Exception:
+            pass
 
     # height (prefer Oberkante Estrich phrase)
     hm = HEIGHT_OE_RE.search(flat) or HEIGHT_RE.search(flat)
