@@ -940,4 +940,45 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
 
 
 def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-    return []
+    src = (product_url or "").split("#", 1)[0].strip()
+    st, final, html, err = _safe_get_text(src, timeout=35)
+    if st != 200 or not html:
+        return []
+
+    soup = BeautifulSoup(html or "", "lxml")
+    title = _extract_title(html, final)
+    family = _detect_family(final, title)
+    if family != "showerdrain_splus":
+        return []
+
+    options: List[Dict[str, Any]] = []
+    seen = set()
+    compatibility_sections = soup.find_all(string=re.compile(r"kompatibel|geeignet\s+f[üu]r|passend\s+zu", re.IGNORECASE))
+    if not compatibility_sections:
+        return []
+
+    for a in soup.select("a[href]"):
+        href = _abs(a.get("href") or "", final)
+        if not _in_scope(href):
+            continue
+        link_txt = _clean_text(a.get_text(" ", strip=True))
+        role, _reason = _classify_role(href, link_txt, "", family)
+        if role not in {"drain_body", "grate", "accessory"}:
+            continue
+        comp_id = _stable_aco_id(href, family, role, link_txt)
+        key = (comp_id, role)
+        if key in seen:
+            continue
+        seen.add(key)
+        option_type = "compatible_drain_body" if role == "drain_body" else ("compatible_grate" if role == "grate" else "optional_accessory")
+        options.append({
+            "component_id": comp_id,
+            "option_type": option_type,
+            "option_role": role,
+            "option_family": family,
+            "parent_family": family,
+            "source_url": href,
+            "option_label": link_txt[:140],
+            "option_meta": "official_splus_compatibility_section",
+        })
+    return options

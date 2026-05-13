@@ -156,6 +156,25 @@ class AcoConnectorDiscoveryTests(unittest.TestCase):
         self.assertIn("Flow attribution limited", labels)
 
 
+    def test_splus_bom_options_require_explicit_compatibility_section(self):
+        html_no = """<html><body><main><h1>ACO ShowerDrain S+</h1>
+            <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/rinnenkoerper/'>Rinnenkörper</a>
+        </main></body></html>"""
+        with patch("src.connectors.aco._safe_get_text", return_value=(200, "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/", html_no, "")):
+            opts = aco.get_bom_options("https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/")
+        self.assertEqual(opts, [])
+
+        html_yes = """<html><body><main><h1>ACO ShowerDrain S+</h1>
+            <p>Kompatibel mit folgenden Ablaufkörpern</p>
+            <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/rinnenkoerper/'>Rinnenkörper S+</a>
+            <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/designrost/'>Designrost S+</a>
+        </main></body></html>"""
+        with patch("src.connectors.aco._safe_get_text", return_value=(200, "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/", html_yes, "")):
+            opts_yes = aco.get_bom_options("https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/")
+        self.assertTrue(any(o.get("option_type") == "compatible_drain_body" for o in opts_yes))
+        self.assertTrue(any(o.get("option_type") == "compatible_grate" for o in opts_yes))
+
+
 if __name__ == "__main__":
     unittest.main()
 
