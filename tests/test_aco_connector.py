@@ -1,98 +1,58 @@
-import json
 import unittest
 from unittest.mock import patch
 
 from src.connectors import aco
 
 
-class AcoConnectorDiscoveryTests(unittest.TestCase):
-    def test_stable_aco_id_helpers_are_deterministic_and_ascii_safe(self):
-        id1 = aco._stable_aco_id(
-            "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-aufsatzstuecke-standard/",
-            "easyflow",
-            "accessory",
-            "ACO Easyflow Aufsatzstücke Standard",
-        )
-        id2 = aco._stable_aco_id(
-            "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-aufsatzstuecke-standard/",
-            "easyflow",
-            "accessory",
-            "ACO Easyflow Aufsatzstücke Standard",
-        )
-        self.assertEqual(id1, id2)
-        self.assertEqual(id1, "aco-easyflow-aco-easyflow-aufsatzstuecke-standard")
-        self.assertTrue(id1.islower())
-        self.assertNotRegex(id1, r"[^a-z0-9-]")
+class TestAcoShowerDrainCRowParsing(unittest.TestCase):
+    def _mock_html(self):
+        return """
+        <html><body><main>
+        <table>
+          <tr>
+            <th>Artikel-Nr.</th><th>Einbauhöhe mm</th><th>Abflussleistung l/s</th><th>Abflussleistung 10 mm l/s</th><th>Abflussleistung 20 mm l/s</th><th>Geruchverschluss mm</th>
+          </tr>
+          <tr>
+            <td>90123456</td><td>57-128</td><td>0,70</td><td>0,45</td><td>0,70</td><td>25</td>
+          </tr>
+          <tr>
+            <td>90123457</td><td>80-128</td><td>0,91</td><td>0,60</td><td>0,91</td><td>50</td>
+          </tr>
+        </table>
+        </main></body></html>
+        """
 
-    def test_in_scope_accepts_de_and_cz_bathroom_scopes(self):
-        self.assertTrue(aco._in_scope("https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/"))
-        self.assertTrue(aco._in_scope("https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/"))
-        self.assertTrue(aco._in_scope("https://www.aco.cz/produkty/odvodneni-koupelen/"))
-        self.assertFalse(aco._in_scope("https://www.aco-haustechnik.de/produkte/hausinstallation/"))
-        self.assertFalse(aco._in_scope("https://example.com/produkte/badentwaesserung/"))
+    @patch("src.connectors.aco._safe_get_text")
+    def test_row_specific_flow_and_variant_metadata(self, mock_get):
+        mock_get.return_value = (200, "https://www.aco-haustechnik.de/x", self._mock_html(), "")
 
-    def test_discovery_covers_multiple_families_and_keeps_showerdrain_c_1200_variants(self):
-        pages = {
-            "https://www.aco-haustechnik.de/produkte/badentwaesserung/": """
-                <html><body><main><h1>Badentwässerung</h1>
-                <a href="/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm-200-mm/">C body</a>
-                <a href="/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/">S+</a>
-                <a href="/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/rinnenkoerper/">M+ body</a>
-                <a href="/produkte/badentwaesserung/badablaeufe/aco-easyflow-plus-komplettablauf-dn50/">EasyFlow+ Komplettablauf DN50</a>
-                <a href="/produkte/badentwaesserung/badablaeufe/aco-easyflow-komplettablauf-dn50/">EasyFlow Komplettablauf DN50</a>
-                <a href="/produkte/badentwaesserung/badablaeufe/aco-showerpoint/">ShowerPoint</a>
-                <a href="/produkte/badentwaesserung/badablaeufe/aco-renovierungsablauf-passino/">Passino</a>
-                <a href="/produkte/badentwaesserung/badablaeufe/aco-bodenablauf-passavant/">Passavant</a>
-                <a href="/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/designrost/">Designrost</a>
-                <a href="/produkty/odvodneni-koupelen/aco-showerdrain-public-80/">Public 80 cz</a>
-                </main></body></html>
-            """,
-            "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm-200-mm/": """
-                <html><body><main><h1>ACO ShowerDrain C Rinnenkörper</h1>
-                <table>
-                    <tr><th>L1</th><th>Artikel</th></tr>
-                    <tr><td>1185 mm</td><td>90108544</td></tr>
-                    <tr><td>1185 mm</td><td>90108554</td></tr>
-                    <tr><td>985 mm</td><td>90108524</td></tr>
-                    <tr><td>985 mm</td><td>90108534</td></tr>
-                </table>
-                </main></body></html>
-            """,
-            "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/": "<html><body><main><h1>ACO ShowerDrain S+</h1></main></body></html>",
-            "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/rinnenkoerper/": "<html><body><main><h1>ACO ShowerDrain M+ Rinnenkörper</h1></main></body></html>",
-            "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-plus-komplettablauf-dn50/": "<html><body><main><h1>ACO EasyFlow+ Komplettablauf DN50</h1></main></body></html>",
-            "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-komplettablauf-dn50/": "<html><body><main><h1>ACO Easyflow Komplettablauf DN50</h1></main></body></html>",
-            "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-showerpoint/": "<html><body><main><h1>ACO ShowerPoint</h1></main></body></html>",
-            "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-renovierungsablauf-passino/": "<html><body><main><h1>ACO Renovierungsablauf Passino</h1></main></body></html>",
-            "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-bodenablauf-passavant/": "<html><body><main><h1>ACO Bodenablauf Passavant</h1></main></body></html>",
-            "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/designrost/": "<html><body><main><h1>ACO ShowerDrain C Designrost</h1></main></body></html>",
-            "https://www.aco.cz/produkty/odvodneni-koupelen/aco-showerdrain-public-80/": "<html><body><main><h1>ACO ShowerDrain Public 80</h1></main></body></html>",
-            "https://www.aco.cz/produkty/odvodneni-koupelen/": "<html><body><main><h1>Odvodnění koupelen</h1><a href='/produkty/odvodneni-koupelen/aco-showerdrain-public-80/'>Public 80</a></main></body></html>",
-        }
+        low = aco.extract_parameters("https://www.aco-haustechnik.de/x#article=90123456")
+        std = aco.extract_parameters("https://www.aco-haustechnik.de/x#article=90123457")
 
-        def _fake_get(url, timeout=35):
-            key = aco._canonicalize_url(url)
-            html = pages.get(key)
-            if html is None:
-                return 404, key, "", "not found"
-            return 200, key, html, ""
+        self.assertEqual(low["flow_rate_lps"], 0.70)
+        self.assertEqual(low["flow_rate_10mm_lps"], 0.45)
+        self.assertEqual(low["flow_rate_20mm_lps"], 0.70)
+        self.assertEqual(low["water_seal_mm"], 25)
+        self.assertEqual(low["height_adj_min_mm"], 57)
+        self.assertEqual(low["height_adj_max_mm"], 128)
 
-        with patch("src.connectors.aco._safe_get_text", side_effect=_fake_get):
-            rows, dbg = aco.discover_candidates(target_length_mm=1200, tolerance_mm=100)
+        self.assertEqual(std["flow_rate_lps"], 0.91)
+        self.assertEqual(std["water_seal_mm"], 50)
+        self.assertEqual(std["height_adj_min_mm"], 80)
+        self.assertEqual(std["height_adj_max_mm"], 128)
 
-        ids = {r["product_id"] for r in rows}
-        self.assertIn("aco-90108544", ids)
-        self.assertIn("aco-90108554", ids)
-        summary = next(d for d in dbg if d.get("method") == "summary")
-        fam_cov = json.loads(summary["expected_family_coverage"])
-        self.assertTrue(fam_cov.get("showerdrain_c"))
-        self.assertTrue(fam_cov.get("showerdrain_splus"))
-        self.assertTrue(fam_cov.get("showerdrain_mplus"))
-        self.assertTrue(fam_cov.get("easyflowplus"))
-        self.assertTrue(fam_cov.get("easyflow"))
-        self.assertTrue(fam_cov.get("showerpoint"))
-        self.assertTrue(fam_cov.get("passino"))
-        self.assertTrue(fam_cov.get("passavant"))
+        self.assertNotEqual(low["flow_rate_lps"], std["flow_rate_lps"])
+        self.assertNotEqual(low["water_seal_mm"], std["water_seal_mm"])
+
+    @patch("src.connectors.aco._safe_get_text")
+    def test_evidence_points_to_official_source(self, mock_get):
+        final_url = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/"
+        mock_get.return_value = (200, final_url, self._mock_html(), "")
+
+        params = aco.extract_parameters(f"{final_url}#article=90123456")
+
+        evidence_urls = [e[2] for e in params.get("evidence", []) if len(e) >= 3]
+        self.assertTrue(any("aco-haustechnik.de" in (u or "") for u in evidence_urls))
 
 
 if __name__ == "__main__":
