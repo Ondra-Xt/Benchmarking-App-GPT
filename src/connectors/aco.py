@@ -90,6 +90,10 @@ FAMILY_PATTERNS: List[Tuple[str, str]] = [
     ("passavant", r"passavant"),
 ]
 
+SPLUS_PROFILE_ARTICLES = {"9010.51.01", "9010.51.02", "9010.51.03", "9010.51.04", "9010.51.41", "9010.51.42", "9010.51.43", "9010.51.44"}
+SPLUS_DRAIN_ARTICLES = {"9010.51.20", "9010.51.21"}
+SPLUS_AMBIGUOUS_ARTICLES = {"9010.51.27", "9010.51.28", "9010.51.29", "9010.51.30", "9010.81.23"}
+
 
 def _safe_get_text(url: str, timeout: int = 35) -> Tuple[Optional[int], str, str, str]:
     try:
@@ -592,6 +596,33 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                         })
 
             for l1_mm, article_no, article_digits in pairs:
+                if family == "showerdrain_splus":
+                    art_norm = article_no if "." in article_no else f"{article_digits[:4]}.{article_digits[4:6]}.{article_digits[6:8]}"
+                    if art_norm in SPLUS_AMBIGUOUS_ARTICLES:
+                        continue
+                    role_splus = "profile_channel" if art_norm in SPLUS_PROFILE_ARTICLES else ("drain_body" if art_norm in SPLUS_DRAIN_ARTICLES else "component")
+                    pid = _stable_aco_id(final_c, family, role_splus, title_base, article_digits)
+                    if pid in seen_ids:
+                        continue
+                    seen_ids.add(pid)
+                    out.append({
+                        "manufacturer": "aco",
+                        "product_id": pid,
+                        "product_family": family,
+                        "product_name": f"{title_base} (Artikel-Nr. {art_norm})",
+                        "product_url": f"{final_c}#article-{article_digits}",
+                        "sources": final_c,
+                        "candidate_type": "component",
+                        "system_role": role_splus,
+                        "classification_reason": "splus_article_component",
+                        "complete_system": "component",
+                        "article_no": art_norm,
+                        "row_length_raw_mm": l1_mm,
+                        "row_length_nominal_mm": _nominal_length_from_l1(l1_mm),
+                    })
+                    candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                    candidates_by_role[role_splus] = candidates_by_role.get(role_splus, 0) + 1
+                    continue
                 nominal_length_mm = _nominal_length_from_l1(l1_mm)
                 # row must have concrete length
                 if nominal_length_mm is None:
@@ -630,6 +661,37 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                 product_urls.append(final_c)
                 emitted_rows += 1
         elif cand_type == "component":
+            if family == "showerdrain_splus" and pairs:
+                for l1_mm, article_no, article_digits in pairs:
+                    art_norm = article_no if "." in article_no else f"{article_digits[:4]}.{article_digits[4:6]}.{article_digits[6:8]}"
+                    if art_norm in SPLUS_AMBIGUOUS_ARTICLES:
+                        continue
+                    role_splus = "profile_channel" if art_norm in SPLUS_PROFILE_ARTICLES else ("drain_body" if art_norm in SPLUS_DRAIN_ARTICLES else "component")
+                    pid = _stable_aco_id(final_c, family, role_splus, title_base, article_digits)
+                    if pid in seen_ids:
+                        continue
+                    seen_ids.add(pid)
+                    kept += 1
+                    kept_total += 1
+                    out.append({
+                        "manufacturer": "aco",
+                        "product_id": pid,
+                        "product_family": family,
+                        "product_name": f"{title_base} (Artikel-Nr. {art_norm})",
+                        "product_url": f"{final_c}#article-{article_digits}",
+                        "sources": final_c,
+                        "candidate_type": "component",
+                        "system_role": role_splus,
+                        "classification_reason": "splus_article_component",
+                        "complete_system": "component",
+                        "article_no": art_norm,
+                        "row_length_raw_mm": l1_mm,
+                        "row_length_nominal_mm": _nominal_length_from_l1(l1_mm),
+                    })
+                    candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                    candidates_by_role[role_splus] = candidates_by_role.get(role_splus, 0) + 1
+                debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": err, "candidates_found": kept, "method": "table", "is_index": None})
+                continue
             pid = _stable_aco_id(final_c, family, role, title_base)
             if pid not in seen_ids:
                 seen_ids.add(pid)
@@ -954,8 +1016,6 @@ def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -
     options: List[Dict[str, Any]] = []
     seen = set()
     compatibility_sections = soup.find_all(string=re.compile(r"kompatibel|geeignet\s+f[üu]r|passend\s+zu|zubeh[öo]r|ablaufk[öo]rper", re.IGNORECASE))
-    if not compatibility_sections:
-        return []
 
     parent_id = _stable_aco_id(final, family, "configuration_family", title)
     nav_noise_re = re.compile(r"hauptnavigation|skip|direkt\s+zur|cookie|datenschutz|impressum|suche|login|konto|warenkorb|men[üu]|footer|header", re.IGNORECASE)
@@ -976,9 +1036,6 @@ def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -
         for node in context_nodes:
             for a in node.select("a[href]"):
                 candidate_anchors.append((a, _clean_text(node.get_text(" ", strip=True))))
-
-    if not candidate_anchors:
-        return []
 
     for a, ctx_text in candidate_anchors:
         href = _abs(a.get("href") or "", final)
@@ -1012,4 +1069,26 @@ def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -
             "option_label": link_txt[:140],
             "option_meta": "official_splus_compatibility_section",
         })
+    # cautious implicit family-level compatibility hints for verified S+ profile->drain article sets
+    if not options:
+        art_match = re.search(r"(\d{4}\.\d{2}\.\d{2}|\d{8})", product_url or "")
+        art_norm = ""
+        if art_match:
+            raw = art_match.group(1)
+            digits = _digits_only(raw)
+            art_norm = raw if "." in raw else f"{digits[:4]}.{digits[4:6]}.{digits[6:8]}"
+        if art_norm in SPLUS_PROFILE_ARTICLES:
+            for da in sorted(SPLUS_DRAIN_ARTICLES):
+                dd = _digits_only(da)
+                comp_id = f"aco-{dd}"
+                options.append({
+                    "component_id": comp_id,
+                    "option_type": "compatible_drain_body",
+                    "option_role": "drain_body",
+                    "option_family": family,
+                    "parent_family": family,
+                    "source_url": final,
+                    "option_label": f"Ablaufkörper {da}",
+                    "option_meta": "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; Compatibility is implicit_family_level based on official ACO S+ modular system/profile+drain wording; no literal profile article -> drain article matrix found.",
+                })
     return options

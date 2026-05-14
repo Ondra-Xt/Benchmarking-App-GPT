@@ -196,6 +196,42 @@ class AcoConnectorDiscoveryTests(unittest.TestCase):
         self.assertFalse(any(o.get("component_id") == parent_id for o in opts))
 
 
+    def test_splus_article_rows_classified_to_profile_and_drain_only(self):
+        html = """<html><body><main><h1>ACO ShowerDrain S+ Duschrinnenprofil</h1>
+            <table><tr><th>L1</th><th>Artikel</th></tr>
+              <tr><td>800 mm</td><td>9010.51.01</td></tr>
+              <tr><td>900 mm</td><td>9010.51.02</td></tr>
+              <tr><td>1000 mm</td><td>9010.51.20</td></tr>
+              <tr><td>1200 mm</td><td>9010.51.21</td></tr>
+              <tr><td>1200 mm</td><td>9010.51.27</td></tr>
+            </table></main></body></html>"""
+        pages = {
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/": f"<html><body><main><a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/aco-showerdrain-splus-duschrinnenprofil/'>S+</a></main></body></html>",
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/aco-showerdrain-splus-duschrinnenprofil/": html,
+        }
+        def _fake_get(url, timeout=35):
+            key = aco._canonicalize_url(url)
+            if key in pages:
+                return 200, key, pages[key], ""
+            return 404, key, "", "nf"
+        with patch("src.connectors.aco._safe_get_text", side_effect=_fake_get):
+            rows, _ = aco.discover_candidates(1000, 300)
+        ids = {r.get("article_no"): r.get("system_role") for r in rows if r.get("product_family") == "showerdrain_splus" and r.get("article_no")}
+        self.assertEqual(ids.get("9010.51.01"), "profile_channel")
+        self.assertEqual(ids.get("9010.51.02"), "profile_channel")
+        self.assertEqual(ids.get("9010.51.20"), "drain_body")
+        self.assertEqual(ids.get("9010.51.21"), "drain_body")
+        self.assertNotIn("9010.51.27", ids)
+
+    def test_splus_profile_gets_implicit_family_level_bom_hints(self):
+        html = "<html><body><main><h1>ACO ShowerDrain S+ Profil</h1></main></body></html>"
+        with patch("src.connectors.aco._safe_get_text", return_value=(200, "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/aco-showerdrain-splus-duschrinnenprofil/", html, "")):
+            opts = aco.get_bom_options("https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/aco-showerdrain-splus-duschrinnenprofil/#article-90105101")
+        self.assertTrue(any(o.get("component_id") == "aco-90105120" for o in opts))
+        self.assertTrue(any(o.get("component_id") == "aco-90105121" for o in opts))
+        self.assertTrue(all("implicit_family_level" in str(o.get("option_meta") or "") for o in opts))
+
+
 if __name__ == "__main__":
     unittest.main()
 
