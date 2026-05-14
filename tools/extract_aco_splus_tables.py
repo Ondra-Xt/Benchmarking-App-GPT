@@ -25,6 +25,9 @@ WS_RE = re.compile(r"(?:sperrwasserh(?:ö|oe)he|geruchverschluss)[^\d]{0,20}(\d{
 DN_RE = re.compile(r"\bDN\s*(\d{2})\b", re.IGNORECASE)
 HEIGHT_RE = re.compile(r"(\d{2,3})\s*[-–]\s*(\d{2,3})\s*mm")
 COMPAT_RE = re.compile(r"kompatibel|geeignet\s+f[üu]r|passend\s+zu|zu\s+aco\s+duschrinnenprofil\s+showerdrain\s*s\+", re.IGNORECASE)
+PROFILE_ARTICLES = {"9010.51.01","9010.51.02","9010.51.03","9010.51.04","9010.51.41","9010.51.42","9010.51.43","9010.51.44"}
+DRAIN_ARTICLES = {"9010.51.20","9010.51.21"}
+AMBIGUOUS_ARTICLES = {"9010.51.27","9010.51.28","9010.51.29","9010.51.30","9010.81.23"}
 
 
 @dataclass
@@ -82,6 +85,18 @@ def _role_from_context(source: str, text: str, current: str) -> str:
     if re.search(r"9010\.51\.(0[1-4]|4[1-4])", x):
         return "profile_channel"
     return current
+
+
+def _role_override_by_article(article_no: str, source: str, role: str) -> str:
+    art = str(article_no or "")
+    s = (source or "").lower()
+    if art in DRAIN_ARTICLES and ("ablaufkoerper" in s or role == "drain_body"):
+        return "drain_body"
+    if art in PROFILE_ARTICLES and ("duschrinnenprofil" in s or role == "profile_channel"):
+        return "profile_channel"
+    if art in AMBIGUOUS_ARTICLES:
+        return "unknown"
+    return role
 
 
 def _determine_assembly_ready(row: Row) -> str:
@@ -147,6 +162,7 @@ def _extract_lead_patterns(text: str, source: str, page_ref: str) -> List[Row]:
             notes=f"lead-pattern extraction context: {ctx[:180]}",
         )
         row.assembly_ready = _determine_assembly_ready(row)
+        row.component_role = _role_override_by_article(row.article_no, source, row.component_role)
         rows.append(row)
     return rows
 
@@ -242,6 +258,7 @@ def parse_html(url: str, html: str) -> List[Row]:
                 notes=("flow mapping from headers" if flow_status == "confirmed" else ""),
             )
             row.assembly_ready = _determine_assembly_ready(row)
+            row.component_role = _role_override_by_article(row.article_no, url, row.component_role)
             if row.article_no or row.length_mm:
                 rows.append(row)
 
@@ -319,6 +336,7 @@ def parse_pdf(url: str, blob: bytes) -> List[Row]:
                     notes=f"pdf context: {ctx[:180]}",
                 )
                 row.assembly_ready = _determine_assembly_ready(row)
+                row.component_role = _role_override_by_article(row.article_no, url, row.component_role)
                 rows.append(row)
                 extracted_any = True
 
@@ -395,14 +413,25 @@ def write_outputs(rows: List[Row]) -> None:
         return m.group(0) if m else ""
 
     core_rows = [r for r in rows if r.source_type not in {"html_error", "pdf_error"}]
-    confirmed = [r for r in core_rows if r.evidence_quality == "high_confidence_html_table"]
     unique_articles = sorted({x for x in (_norm_article(r.article_no) for r in core_rows) if x})
-    profile_articles = sorted({x for x in (_norm_article(r.article_no) for r in confirmed if r.component_role == "profile_channel") if x})
-    drain_articles = sorted({x for x in (_norm_article(r.article_no) for r in confirmed if r.component_role == "drain_body") if x})
-    ambiguous_articles = sorted({x for x in (_norm_article(r.article_no) for r in core_rows if r.evidence_quality != "high_confidence_html_table") if x})
-    flow_confirmed = any(r.flow_mapping_status == "confirmed" for r in confirmed if r.article_no)
+    # choose single best row per article to avoid role duplication
+    score = {"high_confidence_html_table": 3, "medium_confidence_pdf_context": 2, "diagnostic_only": 1, "rejected_role_ambiguous": 0}
+    best: Dict[str, Row] = {}
+    for r in core_rows:
+        art = _norm_article(r.article_no)
+        if not art:
+            continue
+        if art not in best or score.get(r.evidence_quality, 0) > score.get(best[art].evidence_quality, 0):
+            best[art] = r
+    profile_articles = sorted([a for a, r in best.items() if r.component_role == "profile_channel"])
+    drain_articles = sorted([a for a, r in best.items() if r.component_role == "drain_body"])
+    ambiguous_articles = sorted([a for a, r in best.items() if r.component_role not in {"profile_channel", "drain_body"} or r.evidence_quality != "high_confidence_html_table"])
+    flow_confirmed = any(r.flow_mapping_status == "confirmed" for r in core_rows if r.evidence_quality == "high_confidence_html_table" and r.article_no)
     flow_ambiguous = any(r.flow_mapping_status == "ambiguous" for r in core_rows if r.article_no)
     compatibility_classification = "implicit_family_level" if (profile_articles and drain_articles) else "not_found"
+    explicit_matrix = any("matrix" in (r.notes or "").lower() for r in core_rows)
+    if explicit_matrix:
+        compatibility_classification = "explicit_article_matrix"
 
     with out_md.open("w", encoding="utf-8") as f:
         f.write("# ACO S+ Extracted Tables (Diagnostic)\n\n")
@@ -416,11 +445,14 @@ def write_outputs(rows: List[Row]) -> None:
         f.write(f"- confirmed_drain_body_articles: {', '.join(drain_articles) if drain_articles else 'no'}\n")
         f.write(f"- ignored_or_ambiguous_articles: {', '.join(ambiguous_articles) if ambiguous_articles else '(none)'}\n")
         f.write(f"- compatibility_classification: {compatibility_classification}\n")
-        f.write(f"- Flow mapping confirmed from headers: {'yes' if flow_confirmed else 'no'}\n")
-        f.write(f"- Flow mapping ambiguous present: {'yes' if flow_ambiguous else 'no'}\n")
+        f.write(f"- flow_mapping_status: confirmed_from_headers={'yes' if flow_confirmed else 'no'}, ambiguous_present={'yes' if flow_ambiguous else 'no'}\n")
+        f.write(f"- Profile article -> drain-body article compatibility proven: {'yes' if compatibility_classification == 'explicit_article_matrix' else 'no'}\n")
         f.write("\n## Conclusion\n")
-        if compatibility_classification == "implicit_family_level" and profile_articles and drain_articles:
-            f.write("partial\n")
+        if compatibility_classification == "explicit_article_matrix" and flow_confirmed and not flow_ambiguous:
+            f.write("yes (after manual validation)\n")
+            f.write("\n## Next recommendation\nExplicit matrix found; proceed carefully with controlled implementation design.\n")
+        elif compatibility_classification == "implicit_family_level" and profile_articles and drain_articles:
+            f.write("partial / not production assembled-ready\n")
             f.write("\n## Next recommendation\nProfile and drain-body articles are confirmed, but compatibility is implicit_family_level; do not create assembled products yet.\n")
         else:
             f.write("no safe assembled S+ implementation yet\n")

@@ -15,8 +15,8 @@
 - confirmed_drain_body_articles: no
 - ignored_or_ambiguous_articles: (none)
 - compatibility_classification: not_found
-- Flow mapping confirmed from headers: no
-- Flow mapping ambiguous present: no
+- flow_mapping_status: confirmed_from_headers=no, ambiguous_present=no
+- Profile article -> drain-body article compatibility proven: no
 
 ## Conclusion
 no safe assembled S+ implementation yet
