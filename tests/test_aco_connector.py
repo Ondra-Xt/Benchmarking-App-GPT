@@ -232,6 +232,33 @@ class AcoConnectorDiscoveryTests(unittest.TestCase):
         self.assertTrue(all("implicit_family_level" in str(o.get("option_meta") or "") for o in opts))
 
 
+    def test_splus_drain_body_rows_extract_row_specific_ws_flow_and_height(self):
+        html = """<html><body><main><h1>Ablaufkörper zu ACO Duschrinnenprofil ShowerDrain S+</h1>
+            <table>
+                <tr><th>Artikel</th><th>Daten</th></tr>
+                <tr><td>9010.51.20</td><td>DN 50 1,5° 90 - 180 mm Sperrwasserhöhe: 50 mm 0,7 l/s mit 10 mm Aufstau 0,8 l/s mit 20 mm Aufstau</td></tr>
+                <tr><td>9010.51.21</td><td>DN 50 1,5° 70 - 160 mm Sperrwasserhöhe: 30 mm 0,4 l/s mit 10 mm Aufstau 0,6 l/s mit 20 mm Aufstau</td></tr>
+            </table>
+        </main></body></html>"""
+        with patch("src.connectors.aco._safe_get_text", return_value=(200, "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus/", html, "")):
+            p20 = aco.extract_parameters("https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus/#article-90105120")
+            p21 = aco.extract_parameters("https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus/#article-90105121")
+        self.assertEqual(int(p20["water_seal_mm"]), 50)
+        self.assertEqual(float(p20["flow_rate_10mm_lps"]), 0.7)
+        self.assertEqual(float(p20["flow_rate_20mm_lps"]), 0.8)
+        self.assertEqual(str(p20["outlet_dn"]), "DN50")
+        self.assertEqual(int(p20["height_adj_min_mm"]), 90)
+        self.assertEqual(int(p20["height_adj_max_mm"]), 180)
+
+        self.assertEqual(int(p21["water_seal_mm"]), 30)
+        self.assertEqual(float(p21["flow_rate_10mm_lps"]), 0.4)
+        self.assertEqual(float(p21["flow_rate_20mm_lps"]), 0.6)
+        self.assertEqual(str(p21["outlet_dn"]), "DN50")
+        self.assertEqual(int(p21["height_adj_min_mm"]), 70)
+        self.assertEqual(int(p21["height_adj_max_mm"]), 160)
+        self.assertNotEqual(p20["water_seal_mm"], p21["water_seal_mm"])
+
+
 if __name__ == "__main__":
     unittest.main()
 

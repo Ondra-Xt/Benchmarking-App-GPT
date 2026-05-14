@@ -52,12 +52,14 @@ ARTICLE_RE = re.compile(r"\b(?:\d{4}\.?\d{2}\.?\d{2}|\d{8})\b")
 L1_RE = re.compile(r"\b(\d{3,4})\s*mm\b", re.IGNORECASE)
 FLOW_LPS_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*l\s*/\s*s\b", re.IGNORECASE)
 FLOW_AT_RE = re.compile(r"(10|20)\s*mm[^\d]{0,20}(\d+(?:[.,]\d+)?)\s*l\s*/\s*s", re.IGNORECASE)
+FLOW_AT_REV_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*l\s*/\s*s[^\d]{0,30}(10|20)\s*mm", re.IGNORECASE)
 WATER_SEAL_RE = re.compile(r"(?:geruchverschluss|sperrwasserh(?:oe|ö)he)[^\d]{0,20}(\d{2,3})\s*mm", re.IGNORECASE)
 HEIGHT_OE_RE = re.compile(
     r"einbauh(?:ö|oe)he[^.]{0,80}oberkante\s+estrich[^\d]{0,20}(\d{2,3})\s*[-–]\s*(\d{2,3})\s*mm",
     re.IGNORECASE,
 )
 HEIGHT_RE = re.compile(r"einbauh(?:ö|oe)he[^\d]{0,25}(\d{2,3})\s*[-–]\s*(\d{2,3})\s*mm", re.IGNORECASE)
+HEIGHT_RANGE_GENERIC_RE = re.compile(r"(\d{2,3})\s*[-–]\s*(\d{2,3})\s*mm", re.IGNORECASE)
 DN_RE = re.compile(r"\bDN\s*(\d{2})\b", re.IGNORECASE)
 EN1253_RE = re.compile(r"\b(?:DIN\s*)?EN\s*1253(?:-1)?\b", re.IGNORECASE)
 DN_CONTEXT_RE = re.compile(r"ablaufstutzen|ablauf|anschluss|stutzen|\bdn\b", re.IGNORECASE)
@@ -912,6 +914,26 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
                                 row_has_hydraulic = True
                         except Exception:
                             pass
+                if res.get("water_seal_mm") in (None, ""):
+                    wsm_row = WATER_SEAL_RE.search(row_text)
+                    if wsm_row:
+                        try:
+                            ws = int(wsm_row.group(1))
+                            if 20 <= ws <= 100:
+                                res["water_seal_mm"] = ws
+                                row_has_hydraulic = True
+                        except Exception:
+                            pass
+                hr = HEIGHT_RANGE_GENERIC_RE.search(row_text)
+                if hr:
+                    try:
+                        h1 = int(hr.group(1)); h2 = int(hr.group(2))
+                        lo, hi = (h1, h2) if h1 <= h2 else (h2, h1)
+                        if 20 <= lo <= 300 and 20 <= hi <= 300:
+                            res["height_adj_min_mm"] = lo
+                            res["height_adj_max_mm"] = hi
+                    except Exception:
+                        pass
                 flows = []
                 for m in FLOW_LPS_RE.finditer(row_text):
                     try:
@@ -926,12 +948,23 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
                     res["flow_rate_status"] = "ok"
                     article_row_explicit_flow = True
                 res["evidence"].append(("Article row", row_text[:280], final))
+                for mv, mm in FLOW_AT_REV_RE.findall(row_text):
+                    try:
+                        fv = float(str(mv).replace(",", "."))
+                    except Exception:
+                        continue
+                    if not (0.10 <= fv <= 3.0):
+                        continue
+                    if mm == "10":
+                        res["flow_rate_10mm_lps"] = fv
+                    if mm == "20":
+                        res["flow_rate_20mm_lps"] = fv
                 if not row_has_hydraulic:
                     res["evidence"].append(("Article row hydraulics", "article row contains dimensions/price style data but no explicit 10mm/20mm flow or water seal field", final))
                 break
 
     wsm_page = WATER_SEAL_RE.search(flat)
-    if wsm_page:
+    if wsm_page and res.get("water_seal_mm") in (None, ""):
         try:
             ws = int(wsm_page.group(1))
             if 20 <= ws <= 100:
