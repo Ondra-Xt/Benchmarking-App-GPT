@@ -46,6 +46,7 @@ class Row:
     height_range_mm: str = ""
     compatibility_excerpt: str = ""
     flow_mapping_status: str = "unknown"
+    evidence_quality: str = "diagnostic_only"
     assembly_ready: str = "source_only_family_level"
     notes: str = ""
 
@@ -69,6 +70,20 @@ def _classify_role(text: str) -> str:
     return "unknown"
 
 
+def _role_from_context(source: str, text: str, current: str) -> str:
+    s = (source or "").lower()
+    x = (text or "").lower()
+    if "ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus" in s:
+        return "drain_body"
+    if "aco-showerdrain-splus-duschrinnenprofil" in s:
+        return "profile_channel"
+    if re.search(r"9010\.51\.(20|21)", x):
+        return "drain_body"
+    if re.search(r"9010\.51\.(0[1-4]|4[1-4])", x):
+        return "profile_channel"
+    return current
+
+
 def _determine_assembly_ready(row: Row) -> str:
     if not row.article_no:
         return "no_drain_article" if row.component_role == "drain_body" else "no_profile_article"
@@ -87,7 +102,7 @@ def _extract_lead_patterns(text: str, source: str, page_ref: str) -> List[Row]:
         lo = max(0, am.start() - 160)
         hi = min(len(txt), am.end() + 200)
         ctx = txt[lo:hi]
-        role = _classify_role(ctx)
+        role = _role_from_context(source, ctx, _classify_role(ctx))
         if role not in {"profile_channel", "drain_body"}:
             continue
         lm = LEN_RE.search(ctx)
@@ -128,6 +143,7 @@ def _extract_lead_patterns(text: str, source: str, page_ref: str) -> List[Row]:
             height_range_mm=h,
             compatibility_excerpt=("implicit_family_level" if COMPAT_RE.search(ctx) else ""),
             flow_mapping_status=status,
+            evidence_quality=("medium_confidence_pdf_context" if source.lower().endswith(".pdf") else "diagnostic_only"),
             notes=f"lead-pattern extraction context: {ctx[:180]}",
         )
         row.assembly_ready = _determine_assembly_ready(row)
@@ -200,7 +216,7 @@ def parse_html(url: str, html: str) -> List[Row]:
             am = ARTICLE_RE.search(txt)
             lm = LEN_RE.search(txt)
             flow, flow10, flow20, flow_status = _parse_flow_by_headers(header_cells, cell_texts)
-            role = _classify_role(title + " " + txt + " " + url)
+            role = _role_from_context(url, txt, _classify_role(title + " " + txt + " " + url))
             dn_row = next((f"DN{m.group(1)}" for m in DN_RE.finditer(txt)), "") or dn_page
             ws_row = next((m.group(1) for m in WS_RE.finditer(txt)), "") or ws_page
             h_row = next((f"{m.group(1)}-{m.group(2)}" for m in HEIGHT_RE.finditer(txt)), "") or h_page
@@ -222,6 +238,7 @@ def parse_html(url: str, html: str) -> List[Row]:
                 height_range_mm=h_row,
                 compatibility_excerpt=compat,
                 flow_mapping_status=flow_status,
+                evidence_quality="high_confidence_html_table",
                 notes=("flow mapping from headers" if flow_status == "confirmed" else ""),
             )
             row.assembly_ready = _determine_assembly_ready(row)
@@ -243,6 +260,7 @@ def parse_html(url: str, html: str) -> List[Row]:
             outlet_orientation=("horizontal" if "waagerecht" in flat.lower() else ""),
             height_range_mm=h_page,
             compatibility_excerpt=compat,
+            evidence_quality="diagnostic_only",
             notes="no article table rows parsed",
         )
         row.assembly_ready = _determine_assembly_ready(row)
@@ -297,6 +315,7 @@ def parse_pdf(url: str, blob: bytes) -> List[Row]:
                     height_range_mm=h,
                     compatibility_excerpt=compat,
                     flow_mapping_status="unknown",
+                    evidence_quality="medium_confidence_pdf_context",
                     notes=f"pdf context: {ctx[:180]}",
                 )
                 row.assembly_ready = _determine_assembly_ready(row)
@@ -376,12 +395,14 @@ def write_outputs(rows: List[Row]) -> None:
         return m.group(0) if m else ""
 
     core_rows = [r for r in rows if r.source_type not in {"html_error", "pdf_error"}]
+    confirmed = [r for r in core_rows if r.evidence_quality == "high_confidence_html_table"]
     unique_articles = sorted({x for x in (_norm_article(r.article_no) for r in core_rows) if x})
-    profile_articles = sorted({x for x in (_norm_article(r.article_no) for r in core_rows if r.component_role == "profile_channel") if x})
-    drain_articles = sorted({x for x in (_norm_article(r.article_no) for r in core_rows if r.component_role == "drain_body") if x})
-    has_article_compat = any(r.article_no and r.compatibility_excerpt for r in rows)
-    flow_confirmed = any(r.flow_mapping_status == "confirmed" for r in rows if r.article_no)
-    flow_ambiguous = any(r.flow_mapping_status == "ambiguous" for r in rows if r.article_no)
+    profile_articles = sorted({x for x in (_norm_article(r.article_no) for r in confirmed if r.component_role == "profile_channel") if x})
+    drain_articles = sorted({x for x in (_norm_article(r.article_no) for r in confirmed if r.component_role == "drain_body") if x})
+    ambiguous_articles = sorted({x for x in (_norm_article(r.article_no) for r in core_rows if r.evidence_quality != "high_confidence_html_table") if x})
+    flow_confirmed = any(r.flow_mapping_status == "confirmed" for r in confirmed if r.article_no)
+    flow_ambiguous = any(r.flow_mapping_status == "ambiguous" for r in core_rows if r.article_no)
+    compatibility_classification = "implicit_family_level" if (profile_articles and drain_articles) else "not_found"
 
     with out_md.open("w", encoding="utf-8") as f:
         f.write("# ACO S+ Extracted Tables (Diagnostic)\n\n")
@@ -391,17 +412,16 @@ def write_outputs(rows: List[Row]) -> None:
         f.write("\n## Extraction summary\n")
         f.write(f"- Total deduplicated rows: {len(rows)}\n")
         f.write(f"- Unique article numbers: {', '.join(unique_articles) if unique_articles else '(none)'}\n")
-        f.write(f"- Profile/channel article numbers found: {', '.join(profile_articles) if profile_articles else 'no'}\n")
-        f.write(f"- Drain-body article numbers found: {', '.join(drain_articles) if drain_articles else 'no'}\n")
-        f.write(f"- Article-to-article compatibility found: {'yes' if has_article_compat else 'no'}\n")
-        prof_to_drain = bool(profile_articles and drain_articles and has_article_compat)
-        f.write(f"- Profile article -> drain-body article compatibility proven: {'yes' if prof_to_drain else 'no'}\n")
+        f.write(f"- confirmed_profile_articles: {', '.join(profile_articles) if profile_articles else 'no'}\n")
+        f.write(f"- confirmed_drain_body_articles: {', '.join(drain_articles) if drain_articles else 'no'}\n")
+        f.write(f"- ignored_or_ambiguous_articles: {', '.join(ambiguous_articles) if ambiguous_articles else '(none)'}\n")
+        f.write(f"- compatibility_classification: {compatibility_classification}\n")
         f.write(f"- Flow mapping confirmed from headers: {'yes' if flow_confirmed else 'no'}\n")
         f.write(f"- Flow mapping ambiguous present: {'yes' if flow_ambiguous else 'no'}\n")
         f.write("\n## Conclusion\n")
-        if profile_articles and drain_articles and has_article_compat and flow_confirmed and not flow_ambiguous:
-            f.write("S+ assembled implementation may be possible after manual validation\n")
-            f.write("\n## Next recommendation\nProceed with controlled implementation design, but keep manual source validation for every compatibility pair.\n")
+        if compatibility_classification == "implicit_family_level" and profile_articles and drain_articles:
+            f.write("partial\n")
+            f.write("\n## Next recommendation\nProfile and drain-body articles are confirmed, but compatibility is implicit_family_level; do not create assembled products yet.\n")
         else:
             f.write("no safe assembled S+ implementation yet\n")
             f.write("\n## Next recommendation\nContinue official PDF/table extraction to find profile/channel article numbers and explicit article-to-article compatibility.\n")

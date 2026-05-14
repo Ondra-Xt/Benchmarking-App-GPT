@@ -11,10 +11,10 @@
 ## Extraction summary
 - Total deduplicated rows: 6
 - Unique article numbers: (none)
-- Profile/channel article numbers found: no
-- Drain-body article numbers found: no
-- Article-to-article compatibility found: no
-- Profile article -> drain-body article compatibility proven: no
+- confirmed_profile_articles: no
+- confirmed_drain_body_articles: no
+- ignored_or_ambiguous_articles: (none)
+- compatibility_classification: not_found
 - Flow mapping confirmed from headers: no
 - Flow mapping ambiguous present: no
 
