@@ -180,9 +180,9 @@ def parse_html(url: str, html: str) -> List[Row]:
     title = (soup.select_one("h1").get_text(" ", strip=True) if soup.select_one("h1") else "")
     title_role = _classify_role(title + " " + url)
     flat = " ".join(soup.get_text(" ", strip=True).split())
-    dn = next((f"DN{m.group(1)}" for m in DN_RE.finditer(flat)), "")
-    ws = next((m.group(1) for m in WS_RE.finditer(flat)), "")
-    h = next((f"{m.group(1)}-{m.group(2)}" for m in HEIGHT_RE.finditer(flat)), "")
+    dn_page = next((f"DN{m.group(1)}" for m in DN_RE.finditer(flat)), "")
+    ws_page = next((m.group(1) for m in WS_RE.finditer(flat)), "")
+    h_page = next((f"{m.group(1)}-{m.group(2)}" for m in HEIGHT_RE.finditer(flat)), "")
     compat = next((m.group(0) for m in COMPAT_RE.finditer(flat)), "")
 
     table_count = 0
@@ -201,6 +201,9 @@ def parse_html(url: str, html: str) -> List[Row]:
             lm = LEN_RE.search(txt)
             flow, flow10, flow20, flow_status = _parse_flow_by_headers(header_cells, cell_texts)
             role = _classify_role(title + " " + txt + " " + url)
+            dn_row = next((f"DN{m.group(1)}" for m in DN_RE.finditer(txt)), "") or dn_page
+            ws_row = next((m.group(1) for m in WS_RE.finditer(txt)), "") or ws_page
+            h_row = next((f"{m.group(1)}-{m.group(2)}" for m in HEIGHT_RE.finditer(txt)), "") or h_page
             row = Row(
                 source=url,
                 source_type="html_table",
@@ -210,13 +213,13 @@ def parse_html(url: str, html: str) -> List[Row]:
                 article_no=(am.group(0) if am else ""),
                 product_name=title,
                 length_mm=(lm.group(1) if lm else ""),
-                water_seal_mm=ws,
+                water_seal_mm=ws_row,
                 flow_rate_lps=flow,
                 flow_rate_10mm_lps=flow10,
                 flow_rate_20mm_lps=flow20,
-                outlet_dn=dn,
+                outlet_dn=dn_row,
                 outlet_orientation=("horizontal" if "waagerecht" in flat.lower() else ""),
-                height_range_mm=h,
+                height_range_mm=h_row,
                 compatibility_excerpt=compat,
                 flow_mapping_status=flow_status,
                 notes=("flow mapping from headers" if flow_status == "confirmed" else ""),
@@ -235,10 +238,10 @@ def parse_html(url: str, html: str) -> List[Row]:
             source_refs="main",
             component_role=title_role,
             product_name=title,
-            water_seal_mm=ws,
-            outlet_dn=dn,
+            water_seal_mm=ws_page,
+            outlet_dn=dn_page,
             outlet_orientation=("horizontal" if "waagerecht" in flat.lower() else ""),
-            height_range_mm=h,
+            height_range_mm=h_page,
             compatibility_excerpt=compat,
             notes="no article table rows parsed",
         )
@@ -273,6 +276,8 @@ def parse_pdf(url: str, blob: bytes) -> List[Row]:
                 hi = min(len(txt), am.end() + 140)
                 ctx = txt[lo:hi]
                 ctx_role = _classify_role(ctx)
+                if ctx_role == "unknown" and re.search(r"9010\.51\.(0[1-4]|4[1-4])", art):
+                    ctx_role = "profile_channel"
                 if ctx_role == "unknown" and role != "unknown":
                     ctx_role = role
                 if ctx_role != "profile_channel" and not re.search(r"profil|rinnenprofil|duschrinnenprofil|profilk[oö]rper|channel", ctx, re.IGNORECASE):
@@ -366,9 +371,14 @@ def write_outputs(rows: List[Row]) -> None:
         for r in rows:
             w.writerow(asdict(r))
 
-    unique_articles = sorted({r.article_no for r in rows if r.article_no})
-    profile_articles = sorted({r.article_no for r in rows if r.article_no and r.component_role == "profile_channel"})
-    drain_articles = sorted({r.article_no for r in rows if r.article_no and r.component_role == "drain_body"})
+    def _norm_article(a: str) -> str:
+        m = ARTICLE_RE.search(str(a or ""))
+        return m.group(0) if m else ""
+
+    core_rows = [r for r in rows if r.source_type not in {"html_error", "pdf_error"}]
+    unique_articles = sorted({x for x in (_norm_article(r.article_no) for r in core_rows) if x})
+    profile_articles = sorted({x for x in (_norm_article(r.article_no) for r in core_rows if r.component_role == "profile_channel") if x})
+    drain_articles = sorted({x for x in (_norm_article(r.article_no) for r in core_rows if r.component_role == "drain_body") if x})
     has_article_compat = any(r.article_no and r.compatibility_excerpt for r in rows)
     flow_confirmed = any(r.flow_mapping_status == "confirmed" for r in rows if r.article_no)
     flow_ambiguous = any(r.flow_mapping_status == "ambiguous" for r in rows if r.article_no)
