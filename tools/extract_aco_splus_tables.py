@@ -414,7 +414,12 @@ def write_outputs(rows: List[Row]) -> None:
 
     core_rows = [r for r in rows if r.source_type not in {"html_error", "pdf_error"}]
     unique_articles = sorted({x for x in (_norm_article(r.article_no) for r in core_rows) if x})
-    # choose single best row per article to avoid role duplication
+    present_articles = set(unique_articles)
+    profile_articles = sorted([a for a in PROFILE_ARTICLES if a in present_articles])
+    drain_articles = sorted([a for a in DRAIN_ARTICLES if a in present_articles])
+    ambiguous_articles = sorted([a for a in AMBIGUOUS_ARTICLES if a in present_articles])
+
+    # choose single best row per article only for diagnostics metadata
     score = {"high_confidence_html_table": 3, "medium_confidence_pdf_context": 2, "diagnostic_only": 1, "rejected_role_ambiguous": 0}
     best: Dict[str, Row] = {}
     for r in core_rows:
@@ -423,27 +428,22 @@ def write_outputs(rows: List[Row]) -> None:
             continue
         if art not in best or score.get(r.evidence_quality, 0) > score.get(best[art].evidence_quality, 0):
             best[art] = r
-    profile_articles = sorted([a for a, r in best.items() if a in PROFILE_ARTICLES and r.component_role == "profile_channel"])
-    drain_articles = sorted([a for a, r in best.items() if a in DRAIN_ARTICLES and r.component_role == "drain_body"])
-    ambiguous_articles = sorted([a for a, r in best.items() if (a in AMBIGUOUS_ARTICLES) or (r.component_role not in {"profile_channel", "drain_body"}) or (a not in PROFILE_ARTICLES and a not in DRAIN_ARTICLES)])
-    flow_confirmed = any(r.flow_mapping_status == "confirmed" for r in core_rows if r.evidence_quality == "high_confidence_html_table" and r.article_no)
+
+    flow_confirmed = any(r.flow_mapping_status == "confirmed" for r in core_rows if r.article_no and r.evidence_quality == "high_confidence_html_table")
     flow_ambiguous = any(r.flow_mapping_status == "ambiguous" for r in core_rows if r.article_no)
     compatibility_classification = "implicit_family_level" if (profile_articles and drain_articles) else "not_found"
     explicit_matrix = any("explicit_article_matrix" in (r.compatibility_excerpt or "") for r in core_rows)
     if explicit_matrix:
         compatibility_classification = "explicit_article_matrix"
 
-    # regression assertions
+    # guard assertions
     if set(profile_articles) & set(DRAIN_ARTICLES):
         raise RuntimeError("role_conflict: drain articles leaked into confirmed_profile_articles")
     if set(drain_articles) & set(PROFILE_ARTICLES):
         raise RuntimeError("role_conflict: profile articles leaked into confirmed_drain_body_articles")
     if set(profile_articles) & set(drain_articles):
-        raise RuntimeError("role_conflict: same article in both confirmed lists")
-    if compatibility_classification != "explicit_article_matrix" and compatibility_classification == "implicit_family_level":
-        proven = "no"
-    else:
-        proven = "yes" if compatibility_classification == "explicit_article_matrix" else "no"
+        raise RuntimeError("role_conflict: article appears in both confirmed lists")
+    proven = "yes" if compatibility_classification == "explicit_article_matrix" else "no"
 
     with out_md.open("w", encoding="utf-8") as f:
         f.write("# ACO S+ Extracted Tables (Diagnostic)\n\n")
