@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 URLS = {
     "splus_family": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/",
     "splus_drain_body": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus/",
+    "splus_profile": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/aco-showerdrain-splus-duschrinnenprofil/",
     "downloads": "https://www.aco-haustechnik.de/downloads/",
     "pdf_splus": "https://www.aco-haustechnik.de/fileadmin/aco_haustechnik/documents/Prospekte-PDF/Prospekt-ACO_Sanit%C3%A4r_Duschrinne_ShowerDrain_S-Plus.pdf",
     "pdf_line": "https://www.aco-haustechnik.de/fileadmin/aco_haustechnik/documents/Prospekte-PDF/Prospekt-ACO_Sanit%C3%A4r_Badentwaesserung_Linie.pdf",
@@ -76,6 +77,62 @@ def _determine_assembly_ready(row: Row) -> str:
     if not row.compatibility_excerpt:
         return "no_article_to_article_compatibility"
     return "yes"
+
+
+def _extract_lead_patterns(text: str, source: str, page_ref: str) -> List[Row]:
+    rows: List[Row] = []
+    txt = " ".join((text or "").split())
+    for am in ARTICLE_RE.finditer(txt):
+        art = am.group(0)
+        lo = max(0, am.start() - 160)
+        hi = min(len(txt), am.end() + 200)
+        ctx = txt[lo:hi]
+        role = _classify_role(ctx)
+        if role not in {"profile_channel", "drain_body"}:
+            continue
+        lm = LEN_RE.search(ctx)
+        dn = next((f"DN{m.group(1)}" for m in DN_RE.finditer(ctx)), "")
+        ws = next((m.group(1) for m in WS_RE.finditer(ctx)), "")
+        h = next((f"{m.group(1)}-{m.group(2)}" for m in HEIGHT_RE.finditer(ctx)), "")
+        flow = ""
+        flow10 = ""
+        flow20 = ""
+        status = "unknown"
+        m10 = re.search(r"10\s*mm[^\d]{0,20}(\d+(?:[.,]\d+)?)\s*l\s*/\s*s", ctx, re.IGNORECASE)
+        m20 = re.search(r"20\s*mm[^\d]{0,20}(\d+(?:[.,]\d+)?)\s*l\s*/\s*s", ctx, re.IGNORECASE)
+        if m10 or m20:
+            status = "confirmed"
+            if m10:
+                flow10 = m10.group(1).replace(",", ".")
+            if m20:
+                flow20 = m20.group(1).replace(",", ".")
+            vals = [v for v in (flow10, flow20) if v]
+            if vals:
+                flow = max(vals, key=lambda x: float(x))
+
+        row = Row(
+            source=source,
+            source_type=("pdf" if source.lower().endswith(".pdf") else "html_page"),
+            page_ref=page_ref,
+            source_refs=page_ref,
+            component_role=role,
+            article_no=art,
+            product_name="ACO ShowerDrain S+" if role == "profile_channel" else "ACO ShowerDrain S+ Ablaufkörper",
+            length_mm=(lm.group(1) if lm else ""),
+            water_seal_mm=ws,
+            flow_rate_lps=flow,
+            flow_rate_10mm_lps=flow10,
+            flow_rate_20mm_lps=flow20,
+            outlet_dn=dn,
+            outlet_orientation=("horizontal" if re.search(r"waagerecht|horizontal", ctx, re.IGNORECASE) else ""),
+            height_range_mm=h,
+            compatibility_excerpt=("implicit_family_level" if COMPAT_RE.search(ctx) else ""),
+            flow_mapping_status=status,
+            notes=f"lead-pattern extraction context: {ctx[:180]}",
+        )
+        row.assembly_ready = _determine_assembly_ready(row)
+        rows.append(row)
+    return rows
 
 
 def _parse_flow_by_headers(headers: List[str], cells: List[str]) -> Tuple[str, str, str, str]:
@@ -167,6 +224,8 @@ def parse_html(url: str, html: str) -> List[Row]:
             row.assembly_ready = _determine_assembly_ready(row)
             if row.article_no or row.length_mm:
                 rows.append(row)
+
+    rows.extend(_extract_lead_patterns(flat, url, "main_lead_scan"))
 
     if not rows:
         row = Row(
@@ -340,7 +399,7 @@ def write_outputs(rows: List[Row]) -> None:
 
 def main() -> None:
     rows: List[Row] = []
-    for key in ("splus_family", "splus_drain_body", "downloads"):
+    for key in ("splus_family", "splus_profile", "splus_drain_body", "downloads"):
         url = URLS[key]
         try:
             html = fetch(url)

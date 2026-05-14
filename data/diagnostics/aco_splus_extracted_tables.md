@@ -3,12 +3,13 @@
 ## Sources scanned
 - splus_family: https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/
 - splus_drain_body: https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus/
+- splus_profile: https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/aco-showerdrain-splus-duschrinnenprofil/
 - downloads: https://www.aco-haustechnik.de/downloads/
 - pdf_splus: https://www.aco-haustechnik.de/fileadmin/aco_haustechnik/documents/Prospekte-PDF/Prospekt-ACO_Sanit%C3%A4r_Duschrinne_ShowerDrain_S-Plus.pdf
 - pdf_line: https://www.aco-haustechnik.de/fileadmin/aco_haustechnik/documents/Prospekte-PDF/Prospekt-ACO_Sanit%C3%A4r_Badentwaesserung_Linie.pdf
 
 ## Extraction summary
-- Total deduplicated rows: 5
+- Total deduplicated rows: 6
 - Unique article numbers: (none)
 - Profile/channel article numbers found: no
 - Drain-body article numbers found: no
