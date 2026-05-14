@@ -8,18 +8,30 @@
 - pdf_splus: https://www.aco-haustechnik.de/fileadmin/aco_haustechnik/documents/Prospekte-PDF/Prospekt-ACO_Sanit%C3%A4r_Duschrinne_ShowerDrain_S-Plus.pdf
 - pdf_line: https://www.aco-haustechnik.de/fileadmin/aco_haustechnik/documents/Prospekte-PDF/Prospekt-ACO_Sanit%C3%A4r_Badentwaesserung_Linie.pdf
 
-## Extraction summary
+## Diagnostic summary
 - Total deduplicated rows: 6
 - Unique article numbers: (none)
-- confirmed_profile_articles: no
-- confirmed_drain_body_articles: no
-- ignored_or_ambiguous_articles: (none)
-- compatibility_classification: not_found
-- flow_mapping_status: confirmed_from_headers=no, ambiguous_present=no
-- Profile article -> drain-body article compatibility proven: no
 
-## Conclusion
+### Confirmed profile articles
+(none)
+
+### Confirmed drain-body articles
+(none)
+
+### Ambiguous / ignored articles
+(none)
+
+### Compatibility classification
+not_found
+
+### Profile article -> drain-body article compatibility proven
+no
+
+### Flow mapping status
+confirmed_from_headers=no, ambiguous_present=no
+
+### Safety conclusion
 no safe assembled S+ implementation yet
 
-## Next recommendation
+### Next recommendation
 Continue official PDF/table extraction to find profile/channel article numbers and explicit article-to-article compatibility.

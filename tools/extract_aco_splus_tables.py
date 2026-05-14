@@ -429,34 +429,49 @@ def write_outputs(rows: List[Row]) -> None:
     flow_confirmed = any(r.flow_mapping_status == "confirmed" for r in core_rows if r.evidence_quality == "high_confidence_html_table" and r.article_no)
     flow_ambiguous = any(r.flow_mapping_status == "ambiguous" for r in core_rows if r.article_no)
     compatibility_classification = "implicit_family_level" if (profile_articles and drain_articles) else "not_found"
-    explicit_matrix = any("matrix" in (r.notes or "").lower() for r in core_rows)
+    explicit_matrix = any("explicit_article_matrix" in (r.compatibility_excerpt or "") for r in core_rows)
     if explicit_matrix:
         compatibility_classification = "explicit_article_matrix"
+
+    # regression assertions
+    if set(profile_articles) & set(DRAIN_ARTICLES):
+        raise RuntimeError("role_conflict: drain articles leaked into confirmed_profile_articles")
+    if set(drain_articles) & set(PROFILE_ARTICLES):
+        raise RuntimeError("role_conflict: profile articles leaked into confirmed_drain_body_articles")
+    if set(profile_articles) & set(drain_articles):
+        raise RuntimeError("role_conflict: same article in both confirmed lists")
+    if compatibility_classification != "explicit_article_matrix" and compatibility_classification == "implicit_family_level":
+        proven = "no"
+    else:
+        proven = "yes" if compatibility_classification == "explicit_article_matrix" else "no"
 
     with out_md.open("w", encoding="utf-8") as f:
         f.write("# ACO S+ Extracted Tables (Diagnostic)\n\n")
         f.write("## Sources scanned\n")
         for k, v in URLS.items():
             f.write(f"- {k}: {v}\n")
-        f.write("\n## Extraction summary\n")
+        f.write("\n## Diagnostic summary\n")
         f.write(f"- Total deduplicated rows: {len(rows)}\n")
         f.write(f"- Unique article numbers: {', '.join(unique_articles) if unique_articles else '(none)'}\n")
-        f.write(f"- confirmed_profile_articles: {', '.join(profile_articles) if profile_articles else 'no'}\n")
-        f.write(f"- confirmed_drain_body_articles: {', '.join(drain_articles) if drain_articles else 'no'}\n")
-        f.write(f"- ignored_or_ambiguous_articles: {', '.join(ambiguous_articles) if ambiguous_articles else '(none)'}\n")
-        f.write(f"- compatibility_classification: {compatibility_classification}\n")
-        f.write(f"- flow_mapping_status: confirmed_from_headers={'yes' if flow_confirmed else 'no'}, ambiguous_present={'yes' if flow_ambiguous else 'no'}\n")
-        f.write(f"- Profile article -> drain-body article compatibility proven: {'yes' if compatibility_classification == 'explicit_article_matrix' else 'no'}\n")
-        f.write("\n## Conclusion\n")
+        f.write("\n### Confirmed profile articles\n")
+        f.write((", ".join(profile_articles) if profile_articles else "(none)") + "\n")
+        f.write("\n### Confirmed drain-body articles\n")
+        f.write((", ".join(drain_articles) if drain_articles else "(none)") + "\n")
+        f.write("\n### Ambiguous / ignored articles\n")
+        f.write((", ".join(ambiguous_articles) if ambiguous_articles else "(none)") + "\n")
+        f.write("\n### Compatibility classification\n")
+        f.write(f"{compatibility_classification}\n")
+        f.write("\n### Profile article -> drain-body article compatibility proven\n")
+        f.write(proven + "\n")
+        f.write("\n### Flow mapping status\n")
+        f.write(f"confirmed_from_headers={'yes' if flow_confirmed else 'no'}, ambiguous_present={'yes' if flow_ambiguous else 'no'}\n")
+        f.write("\n### Safety conclusion\n")
         if compatibility_classification == "implicit_family_level" and profile_articles and drain_articles:
             f.write("partial / not production assembled-ready\n")
-            f.write("\n## Next recommendation\nProfile and drain-body articles are confirmed, but compatibility is implicit_family_level; do not create assembled products yet.\n")
-        elif compatibility_classification == "explicit_article_matrix" and flow_confirmed and not flow_ambiguous:
-            f.write("yes (after manual validation)\n")
-            f.write("\n## Next recommendation\nExplicit matrix found; proceed carefully with controlled implementation design.\n")
+            f.write("\n### Next recommendation\nProfile and drain-body articles are confirmed, but compatibility is implicit_family_level; do not create assembled products yet.\n")
         else:
             f.write("no safe assembled S+ implementation yet\n")
-            f.write("\n## Next recommendation\nContinue official PDF/table extraction to find profile/channel article numbers and explicit article-to-article compatibility.\n")
+            f.write("\n### Next recommendation\nContinue official PDF/table extraction to find profile/channel article numbers and explicit article-to-article compatibility.\n")
 
 
 def main() -> None:
