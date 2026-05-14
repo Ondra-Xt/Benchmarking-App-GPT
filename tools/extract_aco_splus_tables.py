@@ -423,9 +423,9 @@ def write_outputs(rows: List[Row]) -> None:
             continue
         if art not in best or score.get(r.evidence_quality, 0) > score.get(best[art].evidence_quality, 0):
             best[art] = r
-    profile_articles = sorted([a for a, r in best.items() if r.component_role == "profile_channel"])
-    drain_articles = sorted([a for a, r in best.items() if r.component_role == "drain_body"])
-    ambiguous_articles = sorted([a for a, r in best.items() if r.component_role not in {"profile_channel", "drain_body"} or r.evidence_quality != "high_confidence_html_table"])
+    profile_articles = sorted([a for a, r in best.items() if a in PROFILE_ARTICLES and r.component_role == "profile_channel"])
+    drain_articles = sorted([a for a, r in best.items() if a in DRAIN_ARTICLES and r.component_role == "drain_body"])
+    ambiguous_articles = sorted([a for a, r in best.items() if (a in AMBIGUOUS_ARTICLES) or (r.component_role not in {"profile_channel", "drain_body"}) or (a not in PROFILE_ARTICLES and a not in DRAIN_ARTICLES)])
     flow_confirmed = any(r.flow_mapping_status == "confirmed" for r in core_rows if r.evidence_quality == "high_confidence_html_table" and r.article_no)
     flow_ambiguous = any(r.flow_mapping_status == "ambiguous" for r in core_rows if r.article_no)
     compatibility_classification = "implicit_family_level" if (profile_articles and drain_articles) else "not_found"
@@ -448,12 +448,12 @@ def write_outputs(rows: List[Row]) -> None:
         f.write(f"- flow_mapping_status: confirmed_from_headers={'yes' if flow_confirmed else 'no'}, ambiguous_present={'yes' if flow_ambiguous else 'no'}\n")
         f.write(f"- Profile article -> drain-body article compatibility proven: {'yes' if compatibility_classification == 'explicit_article_matrix' else 'no'}\n")
         f.write("\n## Conclusion\n")
-        if compatibility_classification == "explicit_article_matrix" and flow_confirmed and not flow_ambiguous:
-            f.write("yes (after manual validation)\n")
-            f.write("\n## Next recommendation\nExplicit matrix found; proceed carefully with controlled implementation design.\n")
-        elif compatibility_classification == "implicit_family_level" and profile_articles and drain_articles:
+        if compatibility_classification == "implicit_family_level" and profile_articles and drain_articles:
             f.write("partial / not production assembled-ready\n")
             f.write("\n## Next recommendation\nProfile and drain-body articles are confirmed, but compatibility is implicit_family_level; do not create assembled products yet.\n")
+        elif compatibility_classification == "explicit_article_matrix" and flow_confirmed and not flow_ambiguous:
+            f.write("yes (after manual validation)\n")
+            f.write("\n## Next recommendation\nExplicit matrix found; proceed carefully with controlled implementation design.\n")
         else:
             f.write("no safe assembled S+ implementation yet\n")
             f.write("\n## Next recommendation\nContinue official PDF/table extraction to find profile/channel article numbers and explicit article-to-article compatibility.\n")
