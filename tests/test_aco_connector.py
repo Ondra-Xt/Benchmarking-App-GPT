@@ -259,6 +259,31 @@ class AcoConnectorDiscoveryTests(unittest.TestCase):
         self.assertNotEqual(p20["water_seal_mm"], p21["water_seal_mm"])
 
 
+
+class AcoSplusPipelineComponentPropagationTests(unittest.TestCase):
+    def test_splus_drain_body_structured_flow_fields_propagate_to_components_not_comparison(self):
+        html = """<html><body><main><h1>Ablaufkörper zu ACO Duschrinnenprofil ShowerDrain S+</h1>
+            <table>
+                <tr><th>Artikel</th><th>Daten</th></tr>
+                <tr><td>9010.51.20</td><td>DN 50 1,5° 90 - 180 mm Sperrwasserhöhe: 50 mm 0,7 l/s mit 10 mm Aufstau 0,8 l/s mit 20 mm Aufstau</td></tr>
+                <tr><td>9010.51.21</td><td>DN 50 1,5° 70 - 160 mm Sperrwasserhöhe: 30 mm 0,4 l/s mit 10 mm Aufstau 0,6 l/s mit 20 mm Aufstau</td></tr>
+            </table>
+        </main></body></html>"""
+        registry = pd.DataFrame([
+            {"manufacturer": "aco", "product_id": "aco-90105120", "product_name": "Ablaufkörper 9010.51.20", "product_family": "showerdrain_splus", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus/#article-90105120", "candidate_type": "component", "system_role": "drain_body", "complete_system": "component"},
+            {"manufacturer": "aco", "product_id": "aco-90105121", "product_name": "Ablaufkörper 9010.51.21", "product_family": "showerdrain_splus", "product_url": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus/#article-90105121", "candidate_type": "component", "system_role": "drain_body", "complete_system": "component"},
+        ])
+        with patch("src.connectors.aco._safe_get_text", return_value=(200, "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus/", html, "")):
+            with patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
+                products, comparison, _excluded, _evidence, _bom = pipeline.run_update(registry, default_config())
+        p20 = products.set_index("product_id").loc["aco-90105120"]
+        p21 = products.set_index("product_id").loc["aco-90105121"]
+        self.assertEqual(float(p20["flow_rate_10mm_lps"]), 0.7)
+        self.assertEqual(float(p20["flow_rate_20mm_lps"]), 0.8)
+        self.assertEqual(float(p21["flow_rate_10mm_lps"]), 0.4)
+        self.assertEqual(float(p21["flow_rate_20mm_lps"]), 0.6)
+        self.assertFalse((comparison["product_id"].isin(["aco-90105120", "aco-90105121"])).any())
+
 if __name__ == "__main__":
     unittest.main()
 
