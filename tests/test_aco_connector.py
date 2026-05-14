@@ -1,5 +1,6 @@
 import json
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import pandas as pd
@@ -283,6 +284,72 @@ class AcoSplusPipelineComponentPropagationTests(unittest.TestCase):
         self.assertEqual(float(p21["flow_rate_10mm_lps"]), 0.4)
         self.assertEqual(float(p21["flow_rate_20mm_lps"]), 0.6)
         self.assertFalse((comparison["product_id"].isin(["aco-90105120", "aco-90105121"])).any())
+
+    def test_splus_fixture_discovery_to_pipeline_components_keeps_structured_drain_flows(self):
+        fixtures = Path(__file__).resolve().parent / "fixtures" / "aco_splus"
+        def _read_or_default(name: str, default: str) -> str:
+            p = fixtures / name
+            return p.read_text(encoding="utf-8") if p.exists() else default
+
+        family_html = _read_or_default(
+            "splus_family.html",
+            "<html><body><main><a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/aco-showerdrain-splus-duschrinnenprofil/'>S+ profile</a>"
+            "<a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus/'>S+ drain</a></main></body></html>",
+        )
+        profile_html = _read_or_default(
+            "splus_profile.html",
+            "<html><body><main><h1>ACO ShowerDrain S+ Profil</h1><table><tr><th>Artikel</th></tr><tr><td>9010.51.01</td></tr></table></main></body></html>",
+        )
+        drain_html = _read_or_default(
+            "splus_drain_body.html",
+            "<html><body><main><h1>Ablaufkörper zu ACO Duschrinnenprofil ShowerDrain S+</h1><table>"
+            "<tr><th>Artikel</th><th>Daten</th></tr>"
+            "<tr><td>9010.51.20</td><td>DN 50 1,5° 90 - 180 mm Sperrwasserhöhe: 50 mm 0,7 l/s mit 10 mm Aufstau 0,8 l/s mit 20 mm Aufstau</td></tr>"
+            "<tr><td>9010.51.21</td><td>DN 50 1,5° 70 - 160 mm Sperrwasserhöhe: 30 mm 0,4 l/s mit 10 mm Aufstau 0,6 l/s mit 20 mm Aufstau</td></tr>"
+            "</table></main></body></html>",
+        )
+        pages = {
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/": family_html,
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/": family_html,
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/aco-showerdrain-splus-duschrinnenprofil/": profile_html,
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus/": drain_html,
+        }
+
+        def _fake_get(url, timeout=35):
+            key = aco._canonicalize_url(url)
+            html = pages.get(key)
+            if html is None:
+                return 404, key, "", "not found"
+            return 200, key, html, ""
+
+        with patch("src.connectors.aco._safe_get_text", side_effect=_fake_get):
+            rows, _dbg = aco.discover_candidates(target_length_mm=1200, tolerance_mm=100)
+            registry = pd.DataFrame(rows)
+            with patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
+                products, comparison, _excluded, evidence, _bom = pipeline.run_update(registry, default_config())
+
+        by_id = products.set_index("product_id")
+        p20 = by_id.loc["aco-90105120"]
+        p21 = by_id.loc["aco-90105121"]
+        self.assertEqual(str(p20["candidate_type"]), "component")
+        self.assertEqual(str(p20["system_role"]), "drain_body")
+        self.assertEqual(int(p20["water_seal_mm"]), 50)
+        self.assertEqual(int(p20["height_adj_min_mm"]), 90)
+        self.assertEqual(int(p20["height_adj_max_mm"]), 180)
+        self.assertEqual(float(p20["flow_rate_10mm_lps"]), 0.7)
+        self.assertEqual(float(p20["flow_rate_20mm_lps"]), 0.8)
+        self.assertEqual(float(p20["flow_rate_lps"]), 0.8)
+
+        self.assertEqual(str(p21["candidate_type"]), "component")
+        self.assertEqual(str(p21["system_role"]), "drain_body")
+        self.assertEqual(int(p21["water_seal_mm"]), 30)
+        self.assertEqual(int(p21["height_adj_min_mm"]), 70)
+        self.assertEqual(int(p21["height_adj_max_mm"]), 160)
+        self.assertEqual(float(p21["flow_rate_10mm_lps"]), 0.4)
+        self.assertEqual(float(p21["flow_rate_20mm_lps"]), 0.6)
+        self.assertEqual(float(p21["flow_rate_lps"]), 0.6)
+        self.assertFalse((comparison["product_id"].isin(["aco-90105120", "aco-90105121"])).any())
+        self.assertTrue((evidence["product_id"].isin(["aco-90105120", "aco-90105121"])).any())
 
 if __name__ == "__main__":
     unittest.main()

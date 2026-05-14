@@ -52,7 +52,12 @@ ARTICLE_RE = re.compile(r"\b(?:\d{4}\.?\d{2}\.?\d{2}|\d{8})\b")
 L1_RE = re.compile(r"\b(\d{3,4})\s*mm\b", re.IGNORECASE)
 FLOW_LPS_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*l\s*/\s*s\b", re.IGNORECASE)
 FLOW_AT_RE = re.compile(r"(10|20)\s*mm[^\d]{0,20}(\d+(?:[.,]\d+)?)\s*l\s*/\s*s", re.IGNORECASE)
-FLOW_AT_REV_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*l\s*/\s*s[^\d]{0,30}(10|20)\s*mm", re.IGNORECASE)
+FLOW_AT_REV_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*l\s*/\s*s[^\d]{0,12}(10|20)\s*mm", re.IGNORECASE)
+# support longer intervening qualifiers like "Aufstauhöhe"/"Anstau" wording
+FLOW_AT_FWD_WIDE_RE = re.compile(
+    r"(10|20)\s*mm(?:(?!\b(?:10|20)\s*mm\b).){0,80}?(\d+(?:[.,]\d+)?)\s*l\s*/\s*s",
+    re.IGNORECASE | re.DOTALL,
+)
 WATER_SEAL_RE = re.compile(r"(?:geruchverschluss|sperrwasserh(?:oe|ö)he)[^\d]{0,20}(\d{2,3})\s*mm", re.IGNORECASE)
 HEIGHT_OE_RE = re.compile(
     r"einbauh(?:ö|oe)he[^.]{0,80}oberkante\s+estrich[^\d]{0,20}(\d{2,3})\s*[-–]\s*(\d{2,3})\s*mm",
@@ -955,9 +960,9 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
                         continue
                     if not (0.10 <= fv <= 3.0):
                         continue
-                    if mm == "10":
+                    if mm == "10" and res.get("flow_rate_10mm_lps") in (None, ""):
                         res["flow_rate_10mm_lps"] = fv
-                    if mm == "20":
+                    if mm == "20" and res.get("flow_rate_20mm_lps") in (None, ""):
                         res["flow_rate_20mm_lps"] = fv
                 if not row_has_hydraulic:
                     res["evidence"].append(("Article row hydraulics", "article row contains dimensions/price style data but no explicit 10mm/20mm flow or water seal field", final))
@@ -1025,6 +1030,14 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
         res["flow_rate_lps"] = max(opts)
         res["flow_rate_unit"] = "l/s"
         res["flow_rate_status"] = "ok"
+    elif res.get("flow_rate_10mm_lps") not in (None, "") or res.get("flow_rate_20mm_lps") not in (None, ""):
+        # fallback for S+ drain-body rows where flows are explicitly tied to 10/20 mm
+        # but not prefixed by generic "Abflusswert/Ablaufleistung" labels.
+        vals = [v for v in (res.get("flow_rate_10mm_lps"), res.get("flow_rate_20mm_lps")) if isinstance(v, (int, float))]
+        if vals:
+            res["flow_rate_lps"] = max(vals)
+            res["flow_rate_unit"] = "l/s"
+            res["flow_rate_status"] = "ok"
 
     enm = EN1253_RE.search(flat)
     if enm:
