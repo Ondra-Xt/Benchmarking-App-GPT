@@ -2815,9 +2815,20 @@ def run_update(
         aco_debug.setdefault("assembled_products_left_in_components_count", 0)
 
         aco_by_id: Dict[str, Dict[str, Any]] = {}
-        for rr in aco_rows + [r for r in products_rows if str(r.get("manufacturer") or "").lower() == "aco"]:
+        def _tech_richness(r: Dict[str, Any]) -> int:
+            keys = (
+                "flow_rate_lps", "flow_rate_10mm_lps", "flow_rate_20mm_lps",
+                "water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn",
+            )
+            return sum(1 for k in keys if r.get(k) not in (None, ""))
+        # Prefer rows that already contain extracted parameters (products_rows) over
+        # raw registry candidates (aco_rows), and keep the richer duplicate if both exist.
+        for rr in [r for r in products_rows if str(r.get("manufacturer") or "").lower() == "aco"] + aco_rows:
             pid = str(rr.get("product_id") or "").strip()
-            if pid and pid not in aco_by_id:
+            if not pid:
+                continue
+            prev = aco_by_id.get(pid)
+            if prev is None or _tech_richness(rr) > _tech_richness(prev):
                 aco_by_id[pid] = rr
         existing_ids = {str(r.get("product_id") or "") for r in products_rows}
         seen_assembled_keys: Set[Tuple[str, str, str]] = set()
@@ -3650,6 +3661,8 @@ def run_update(
             "promote_to_product",
             "promotion_reason",
             "flow_rate_lps",
+            "water_seal_mm",
+            "outlet_dn",
             "height_adj_min_mm",
             "height_adj_max_mm",
 
