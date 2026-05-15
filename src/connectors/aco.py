@@ -392,6 +392,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     max_len = want + tol
 
     out: List[Dict[str, Any]] = []
+    splus_params_cache: Dict[str, Dict[str, Any]] = {}
     debug: List[Dict[str, Any]] = []
 
     queue: List[str] = list(SEED_PAGES)
@@ -606,7 +607,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                     if pid in seen_ids:
                         continue
                     seen_ids.add(pid)
-                    out.append({
+                    row = {
                         "manufacturer": "aco",
                         "product_id": pid,
                         "product_family": family,
@@ -620,7 +621,28 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                         "article_no": art_norm,
                         "row_length_raw_mm": l1_mm,
                         "row_length_nominal_mm": _nominal_length_from_l1(l1_mm),
-                    })
+                    }
+                    if role_splus == "drain_body":
+                        purl = row["product_url"]
+                        params = splus_params_cache.get(purl)
+                        if params is None:
+                            params = extract_parameters(purl) or {}
+                            splus_params_cache[purl] = params
+                        for k in (
+                            "flow_rate_10mm_lps",
+                            "flow_rate_20mm_lps",
+                            "flow_rate_lps",
+                            "flow_rate_unit",
+                            "flow_rate_status",
+                            "water_seal_mm",
+                            "height_adj_min_mm",
+                            "height_adj_max_mm",
+                            "outlet_dn",
+                        ):
+                            v = params.get(k)
+                            if v not in (None, ""):
+                                row[k] = v
+                    out.append(row)
                     candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
                     candidates_by_role[role_splus] = candidates_by_role.get(role_splus, 0) + 1
                     continue
@@ -674,7 +696,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                     seen_ids.add(pid)
                     kept += 1
                     kept_total += 1
-                    out.append({
+                    row = {
                         "manufacturer": "aco",
                         "product_id": pid,
                         "product_family": family,
@@ -688,7 +710,28 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                         "article_no": art_norm,
                         "row_length_raw_mm": l1_mm,
                         "row_length_nominal_mm": _nominal_length_from_l1(l1_mm),
-                    })
+                    }
+                    if role_splus == "drain_body":
+                        purl = row["product_url"]
+                        params = splus_params_cache.get(purl)
+                        if params is None:
+                            params = extract_parameters(purl) or {}
+                            splus_params_cache[purl] = params
+                        for k in (
+                            "flow_rate_10mm_lps",
+                            "flow_rate_20mm_lps",
+                            "flow_rate_lps",
+                            "flow_rate_unit",
+                            "flow_rate_status",
+                            "water_seal_mm",
+                            "height_adj_min_mm",
+                            "height_adj_max_mm",
+                            "outlet_dn",
+                        ):
+                            v = params.get(k)
+                            if v not in (None, ""):
+                                row[k] = v
+                    out.append(row)
                     candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
                     candidates_by_role[role_splus] = candidates_by_role.get(role_splus, 0) + 1
                 debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": err, "candidates_found": kept, "method": "table", "is_index": None})
