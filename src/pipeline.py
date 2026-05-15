@@ -1110,7 +1110,12 @@ def run_update(
             viega_params_by_id[product_id] = {k: v for k, v in params.items() if k != "evidence"}
 
         # ACO cleanup: drains without flow should be excluded
-        if manufacturer == "aco" and candidate_type == "drain" and params.get("flow_rate_lps") in (None, ""):
+        if (
+            manufacturer == "aco"
+            and candidate_type == "drain"
+            and params.get("flow_rate_lps") in (None, "")
+            and params.get("flow_rate_lps_options") in (None, "")
+        ):
             excluded_rows.append({
                 "manufacturer": manufacturer,
                 "product_id": product_id,
@@ -3704,6 +3709,68 @@ def run_update(
 
     products_df = pd.DataFrame(products_rows)
     comparison_df = pd.DataFrame(comparison_rows)
+    # Final post-assembly normalization on dataframe level (after all assembly rows exist).
+    if not products_df.empty and "product_id" in products_df.columns:
+        for col in ("flow_rate_lps", "flow_rate_lps_options", "flow_rate_unit", "flow_rate_status", "water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn", "base_product_id"):
+            if col not in products_df.columns:
+                products_df[col] = None
+
+        def _opts_to_max(v):
+            vals: List[float] = []
+            if v in (None, ""):
+                return None
+            src = v
+            if isinstance(src, str):
+                s = src.strip()
+                if s.startswith("[") and s.endswith("]"):
+                    try:
+                        src = json.loads(s)
+                    except Exception:
+                        src = [x.strip() for x in s.strip("[]").split(",") if x.strip()]
+                else:
+                    src = [s]
+            if not isinstance(src, list):
+                src = [src]
+            for x in src:
+                try:
+                    fv = float(str(x).replace(",", "."))
+                except Exception:
+                    continue
+                if 0.10 <= fv <= 3.0:
+                    vals.append(fv)
+            return max(vals) if vals else None
+
+        asm_mask = products_df["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-c-")
+        for i in products_df.index[asm_mask]:
+            base_id = str(products_df.at[i, "base_product_id"] or "")
+            if not base_id:
+                m = re.search(r"(aco-\d{8})", str(products_df.at[i, "product_id"]))
+                base_id = m.group(1) if m else ""
+            if base_id:
+                src = products_df.loc[products_df["product_id"].astype(str) == base_id]
+                if not src.empty:
+                    srow = src.iloc[0]
+                    for k in ("water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn", "flow_rate_lps_options"):
+                        cur = products_df.at[i, k]
+                        if (cur in (None, "") or pd.isna(cur)) and srow.get(k) not in (None, ""):
+                            products_df.at[i, k] = srow.get(k)
+                    if (products_df.at[i, "flow_rate_lps_options"] in (None, "") or pd.isna(products_df.at[i, "flow_rate_lps_options"])):
+                        base_url = str(srow.get("product_url") or "")
+                        if base_url:
+                            try:
+                                p = CONNECTORS["aco"].extract_parameters(base_url) or {}
+                            except Exception:
+                                p = {}
+                            for k in ("flow_rate_lps_options", "water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn"):
+                                if (products_df.at[i, k] in (None, "") or pd.isna(products_df.at[i, k])) and p.get(k) not in (None, ""):
+                                    products_df.at[i, k] = p.get(k)
+            cur_flow = products_df.at[i, "flow_rate_lps"]
+            if cur_flow in (None, "") or pd.isna(cur_flow):
+                d = _opts_to_max(products_df.at[i, "flow_rate_lps_options"])
+                if d is not None:
+                    products_df.at[i, "flow_rate_lps"] = d
+                    products_df.at[i, "flow_rate_unit"] = products_df.at[i, "flow_rate_unit"] or "l/s"
+                    products_df.at[i, "flow_rate_status"] = products_df.at[i, "flow_rate_status"] or "ok"
     if not comparison_df.empty and not products_df.empty:
         extra_cols = [
             # Product validation / audit fields required in Comparison exports.
