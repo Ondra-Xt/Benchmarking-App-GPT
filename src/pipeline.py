@@ -2834,7 +2834,7 @@ def run_update(
         seen_assembled_keys: Set[Tuple[str, str, str]] = set()
         tech_keys = [
             "flow_rate_lps", "flow_rate_10mm_lps", "flow_rate_20mm_lps",
-            "flow_rate_raw_text", "flow_rate_unit", "flow_rate_status",
+            "flow_rate_lps_options", "flow_rate_raw_text", "flow_rate_unit", "flow_rate_status",
             "outlet_dn", "outlet_dn_default", "outlet_dn_options_json",
             "height_adj_min_mm", "height_adj_max_mm", "water_seal_mm",
             "din_en_1253_cert",
@@ -2973,8 +2973,15 @@ def run_update(
                 continue
             if str(ar.get("parent_family") or "") != "showerdrain_c":
                 continue
+            ar.setdefault("flow_rate_lps", None)
+            ar.setdefault("flow_rate_unit", None)
+            ar.setdefault("flow_rate_status", None)
             if ar.get("flow_rate_lps") in (None, ""):
                 opts = _parse_flow_options(ar.get("flow_rate_lps_options"))
+                if not opts:
+                    base_id = str(ar.get("base_product_id") or "")
+                    base_row = aco_by_id.get(base_id, {})
+                    opts = _parse_flow_options(base_row.get("flow_rate_lps_options"))
                 if opts:
                     ar["flow_rate_lps"] = max(opts)
                     ar["flow_rate_unit"] = ar.get("flow_rate_unit") or "l/s"
