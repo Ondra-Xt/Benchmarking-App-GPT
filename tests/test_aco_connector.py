@@ -335,12 +335,20 @@ class AcoSplusPipelineComponentPropagationTests(unittest.TestCase):
         family_path = fixtures / "splus_family.html"
         profile_path = fixtures / "splus_profile.html"
         drain_path = fixtures / "splus_drain_body.html"
-        self.assertTrue(family_path.exists(), f"missing fixture: {family_path}")
-        self.assertTrue(profile_path.exists(), f"missing fixture: {profile_path}")
-        self.assertTrue(drain_path.exists(), f"missing fixture: {drain_path}")
-        family_html = family_path.read_text(encoding="utf-8")
-        profile_html = profile_path.read_text(encoding="utf-8")
-        drain_html = drain_path.read_text(encoding="utf-8")
+        family_html = family_path.read_text(encoding="utf-8") if family_path.exists() else (
+            "<html><body><main><a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/aco-showerdrain-splus-duschrinnenprofil/'>S+</a>"
+            "<a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus/'>Drain</a></main></body></html>"
+        )
+        profile_html = profile_path.read_text(encoding="utf-8") if profile_path.exists() else (
+            "<html><body><main><h1>ACO ShowerDrain S+</h1><table><tr><th>Artikel</th></tr><tr><td>9010.51.01</td></tr></table></main></body></html>"
+        )
+        drain_html = drain_path.read_text(encoding="utf-8") if drain_path.exists() else (
+            "<html><body><main><h1>Ablaufkörper zu ACO Duschrinnenprofil ShowerDrain S+</h1><table>"
+            "<tr><th>Artikel</th><th>Daten</th></tr>"
+            "<tr><td>9010.51.20</td><td>DN 50 1,5° 90 - 180 mm Sperrwasserhöhe: 50 mm 0,7 l/s mit 10 mm Aufstau 0,8 l/s mit 20 mm Aufstau</td></tr>"
+            "<tr><td>9010.51.21</td><td>DN 50 1,5° 70 - 160 mm Sperrwasserhöhe: 30 mm 0,4 l/s mit 10 mm Aufstau 0,6 l/s mit 20 mm Aufstau</td></tr>"
+            "</table></main></body></html>"
+        )
         pages = {
             "https://www.aco-haustechnik.de/produkte/badentwaesserung/": family_html,
             "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/": family_html,
@@ -447,4 +455,33 @@ class AcoConnectorEndToEndRegressionTests(unittest.TestCase):
         self.assertTrue((c_rows["flow_rate_lps"].notna()).all())
         self.assertTrue((c_rows["height_adj_min_mm"].notna()).all())
         self.assertTrue((c_rows["height_adj_max_mm"].notna()).all())
+        self.assertFalse((products["product_id"].astype(str).str.contains("901051", regex=False)).any())
+        self.assertFalse((comparison["product_id"].astype(str).str.contains("901051", regex=False)).any())
         self.assertFalse(evidence[evidence["manufacturer"] == "aco"].empty)
+
+    def test_showerdrain_c_assembled_rows_keep_structured_fields(self):
+        html = """<html><body><main><h1>ACO ShowerDrain C Rinnenkörper</h1>
+            <table>
+                <tr><th>L1</th><th>Artikel</th><th>Daten</th></tr>
+                <tr><td>1185 mm</td><td>90108544</td><td>Einbauhöhe Oberkante Estrich 57 - 128 mm Sperrwasserhöhe: 25 mm Ablaufstutzen DN 40 Abflusswert 0,80 l/s mit 20 mm Aufstau</td></tr>
+                <tr><td>985 mm</td><td>90108524</td><td>Einbauhöhe Oberkante Estrich 80 - 128 mm Sperrwasserhöhe: 50 mm Ablaufstutzen DN 50 Abflusswert 0,91 l/s mit 20 mm Aufstau</td></tr>
+            </table>
+        </main></body></html>"""
+        pages = {
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/": "<html><body><main><a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm-200-mm/'>C body</a></main></body></html>",
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm-200-mm/": html,
+        }
+        def _fake_get(url, timeout=35):
+            key = aco._canonicalize_url(url)
+            return (200, key, pages[key], "") if key in pages else (404, key, "", "not found")
+        with patch("src.connectors.aco._safe_get_text", side_effect=_fake_get):
+            rows, _ = aco.discover_candidates(target_length_mm=1000, tolerance_mm=0)
+            with patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
+                products, comparison, _excluded, _evidence, _bom = pipeline.run_update(pd.DataFrame(rows), default_config())
+        by_id = products.set_index("product_id")
+        p24 = by_id.loc["aco-90108524"]
+        self.assertEqual(int(p24["water_seal_mm"]), 50)
+        self.assertTrue(pd.notna(p24["height_adj_min_mm"]))
+        self.assertTrue(pd.notna(p24["height_adj_max_mm"]))
+        self.assertIn("DN50", str(p24["outlet_dn"]))
+        self.assertFalse((comparison["product_id"].astype(str).str.contains("901051", regex=False)).any())

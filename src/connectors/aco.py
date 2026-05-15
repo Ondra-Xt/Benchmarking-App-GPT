@@ -51,6 +51,7 @@ SEED_PAGES = [
 ARTICLE_RE = re.compile(r"\b(?:\d{4}\.?\d{2}\.?\d{2}|\d{8})\b")
 L1_RE = re.compile(r"\b(\d{3,4})\s*mm\b", re.IGNORECASE)
 FLOW_LPS_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*l\s*/\s*s\b", re.IGNORECASE)
+FLOW_AT_RE = re.compile(r"(10|20)\s*mm[^\d]{0,40}(\d+(?:[.,]\d+)?)\s*l\s*/\s*s", re.IGNORECASE)
 FLOW_AT_REV_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*l\s*/\s*s[^\d]{0,12}(10|20)\s*mm", re.IGNORECASE)
 WATER_SEAL_RE = re.compile(r"(?:geruchverschluss|sperrwasserh(?:oe|ö)he)[^\d]{0,20}(\d{2,3})\s*mm", re.IGNORECASE)
 HEIGHT_OE_RE = re.compile(
@@ -991,6 +992,17 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
                     article_row_explicit_flow = True
                 res["evidence"].append(("Article row", row_text[:280], final))
                 for mv, mm in FLOW_AT_REV_RE.findall(row_text):
+                    try:
+                        fv = float(str(mv).replace(",", "."))
+                    except Exception:
+                        continue
+                    if not (0.10 <= fv <= 3.0):
+                        continue
+                    if mm == "10" and res.get("flow_rate_10mm_lps") in (None, ""):
+                        res["flow_rate_10mm_lps"] = fv
+                    if mm == "20" and res.get("flow_rate_20mm_lps") in (None, ""):
+                        res["flow_rate_20mm_lps"] = fv
+                for mm, mv in FLOW_AT_RE.findall(row_text):
                     try:
                         fv = float(str(mv).replace(",", "."))
                     except Exception:
