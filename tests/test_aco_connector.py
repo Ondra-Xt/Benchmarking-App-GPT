@@ -259,6 +259,30 @@ class AcoConnectorDiscoveryTests(unittest.TestCase):
         self.assertEqual(int(p21["height_adj_max_mm"]), 160)
         self.assertNotEqual(p20["water_seal_mm"], p21["water_seal_mm"])
 
+    def test_splus_drain_body_page_level_ws_flow_blocks_map_to_article_rows(self):
+        html = """<html><body><main><h1>Ablaufkörper zu ACO Duschrinnenprofil ShowerDrain S+</h1>
+            <section>
+              <p>Ablauf mit Sperrwasserhöhe 50 mm</p>
+              <p>0,7 l/s mit 10 mm Aufstau</p>
+              <p>0,8 l/s mit 20 mm Aufstau</p>
+              <p>Ablauf mit Sperrwasserhöhe 30 mm</p>
+              <p>0,4 l/s mit 10 mm Aufstau</p>
+              <p>0,6 l/s mit 20 mm Aufstau</p>
+            </section>
+            <table>
+                <tr><th>Artikel</th><th>Daten</th></tr>
+                <tr><td>9010.51.20</td><td>DN 50 1,5° 90 - 180 mm Sperrwasserhöhe: 50 mm</td></tr>
+                <tr><td>9010.51.21</td><td>DN 50 1,5° 70 - 160 mm Sperrwasserhöhe: 30 mm</td></tr>
+            </table>
+        </main></body></html>"""
+        with patch("src.connectors.aco._safe_get_text", return_value=(200, "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus/", html, "")):
+            p20 = aco.extract_parameters("https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus/#article-90105120")
+            p21 = aco.extract_parameters("https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus/#article-90105121")
+        self.assertEqual(float(p20["flow_rate_10mm_lps"]), 0.7)
+        self.assertEqual(float(p20["flow_rate_20mm_lps"]), 0.8)
+        self.assertEqual(float(p21["flow_rate_10mm_lps"]), 0.4)
+        self.assertEqual(float(p21["flow_rate_20mm_lps"]), 0.6)
+
 
 
 class AcoSplusPipelineComponentPropagationTests(unittest.TestCase):
