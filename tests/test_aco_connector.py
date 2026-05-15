@@ -335,20 +335,12 @@ class AcoSplusPipelineComponentPropagationTests(unittest.TestCase):
         family_path = fixtures / "splus_family.html"
         profile_path = fixtures / "splus_profile.html"
         drain_path = fixtures / "splus_drain_body.html"
-        family_html = family_path.read_text(encoding="utf-8") if family_path.exists() else (
-            "<html><body><main><a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/aco-showerdrain-splus-duschrinnenprofil/'>S+</a>"
-            "<a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus/'>Drain</a></main></body></html>"
-        )
-        profile_html = profile_path.read_text(encoding="utf-8") if profile_path.exists() else (
-            "<html><body><main><h1>ACO ShowerDrain S+</h1><table><tr><th>Artikel</th></tr><tr><td>9010.51.01</td></tr></table></main></body></html>"
-        )
-        drain_html = drain_path.read_text(encoding="utf-8") if drain_path.exists() else (
-            "<html><body><main><h1>Ablaufkörper zu ACO Duschrinnenprofil ShowerDrain S+</h1><table>"
-            "<tr><th>Artikel</th><th>Daten</th></tr>"
-            "<tr><td>9010.51.20</td><td>DN 50 1,5° 90 - 180 mm Sperrwasserhöhe: 50 mm 0,7 l/s mit 10 mm Aufstau 0,8 l/s mit 20 mm Aufstau</td></tr>"
-            "<tr><td>9010.51.21</td><td>DN 50 1,5° 70 - 160 mm Sperrwasserhöhe: 30 mm 0,4 l/s mit 10 mm Aufstau 0,6 l/s mit 20 mm Aufstau</td></tr>"
-            "</table></main></body></html>"
-        )
+        self.assertTrue(family_path.exists(), f"missing fixture: {family_path}")
+        self.assertTrue(profile_path.exists(), f"missing fixture: {profile_path}")
+        self.assertTrue(drain_path.exists(), f"missing fixture: {drain_path}")
+        family_html = family_path.read_text(encoding="utf-8")
+        profile_html = profile_path.read_text(encoding="utf-8")
+        drain_html = drain_path.read_text(encoding="utf-8")
         pages = {
             "https://www.aco-haustechnik.de/produkte/badentwaesserung/": family_html,
             "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/": family_html,
