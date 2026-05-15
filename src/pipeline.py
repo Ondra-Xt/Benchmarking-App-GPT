@@ -1110,7 +1110,12 @@ def run_update(
             viega_params_by_id[product_id] = {k: v for k, v in params.items() if k != "evidence"}
 
         # ACO cleanup: drains without flow should be excluded
-        if manufacturer == "aco" and candidate_type == "drain" and params.get("flow_rate_lps") in (None, ""):
+        if (
+            manufacturer == "aco"
+            and candidate_type == "drain"
+            and params.get("flow_rate_lps") in (None, "")
+            and params.get("flow_rate_lps_options") in (None, "")
+        ):
             excluded_rows.append({
                 "manufacturer": manufacturer,
                 "product_id": product_id,
@@ -1141,12 +1146,28 @@ def run_update(
                 label, snippet, source = ev
             except Exception:
                 continue
+            ev_type = "source_excerpt"
+            source_excerpt = ""
+            if manufacturer == "aco":
+                ll = str(label).strip().lower()
+                if ll == "article row hydraulics":
+                    ev_type = "source_limitation"
+                    source_excerpt = str(snippet)
+                elif ll == "flow attribution limited":
+                    ev_type = "diagnostic"
+                    source_excerpt = str(snippet)
+                elif ll == "article row":
+                    ev_type = "article_row_hydraulics"
+                    source_excerpt = str(snippet)
             evidence_rows.append({
                 "manufacturer": manufacturer,
                 "product_id": product_id,
                 "label": str(label),
                 "snippet": str(snippet),
                 "source": str(source),
+                "evidence_type": ev_type,
+                "source_excerpt": source_excerpt,
+                "source_url": str(source),
             })
 
         # default promotion flags
@@ -2799,16 +2820,29 @@ def run_update(
         aco_debug.setdefault("assembled_products_left_in_components_count", 0)
 
         aco_by_id: Dict[str, Dict[str, Any]] = {}
-        for rr in aco_rows + [r for r in products_rows if str(r.get("manufacturer") or "").lower() == "aco"]:
+        def _tech_richness(r: Dict[str, Any]) -> int:
+            keys = (
+                "flow_rate_lps", "flow_rate_10mm_lps", "flow_rate_20mm_lps",
+                "water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn",
+            )
+            return sum(1 for k in keys if r.get(k) not in (None, ""))
+        # Prefer rows that already contain extracted parameters (products_rows) over
+        # raw registry candidates (aco_rows), and keep the richer duplicate if both exist.
+        for rr in [r for r in products_rows if str(r.get("manufacturer") or "").lower() == "aco"] + aco_rows:
             pid = str(rr.get("product_id") or "").strip()
-            if pid and pid not in aco_by_id:
+            if not pid:
+                continue
+            prev = aco_by_id.get(pid)
+            if prev is None or _tech_richness(rr) > _tech_richness(prev):
                 aco_by_id[pid] = rr
         existing_ids = {str(r.get("product_id") or "") for r in products_rows}
         seen_assembled_keys: Set[Tuple[str, str, str]] = set()
         tech_keys = [
-            "flow_rate_lps", "flow_rate_raw_text", "flow_rate_unit", "outlet_dn",
-            "outlet_dn_default", "outlet_dn_options_json", "height_adj_min_mm",
-            "height_adj_max_mm", "din_en_1253_cert",
+            "flow_rate_lps", "flow_rate_10mm_lps", "flow_rate_20mm_lps",
+            "flow_rate_lps_options", "flow_rate_raw_text", "flow_rate_unit", "flow_rate_status",
+            "outlet_dn", "outlet_dn_default", "outlet_dn_options_json",
+            "height_adj_min_mm", "height_adj_max_mm", "water_seal_mm",
+            "din_en_1253_cert",
         ]
         for br in [r for r in bom_rows if str(r.get("manufacturer") or "").lower() == "aco"]:
             fam = str(br.get("parent_family") or "")
@@ -2845,6 +2879,25 @@ def run_update(
                 aco_debug["assembled_product_duplicate_skipped_count"] += 1
                 continue
             row = dict(parent)
+            # Prefer technical parameters from the most specific hydraulic source row.
+            # BOM parent may be a family/complete marker while drain component/base row
+            # carries the actual WS/DN/height/flow values.
+            tech_source = dict(parent)
+            parent_ref = aco_by_id.get(pid, {})
+            if parent_ref:
+                for tk in tech_keys:
+                    if tech_source.get(tk) in (None, "") and parent_ref.get(tk) not in (None, ""):
+                        tech_source[tk] = parent_ref.get(tk)
+            # If still missing, try any matched source row that shares family and has hydraulic role.
+            for cand in aco_by_id.values():
+                if str(cand.get("product_family") or "") != fam:
+                    continue
+                role = str(cand.get("system_role") or "").lower()
+                if role not in {"drain_unit", "drain_body", "base_set", "complete_system"}:
+                    continue
+                for tk in tech_keys:
+                    if tech_source.get(tk) in (None, "") and cand.get(tk) not in (None, ""):
+                        tech_source[tk] = cand.get(tk)
             row.update({
                 "manufacturer": "aco",
                 "product_id": assembled_id,
@@ -2867,8 +2920,8 @@ def run_update(
             })
             row["option_label"] = str(br.get("option_label") or grate.get("product_name") or "")
             for tk in tech_keys:
-                if tk in parent:
-                    row[tk] = parent.get(tk)
+                if tk in tech_source and tech_source.get(tk) not in (None, ""):
+                    row[tk] = tech_source.get(tk)
             products_rows.append(row)
             comparison_rows.append({
                 "manufacturer": "aco",
@@ -2892,6 +2945,58 @@ def run_update(
             if str(r.get("manufacturer") or "").lower() == "aco"
             and str(r.get("promotion_reason") or "").lower() == "assembled_from_bom"
         ]
+        def _parse_flow_options(v) -> List[float]:
+            vals: List[float] = []
+            if v in (None, ""):
+                return vals
+            src = v
+            if isinstance(src, str):
+                s = src.strip()
+                if s.startswith("[") and s.endswith("]"):
+                    try:
+                        src = json.loads(s)
+                    except Exception:
+                        src = [x.strip() for x in s.strip("[]").split(",") if x.strip()]
+                else:
+                    src = [s]
+            if not isinstance(src, list):
+                src = [src]
+            for x in src:
+                try:
+                    fv = float(str(x).replace(",", "."))
+                except Exception:
+                    continue
+                if 0.10 <= fv <= 3.0:
+                    vals.append(fv)
+            return vals
+
+        # Final ACO assembled-tech normalization:
+        # 1) derive flow_rate_lps from flow_rate_lps_options when missing;
+        # 2) backfill WS/DN/height from base hydraulic source row when available.
+        for ar in assembled_rows_now:
+            if str(ar.get("manufacturer") or "").lower() != "aco":
+                continue
+            if str(ar.get("parent_family") or "") != "showerdrain_c":
+                continue
+            ar.setdefault("flow_rate_lps", None)
+            ar.setdefault("flow_rate_unit", None)
+            ar.setdefault("flow_rate_status", None)
+            if ar.get("flow_rate_lps") in (None, ""):
+                opts = _parse_flow_options(ar.get("flow_rate_lps_options"))
+                if not opts:
+                    base_id = str(ar.get("base_product_id") or "")
+                    base_row = aco_by_id.get(base_id, {})
+                    opts = _parse_flow_options(base_row.get("flow_rate_lps_options"))
+                if opts:
+                    ar["flow_rate_lps"] = max(opts)
+                    ar["flow_rate_unit"] = ar.get("flow_rate_unit") or "l/s"
+                    ar["flow_rate_status"] = ar.get("flow_rate_status") or "ok"
+            base_id = str(ar.get("base_product_id") or "")
+            base_row = aco_by_id.get(base_id, {})
+            for k in ("water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn"):
+                if ar.get(k) in (None, "") and base_row.get(k) not in (None, ""):
+                    ar[k] = base_row.get(k)
+
         aco_debug["assembled_products_emitted_to_products_count"] = sum(
             1 for r in assembled_rows_now
             if str(r.get("candidate_type") or "").lower() == "drain"
@@ -3604,6 +3709,68 @@ def run_update(
 
     products_df = pd.DataFrame(products_rows)
     comparison_df = pd.DataFrame(comparison_rows)
+    # Final post-assembly normalization on dataframe level (after all assembly rows exist).
+    if not products_df.empty and "product_id" in products_df.columns:
+        for col in ("flow_rate_lps", "flow_rate_lps_options", "flow_rate_unit", "flow_rate_status", "water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn", "base_product_id"):
+            if col not in products_df.columns:
+                products_df[col] = None
+
+        def _opts_to_max(v):
+            vals: List[float] = []
+            if v in (None, ""):
+                return None
+            src = v
+            if isinstance(src, str):
+                s = src.strip()
+                if s.startswith("[") and s.endswith("]"):
+                    try:
+                        src = json.loads(s)
+                    except Exception:
+                        src = [x.strip() for x in s.strip("[]").split(",") if x.strip()]
+                else:
+                    src = [s]
+            if not isinstance(src, list):
+                src = [src]
+            for x in src:
+                try:
+                    fv = float(str(x).replace(",", "."))
+                except Exception:
+                    continue
+                if 0.10 <= fv <= 3.0:
+                    vals.append(fv)
+            return max(vals) if vals else None
+
+        asm_mask = products_df["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-c-")
+        for i in products_df.index[asm_mask]:
+            base_id = str(products_df.at[i, "base_product_id"] or "")
+            if not base_id:
+                m = re.search(r"(aco-\d{8})", str(products_df.at[i, "product_id"]))
+                base_id = m.group(1) if m else ""
+            if base_id:
+                src = products_df.loc[products_df["product_id"].astype(str) == base_id]
+                if not src.empty:
+                    srow = src.iloc[0]
+                    for k in ("water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn", "flow_rate_lps_options"):
+                        cur = products_df.at[i, k]
+                        if (cur in (None, "") or pd.isna(cur)) and srow.get(k) not in (None, ""):
+                            products_df.at[i, k] = srow.get(k)
+                    if (products_df.at[i, "flow_rate_lps_options"] in (None, "") or pd.isna(products_df.at[i, "flow_rate_lps_options"])):
+                        base_url = str(srow.get("product_url") or "")
+                        if base_url:
+                            try:
+                                p = CONNECTORS["aco"].extract_parameters(base_url) or {}
+                            except Exception:
+                                p = {}
+                            for k in ("flow_rate_lps_options", "water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn"):
+                                if (products_df.at[i, k] in (None, "") or pd.isna(products_df.at[i, k])) and p.get(k) not in (None, ""):
+                                    products_df.at[i, k] = p.get(k)
+            cur_flow = products_df.at[i, "flow_rate_lps"]
+            if cur_flow in (None, "") or pd.isna(cur_flow):
+                d = _opts_to_max(products_df.at[i, "flow_rate_lps_options"])
+                if d is not None:
+                    products_df.at[i, "flow_rate_lps"] = d
+                    products_df.at[i, "flow_rate_unit"] = products_df.at[i, "flow_rate_unit"] or "l/s"
+                    products_df.at[i, "flow_rate_status"] = products_df.at[i, "flow_rate_status"] or "ok"
     if not comparison_df.empty and not products_df.empty:
         extra_cols = [
             # Product validation / audit fields required in Comparison exports.
@@ -3613,6 +3780,8 @@ def run_update(
             "promote_to_product",
             "promotion_reason",
             "flow_rate_lps",
+            "water_seal_mm",
+            "outlet_dn",
             "height_adj_min_mm",
             "height_adj_max_mm",
 
