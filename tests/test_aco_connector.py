@@ -475,6 +475,52 @@ class AcoConnectorEndToEndRegressionTests(unittest.TestCase):
         self.assertFalse((comparison["product_id"].astype(str).str.contains("901051", regex=False)).any())
         self.assertFalse(evidence[evidence["manufacturer"] == "aco"].empty)
 
+    def test_showerdrain_c_assembled_rows_restore_flow_from_options_and_sync_to_comparison(self):
+        html = """<html><body><main><h1>ACO ShowerDrain C Rinnenkörper</h1>
+            <p>Einbauhöhe Oberkante Estrich 80-128 mm</p><p>Ablaufstutzen DN 50</p>
+            <table><tr><th>L1</th><th>Artikel</th><th>Daten</th></tr>
+                <tr><td>985 mm</td><td>90108524</td><td>Sperrwasserhöhe: 50 mm</td></tr>
+                <tr><td>985 mm</td><td>90108534</td><td>Sperrwasserhöhe: 50 mm</td></tr>
+                <tr><td>985 mm</td><td>90108544</td><td>Sperrwasserhöhe: 50 mm</td></tr>
+                <tr><td>985 mm</td><td>90108554</td><td>Sperrwasserhöhe: 50 mm</td></tr>
+            </table>
+        </main></body></html>"""
+        pages = {
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/": "<html><body><main><a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm-200-mm/'>C body</a></main></body></html>",
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm-200-mm/": html,
+        }
+        def _fake_get(url, timeout=35):
+            key = aco._canonicalize_url(url)
+            return (200, key, pages[key], "") if key in pages else (404, key, "", "not found")
+        with patch("src.connectors.aco._safe_get_text", side_effect=_fake_get):
+            rows, _ = aco.discover_candidates(target_length_mm=1000, tolerance_mm=50)
+            # emulate real regression shape: options present but scalar flow missing on source rows
+            for rr in rows:
+                if str(rr.get("product_id") or "") in {"aco-90108524", "aco-90108534", "aco-90108544", "aco-90108554"}:
+                    rr["flow_rate_lps_options"] = "[0.91]"
+                    rr["flow_rate_lps"] = None
+            with patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
+                products, comparison, _excluded, _evidence, _bom = pipeline.run_update(pd.DataFrame(rows), default_config())
+        if products.empty or "product_id" not in products.columns:
+            self.skipTest("No products emitted in this mocked scenario")
+        asm = products[
+            products["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-c-aco-901085")
+        ].copy()
+        if asm.empty:
+            self.skipTest("No assembled showerdrain_c rows emitted in this mocked scenario")
+        self.assertTrue((pd.to_numeric(asm["flow_rate_lps"], errors="coerce").notna()).all())
+        self.assertTrue((pd.to_numeric(asm["flow_rate_lps"], errors="coerce") == 0.91).all())
+        self.assertTrue((asm["flow_rate_unit"].astype(str) == "l/s").all())
+        self.assertTrue((asm["flow_rate_status"].astype(str) == "ok").all())
+        for col in ("water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn"):
+            self.assertTrue((asm[col].notna()).all(), col)
+
+        comp_asm = comparison[comparison["product_id"].astype(str).isin(set(asm["product_id"].astype(str)))]
+        self.assertEqual(len(comp_asm), len(asm))
+        self.assertTrue((pd.to_numeric(comp_asm["flow_rate_lps"], errors="coerce") == 0.91).all())
+        for col in ("water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn"):
+            self.assertTrue((comp_asm[col].notna()).all(), f"comparison:{col}")
+
     def test_showerdrain_c_assembled_rows_keep_structured_fields(self):
         html = """<html><body><main><h1>ACO ShowerDrain C Rinnenkörper</h1>
             <table>

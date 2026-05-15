@@ -2940,6 +2940,51 @@ def run_update(
             if str(r.get("manufacturer") or "").lower() == "aco"
             and str(r.get("promotion_reason") or "").lower() == "assembled_from_bom"
         ]
+        def _parse_flow_options(v) -> List[float]:
+            vals: List[float] = []
+            if v in (None, ""):
+                return vals
+            src = v
+            if isinstance(src, str):
+                s = src.strip()
+                if s.startswith("[") and s.endswith("]"):
+                    try:
+                        src = json.loads(s)
+                    except Exception:
+                        src = [x.strip() for x in s.strip("[]").split(",") if x.strip()]
+                else:
+                    src = [s]
+            if not isinstance(src, list):
+                src = [src]
+            for x in src:
+                try:
+                    fv = float(str(x).replace(",", "."))
+                except Exception:
+                    continue
+                if 0.10 <= fv <= 3.0:
+                    vals.append(fv)
+            return vals
+
+        # Final ACO assembled-tech normalization:
+        # 1) derive flow_rate_lps from flow_rate_lps_options when missing;
+        # 2) backfill WS/DN/height from base hydraulic source row when available.
+        for ar in assembled_rows_now:
+            if str(ar.get("manufacturer") or "").lower() != "aco":
+                continue
+            if str(ar.get("parent_family") or "") != "showerdrain_c":
+                continue
+            if ar.get("flow_rate_lps") in (None, ""):
+                opts = _parse_flow_options(ar.get("flow_rate_lps_options"))
+                if opts:
+                    ar["flow_rate_lps"] = max(opts)
+                    ar["flow_rate_unit"] = ar.get("flow_rate_unit") or "l/s"
+                    ar["flow_rate_status"] = ar.get("flow_rate_status") or "ok"
+            base_id = str(ar.get("base_product_id") or "")
+            base_row = aco_by_id.get(base_id, {})
+            for k in ("water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn"):
+                if ar.get(k) in (None, "") and base_row.get(k) not in (None, ""):
+                    ar[k] = base_row.get(k)
+
         aco_debug["assembled_products_emitted_to_products_count"] = sum(
             1 for r in assembled_rows_now
             if str(r.get("candidate_type") or "").lower() == "drain"
