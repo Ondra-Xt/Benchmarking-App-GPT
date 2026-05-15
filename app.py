@@ -5,6 +5,11 @@ import platform
 import subprocess
 import sys
 import pandas as pd
+import subprocess
+import sys
+import platform
+import os
+
 
 from src.config import load_config, save_config, default_config, EQUIVALENCE_KEYS, FINAL_KEYS, validate_sum_100
 from src.run_manager import utc_run_id, create_run_dirs
@@ -22,11 +27,87 @@ TEMPLATE_PATH = DATA_DIR / "templates" / "benchmark_template.xlsx"
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.title(APP_TITLE)
 
+
+
+def _git_cmd(args: list[str]) -> str:
+    try:
+        return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT).strip()
+    except Exception as exc:
+        return f"unknown ({type(exc).__name__}: {exc})"
+
+
+def _fixture_exists(relative_path: str) -> bool:
+    return (BASE_DIR / relative_path).exists()
+
+
+def _http_probe(url: str, timeout: int = 10) -> dict[str, str]:
+    try:
+        import requests
+
+        r = requests.get(
+            url,
+            timeout=timeout,
+            headers={
+                "User-Agent": "Mozilla/5.0 DrainBenchmarkDebug/1.0",
+                "Accept": "text/html,application/pdf,*/*",
+            },
+            allow_redirects=True,
+        )
+        return {
+            "status": str(r.status_code),
+            "final_url": r.url,
+            "content_type": r.headers.get("content-type", ""),
+            "bytes": str(len(r.content or b"")),
+        }
+    except Exception as exc:
+        return {
+            "status": "ERROR",
+            "final_url": "",
+            "content_type": "",
+            "bytes": "0",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def _clear_app_session_state() -> None:
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.rerun()
+
 # Load config
 cfg = load_config(CONFIG_PATH)
 
 # Sidebar: settings
 st.sidebar.header("Settings")
+
+with st.sidebar.expander("Runtime debug", expanded=False):
+    st.write("Python:", sys.version.split()[0])
+    st.write("Python full:", sys.version)
+    st.write("Platform:", platform.platform())
+    st.write("Working dir:", os.getcwd())
+    st.write("Git branch:", _git_cmd(["git", "branch", "--show-current"]))
+    st.write("Git commit:", _git_cmd(["git", "rev-parse", "--short", "HEAD"]))
+    st.write("Fixtures / S+ family:", _fixture_exists("tests/fixtures/aco_splus/splus_family.html"))
+    st.write("Fixtures / S+ profile:", _fixture_exists("tests/fixtures/aco_splus/splus_profile.html"))
+    st.write("Fixtures / S+ drain body:", _fixture_exists("tests/fixtures/aco_splus/splus_drain_body.html"))
+    st.write("Fixtures / S+ brochure:", _fixture_exists("tests/fixtures/aco_splus/splus_brochure.pdf"))
+
+    if st.button("Reset in-app session state", help="Vyčistí registry/products/comparison/evidence uložené v aktuální Streamlit session."):
+        _clear_app_session_state()
+
+    if st.button("Probe ACO S+ sources", help="Ověří HTTP status z prostředí, kde aplikace běží."):
+        probe_urls = {
+            "splus_family": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/",
+            "splus_profile": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/aco-showerdrain-splus-duschrinnenprofil/",
+            "splus_drain_body": "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus/",
+            "splus_brochure_pdf": "https://www.aco-haustechnik.de/fileadmin/aco_haustechnik/documents/Prospekte-PDF/Prospekt-ACO_Sanit%C3%A4r_Duschrinne_ShowerDrain_S-Plus.pdf",
+        }
+        rows = []
+        for name, url in probe_urls.items():
+            result = _http_probe(url)
+            rows.append({"source": name, "url": url, **result})
+        st.dataframe(pd.DataFrame(rows), width="stretch", height=220)
+
 target_length = st.sidebar.number_input("Target length (mm)", min_value=300, max_value=3000, value=1200, step=10)
 tolerance = st.sidebar.number_input("Tolerance (±mm)", min_value=0, max_value=500, value=100, step=10)
 
