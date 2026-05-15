@@ -51,13 +51,7 @@ SEED_PAGES = [
 ARTICLE_RE = re.compile(r"\b(?:\d{4}\.?\d{2}\.?\d{2}|\d{8})\b")
 L1_RE = re.compile(r"\b(\d{3,4})\s*mm\b", re.IGNORECASE)
 FLOW_LPS_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*l\s*/\s*s\b", re.IGNORECASE)
-FLOW_AT_RE = re.compile(r"(10|20)\s*mm[^\d]{0,20}(\d+(?:[.,]\d+)?)\s*l\s*/\s*s", re.IGNORECASE)
 FLOW_AT_REV_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*l\s*/\s*s[^\d]{0,12}(10|20)\s*mm", re.IGNORECASE)
-# support longer intervening qualifiers like "Aufstauhöhe"/"Anstau" wording
-FLOW_AT_FWD_WIDE_RE = re.compile(
-    r"(10|20)\s*mm(?:(?!\b(?:10|20)\s*mm\b).){0,80}?(\d+(?:[.,]\d+)?)\s*l\s*/\s*s",
-    re.IGNORECASE | re.DOTALL,
-)
 WATER_SEAL_RE = re.compile(r"(?:geruchverschluss|sperrwasserh(?:oe|ö)he)[^\d]{0,20}(\d{2,3})\s*mm", re.IGNORECASE)
 HEIGHT_OE_RE = re.compile(
     r"einbauh(?:ö|oe)he[^.]{0,80}oberkante\s+estrich[^\d]{0,20}(\d{2,3})\s*[-–]\s*(\d{2,3})\s*mm",
