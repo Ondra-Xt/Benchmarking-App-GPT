@@ -1141,12 +1141,28 @@ def run_update(
                 label, snippet, source = ev
             except Exception:
                 continue
+            ev_type = "source_excerpt"
+            source_excerpt = ""
+            if manufacturer == "aco":
+                ll = str(label).strip().lower()
+                if ll == "article row hydraulics":
+                    ev_type = "source_limitation"
+                    source_excerpt = str(snippet)
+                elif ll == "flow attribution limited":
+                    ev_type = "diagnostic"
+                    source_excerpt = str(snippet)
+                elif ll == "article row":
+                    ev_type = "article_row_hydraulics"
+                    source_excerpt = str(snippet)
             evidence_rows.append({
                 "manufacturer": manufacturer,
                 "product_id": product_id,
                 "label": str(label),
                 "snippet": str(snippet),
                 "source": str(source),
+                "evidence_type": ev_type,
+                "source_excerpt": source_excerpt,
+                "source_url": str(source),
             })
 
         # default promotion flags
@@ -2806,9 +2822,11 @@ def run_update(
         existing_ids = {str(r.get("product_id") or "") for r in products_rows}
         seen_assembled_keys: Set[Tuple[str, str, str]] = set()
         tech_keys = [
-            "flow_rate_lps", "flow_rate_raw_text", "flow_rate_unit", "outlet_dn",
-            "outlet_dn_default", "outlet_dn_options_json", "height_adj_min_mm",
-            "height_adj_max_mm", "din_en_1253_cert",
+            "flow_rate_lps", "flow_rate_10mm_lps", "flow_rate_20mm_lps",
+            "flow_rate_raw_text", "flow_rate_unit", "flow_rate_status",
+            "outlet_dn", "outlet_dn_default", "outlet_dn_options_json",
+            "height_adj_min_mm", "height_adj_max_mm", "water_seal_mm",
+            "din_en_1253_cert",
         ]
         for br in [r for r in bom_rows if str(r.get("manufacturer") or "").lower() == "aco"]:
             fam = str(br.get("parent_family") or "")
@@ -2845,6 +2863,25 @@ def run_update(
                 aco_debug["assembled_product_duplicate_skipped_count"] += 1
                 continue
             row = dict(parent)
+            # Prefer technical parameters from the most specific hydraulic source row.
+            # BOM parent may be a family/complete marker while drain component/base row
+            # carries the actual WS/DN/height/flow values.
+            tech_source = dict(parent)
+            parent_ref = aco_by_id.get(pid, {})
+            if parent_ref:
+                for tk in tech_keys:
+                    if tech_source.get(tk) in (None, "") and parent_ref.get(tk) not in (None, ""):
+                        tech_source[tk] = parent_ref.get(tk)
+            # If still missing, try any matched source row that shares family and has hydraulic role.
+            for cand in aco_by_id.values():
+                if str(cand.get("product_family") or "") != fam:
+                    continue
+                role = str(cand.get("system_role") or "").lower()
+                if role not in {"drain_unit", "drain_body", "base_set", "complete_system"}:
+                    continue
+                for tk in tech_keys:
+                    if tech_source.get(tk) in (None, "") and cand.get(tk) not in (None, ""):
+                        tech_source[tk] = cand.get(tk)
             row.update({
                 "manufacturer": "aco",
                 "product_id": assembled_id,
@@ -2867,8 +2904,8 @@ def run_update(
             })
             row["option_label"] = str(br.get("option_label") or grate.get("product_name") or "")
             for tk in tech_keys:
-                if tk in parent:
-                    row[tk] = parent.get(tk)
+                if tk in tech_source and tech_source.get(tk) not in (None, ""):
+                    row[tk] = tech_source.get(tk)
             products_rows.append(row)
             comparison_rows.append({
                 "manufacturer": "aco",
