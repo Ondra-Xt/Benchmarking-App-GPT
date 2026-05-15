@@ -2809,7 +2809,7 @@ def run_update(
                         _add_aco_bom(p, rr, "optional_accessory", "accessory")
 
         # first safe ACO assembled products (restricted families, grate-only BOM links)
-        allowed_assembled_families = {"easyflow", "easyflowplus", "showerdrain_c"}
+        allowed_assembled_families = {"easyflow", "easyflowplus", "showerdrain_c", "showerdrain_splus"}
         aco_debug.setdefault("assembled_products_by_family", {})
         aco_debug.setdefault("sample_aco_assembled_products", [])
         aco_debug.setdefault("assembled_products_skipped_count", 0)
@@ -2850,18 +2850,20 @@ def run_update(
                 continue
             opt_type = str(br.get("option_type") or "").lower()
             opt_role = str(br.get("option_role") or "").lower()
-            if opt_type != "compatible_grate" or opt_role != "grate":
+            is_grate_pair = (opt_type == "compatible_grate" and opt_role == "grate")
+            is_splus_pair = (fam == "showerdrain_splus" and opt_type == "compatible_drain_body" and opt_role == "drain_body")
+            if not (is_grate_pair or is_splus_pair):
                 if opt_type in {"optional_accessory", "compatible_adapter"}:
                     aco_debug["assembled_products_accessory_combinations_skipped_count"] += 1
                 continue
             pid = str(br.get("product_id") or "").strip()
             cid = str(br.get("component_id") or "").strip()
             parent = aco_by_id.get(pid, {})
-            grate = aco_by_id.get(cid, {})
-            if not parent or not grate:
+            comp = aco_by_id.get(cid, {})
+            if not parent or not comp:
                 aco_debug["assembled_products_skipped_count"] += 1
                 if len(aco_debug["sample_aco_assembly_skipped_reasons"]) < 20:
-                    aco_debug["sample_aco_assembly_skipped_reasons"].append(f"{fam}:{pid}->{cid}:missing_parent_or_grate")
+                    aco_debug["sample_aco_assembly_skipped_reasons"].append(f"{fam}:{pid}->{cid}:missing_parent_or_component")
                 continue
             ofam = str(br.get("option_family") or "")
             if fam != ofam:
@@ -2901,7 +2903,7 @@ def run_update(
             row.update({
                 "manufacturer": "aco",
                 "product_id": assembled_id,
-                "product_name": f"{parent.get('product_name','')} + {grate.get('product_name','')}".strip(" +"),
+                "product_name": f"{parent.get('product_name','')} + {comp.get('product_name','')}".strip(" +"),
                 "candidate_type": "drain",
                 "complete_system": "yes",
                 "system_role": "assembled_system",
@@ -2910,18 +2912,27 @@ def run_update(
                 "why_not_product_reason": "",
                 "assembly_reason": "aco_bom_body_grate_assembly",
                 "assembled_from_bom": "true",
+                "compatibility_confidence": "implicit_family_level" if fam == "showerdrain_splus" else row.get("compatibility_confidence"),
+                "explicit_article_matrix": "false" if fam == "showerdrain_splus" else row.get("explicit_article_matrix"),
+                "source_limitation": "S+ profile-to-drain compatibility is official family-level compatibility; no explicit article-to-article matrix found." if fam == "showerdrain_splus" else row.get("source_limitation"),
                 "parent_family": fam,
                 "option_family": ofam,
                 "base_product_id": pid,
                 "grate_component_id": cid,
                 "matched_component_ids": ",".join([pid, cid]),
                 "source_url": str(br.get("source_url") or parent.get("product_url") or ""),
-                "sources": ",".join([str(parent.get("product_url") or ""), str(grate.get("product_url") or "")]).strip(","),
+                "sources": ",".join([str(parent.get("product_url") or ""), str(comp.get("product_url") or "")]).strip(","),
             })
-            row["option_label"] = str(br.get("option_label") or grate.get("product_name") or "")
+            row["option_label"] = str(br.get("option_label") or comp.get("product_name") or "")
             for tk in tech_keys:
                 if tk in tech_source and tech_source.get(tk) not in (None, ""):
                     row[tk] = tech_source.get(tk)
+            if fam == "showerdrain_splus":
+                # Hydraulics must come from drain body component, not profile row.
+                for tk in tech_keys:
+                    v = comp.get(tk)
+                    if v not in (None, ""):
+                        row[tk] = v
             products_rows.append(row)
             comparison_rows.append({
                 "manufacturer": "aco",
