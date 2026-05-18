@@ -2643,6 +2643,14 @@ def run_update(
                     aco_debug["sample_aco_assembly_candidates_rejected"].append(f"{pid}->{cid}:{option_type}:invalid_ids")
                 return
             fam = _aco_family_hint(parent)
+            option_meta = f"{fam}:{option_type}:{option_role}"
+            if fam == "showerdrain_mplus":
+                option_meta = (
+                    "compatibility_confidence=implicit_family_level; "
+                    "explicit_article_matrix=false; "
+                    "source_limitation=M+ compatibility is official family-level compatibility; "
+                    "no explicit article-to-article matrix found."
+                )
             key = (pid, cid, option_type)
             if key in seen_aco_bom_keys:
                 return
@@ -2659,7 +2667,7 @@ def run_update(
                 "option_role": option_role,
                 "parent_family": fam,
                 "source_url": str(parent.get("product_url") or ""),
-                "option_meta": f"{fam}:{option_type}:{option_role}",
+                "option_meta": option_meta,
             })
             aco_debug["bom_options_by_family"][fam] = aco_debug["bom_options_by_family"].get(fam, 0) + 1
             aco_debug["bom_options_by_type"][option_type] = aco_debug["bom_options_by_type"].get(option_type, 0) + 1
@@ -2702,9 +2710,10 @@ def run_update(
                     _add_aco_bom(b, g, "compatible_grate", "grate")
                 for a in accessories:
                     _add_aco_bom(b, a, "optional_accessory", "accessory")
-                for b2 in bases:
-                    if str(b.get("product_id") or "") != str(b2.get("product_id") or ""):
-                        _add_aco_bom(b, b2, "related_body_component", "base_set")
+                if fam != "showerdrain_mplus":
+                    for b2 in bases:
+                        if str(b.get("product_id") or "") != str(b2.get("product_id") or ""):
+                            _add_aco_bom(b, b2, "related_body_component", "base_set")
 
             # reference v2: validated ShowerDrain C article variants should link to ShowerDrain C design grates
             if fam == "showerdrain_c":
@@ -2807,6 +2816,39 @@ def run_update(
                         _add_aco_bom(p, rr, "compatible_grate", "grate")
                     else:
                         _add_aco_bom(p, rr, "optional_accessory", "accessory")
+
+        # M+ Stage 1 cleanup: normalize conservative metadata and remove unsafe body->body links.
+        mplus_meta = (
+            "compatibility_confidence=implicit_family_level; "
+            "explicit_article_matrix=false; "
+            "source_limitation=M+ compatibility is official family-level compatibility; "
+            "no explicit article-to-article matrix found."
+        )
+        mplus_product_role: Dict[str, str] = {}
+        for rr in [r for r in products_rows if str(r.get("manufacturer") or "").lower() == "aco"] + aco_rows:
+            if str(rr.get("product_family") or "").lower() != "showerdrain_mplus":
+                continue
+            pid = str(rr.get("product_id") or "").strip()
+            if pid:
+                mplus_product_role[pid] = str(rr.get("system_role") or "").lower()
+
+        normalized_bom_rows: List[Dict[str, Any]] = []
+        for br in bom_rows:
+            if str(br.get("manufacturer") or "").lower() != "aco" or str(br.get("parent_family") or "").lower() != "showerdrain_mplus":
+                normalized_bom_rows.append(br)
+                continue
+            pid = str(br.get("product_id") or "").strip()
+            cid = str(br.get("component_id") or "").strip()
+            if not pid or not cid or pid == cid:
+                continue
+            parent_role = mplus_product_role.get(pid, "")
+            comp_role = mplus_product_role.get(cid, str(br.get("option_role") or "").lower())
+            if parent_role == "drain_body" and comp_role == "drain_body":
+                continue
+            rr = dict(br)
+            rr["option_meta"] = mplus_meta
+            normalized_bom_rows.append(rr)
+        bom_rows = normalized_bom_rows
 
         # first safe ACO assembled products (restricted families, grate-only BOM links)
         allowed_assembled_families = {"easyflow", "easyflowplus", "showerdrain_c", "showerdrain_splus"}

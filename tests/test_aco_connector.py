@@ -679,8 +679,17 @@ class AcoConnectorEndToEndRegressionTests(unittest.TestCase):
                 {"manufacturer":"aco","product_id":"aco-mplus-profile","component_id":"aco-mplus-grate","option_type":"compatible_grate","option_role":"grate","parent_family":"showerdrain_mplus","option_family":"showerdrain_mplus","source_url":url},
             ]
         with patch("src.connectors.aco.get_bom_options", side_effect=_fake_bom), patch("src.connectors.aco.extract_parameters", return_value={}), patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
-            products, _comparison, _excluded, _evidence, _bom = pipeline.run_update(registry, default_config())
+            products, comparison, _excluded, _evidence, bom = pipeline.run_update(registry, default_config())
         self.assertFalse(products["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-mplus-").any())
+        self.assertFalse(comparison["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-mplus-").any())
+        mplus_bom = bom[bom["parent_family"].astype(str) == "showerdrain_mplus"].copy()
+        self.assertFalse(mplus_bom.empty)
+        self.assertTrue((mplus_bom["option_meta"].astype(str).str.contains("compatibility_confidence=implicit_family_level", regex=False)).all())
+        self.assertTrue((mplus_bom["option_meta"].astype(str).str.contains("explicit_article_matrix=false", regex=False)).all())
+        self.assertTrue((mplus_bom["option_meta"].astype(str).str.contains("source_limitation=M+ compatibility is official family-level compatibility; no explicit article-to-article matrix found.", regex=False)).all())
+        self.assertFalse(((mplus_bom["option_role"].astype(str) == "drain_body") & (mplus_bom["option_type"].astype(str) == "related_body_component")).any())
+        self.assertFalse((mplus_bom["product_id"].astype(str) == mplus_bom["component_id"].astype(str)).any())
+        self.assertFalse((mplus_bom["option_label"].astype(str) == "Direkt zur Hauptnavigation springen").any())
 
     def test_mplus_page_level_rinnenkoerper_is_profile_channel_not_drain_body(self):
         pages = {
