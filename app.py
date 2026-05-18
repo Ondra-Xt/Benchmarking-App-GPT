@@ -1,6 +1,9 @@
 from __future__ import annotations
 import streamlit as st
 from pathlib import Path
+import platform
+import subprocess
+import sys
 import pandas as pd
 
 from src.config import load_config, save_config, default_config, EQUIVALENCE_KEYS, FINAL_KEYS, validate_sum_100
@@ -8,6 +11,7 @@ from src.run_manager import utc_run_id, create_run_dirs
 from src.pipeline import run_discovery, run_update
 from src.excel_export import export_excel
 from src.connectors import CONNECTORS
+from src.connectors import aco as aco_connector
 
 APP_TITLE = "Drain Systems Benchmark – MVP"
 BASE_DIR = Path(__file__).parent
@@ -63,6 +67,44 @@ with st.sidebar.expander("Advanced / legacy equivalence scoring", expanded=False
     eq_weights[eq_auto_key] = max(0, 100 - eq_sum_manual)
     st.caption(f"{eq_auto_key} auto-balanced to {eq_weights[eq_auto_key]} % (sum = 100%)")
 st.sidebar.divider()
+
+st.sidebar.subheader("Runtime debug")
+
+def _git_cmd(args: list[str]) -> str:
+    try:
+        out = subprocess.check_output(args, cwd=BASE_DIR, stderr=subprocess.DEVNULL, text=True).strip()
+        return out or "unknown"
+    except Exception:
+        return "unknown"
+
+branch = _git_cmd(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+commit_short = _git_cmd(["git", "rev-parse", "--short", "HEAD"])
+
+fixtures_dir = BASE_DIR / "tests" / "fixtures" / "aco_splus"
+fixture_profile = fixtures_dir / "splus_profile.html"
+fixture_drain = fixtures_dir / "splus_drain_body.html"
+fixture_pdf = fixtures_dir / "splus_brochure.pdf"
+
+st.sidebar.caption(f"Python: `{sys.version.split()[0]}`")
+st.sidebar.caption(f"Platform: `{platform.platform()}`")
+st.sidebar.caption(f"Git branch: `{branch}`")
+st.sidebar.caption(f"Git commit: `{commit_short}`")
+st.sidebar.caption(f"`{fixture_profile.as_posix()}` exists: **{fixture_profile.exists()}**")
+st.sidebar.caption(f"`{fixture_drain.as_posix()}` exists: **{fixture_drain.exists()}**")
+st.sidebar.caption(f"`{fixture_pdf.as_posix()}` exists: **{fixture_pdf.exists()}**")
+
+with st.sidebar.expander("ACO source diagnostics (optional)", expanded=False):
+    splus_urls = [
+        ("S+ family", "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/"),
+        ("S+ profile", "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/aco-showerdrain-splus-duschrinnenprofil/"),
+        ("S+ drain-body", "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus/"),
+    ]
+    for label, url in splus_urls:
+        try:
+            status, final_url, _html, err = aco_connector._safe_get_text(url, timeout=20)
+            st.caption(f"{label}: status={status} err={err or '-'} final={final_url}")
+        except Exception as ex:
+            st.caption(f"{label}: status=error err={ex}")
 
 if st.sidebar.button("Save settings"):
     cfg.equivalence_weights_pct = {k: int(eq_weights.get(k, 0)) for k in EQUIVALENCE_KEYS}
