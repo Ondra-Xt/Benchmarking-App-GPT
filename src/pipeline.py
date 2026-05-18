@@ -2882,6 +2882,37 @@ def run_update(
             eplus_norm_rows.append(rr)
         bom_rows = eplus_norm_rows
 
+        # B Stage 1 cleanup: optional-accessory-only BOM with conservative metadata.
+        b_meta = (
+            "compatibility_confidence=implicit_family_level; "
+            "explicit_article_matrix=false; "
+            "source_limitation=B is an all-in-one product; compatibility only applies to optional accessories, no explicit article-to-article matrix found."
+        )
+        b_roles: Dict[str, str] = {}
+        for rr in [r for r in products_rows if str(r.get("manufacturer") or "").lower() == "aco"] + aco_rows:
+            if str(rr.get("product_family") or "").lower() != "showerdrain_b":
+                continue
+            pid = str(rr.get("product_id") or "").strip()
+            if pid:
+                b_roles[pid] = str(rr.get("system_role") or "").lower()
+        b_norm_rows: List[Dict[str, Any]] = []
+        for br in bom_rows:
+            if str(br.get("manufacturer") or "").lower() != "aco" or str(br.get("parent_family") or "").lower() != "showerdrain_b":
+                b_norm_rows.append(br)
+                continue
+            pid = str(br.get("product_id") or "").strip()
+            cid = str(br.get("component_id") or "").strip()
+            if not pid or not cid or pid == cid:
+                continue
+            if str(br.get("option_type") or "").lower() != "optional_accessory":
+                continue
+            if b_roles.get(cid, "") in {"complete_system", "drain_unit", "base_set", "grate", "drain_body"}:
+                continue
+            rr = dict(br)
+            rr["option_meta"] = b_meta
+            b_norm_rows.append(rr)
+        bom_rows = b_norm_rows
+
         # first safe ACO assembled products (restricted families, grate-only BOM links)
         allowed_assembled_families = {"easyflow", "easyflowplus", "showerdrain_c", "showerdrain_splus"}
         aco_debug.setdefault("assembled_products_by_family", {})

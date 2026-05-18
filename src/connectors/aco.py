@@ -362,6 +362,14 @@ def _infer_eplus_role(url: str, title: str) -> str:
         return "drain_unit"
     return "component"
 
+def _infer_b_role(url: str, title: str) -> str:
+    txt = f"{url} {title}".lower()
+    if any(k in txt for k in ("haarsieb", "schmutzfang", "zubehoer", "zubehör", "accessory")):
+        return "accessory"
+    if "showerdrain-b" in txt or "showerdrain b" in txt:
+        return "complete_system"
+    return "component"
+
 def _is_accessory_page(url: str, title: str = "") -> bool:
     txt = f"{url} {title}".lower()
     return any(k in txt for k in ("zubehoer", "zubehör", "rost", "abdeckung", "rahmen", "designrost", "rahmenprofil"))
@@ -529,7 +537,9 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         role, role_reason = _classify_role(final_c, title_base, html, family)
 
         # route candidate type
-        if _is_accessory_page(final_c, title_base):
+        if family == "showerdrain_b" and _infer_b_role(final_c, title_base) == "complete_system":
+            cand_type = "drain"
+        elif _is_accessory_page(final_c, title_base):
             cand_type = "component"
         elif _looks_like_detail_drain_page(final_c, title_base, html):
             cand_type = "drain"
@@ -576,6 +586,36 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                         candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
                         candidates_by_role["drain_unit"] = candidates_by_role.get("drain_unit", 0) + 1
                     debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": "no_article_rows_eplus_page_level", "candidates_found": kept, "method": method, "is_index": None})
+                    continue
+                if family == "showerdrain_b":
+                    pid = _stable_aco_id(final_c, family, "complete_system", title_base)
+                    if pid not in seen_ids:
+                        seen_ids.add(pid)
+                        kept += 1
+                        kept_total += 1
+                        row = {
+                            "manufacturer": "aco",
+                            "product_id": pid,
+                            "product_family": family,
+                            "product_name": title_base,
+                            "product_url": final_c,
+                            "sources": final_c,
+                            "candidate_type": "drain",
+                            "system_role": "complete_system",
+                            "classification_reason": "b_all_in_one_complete_system",
+                            "complete_system": "yes",
+                            "selected_length_mm": want,
+                            "length_mode": "unknown",
+                            "length_delta_mm": None,
+                        }
+                        p = extract_parameters(final_c) or {}
+                        for k in ("flow_rate_10mm_lps", "flow_rate_20mm_lps", "flow_rate_lps", "flow_rate_unit", "flow_rate_status", "water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn"):
+                            if p.get(k) not in (None, ""):
+                                row[k] = p.get(k)
+                        out.append(row)
+                        candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                        candidates_by_role["complete_system"] = candidates_by_role.get("complete_system", 0) + 1
+                    debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": "no_article_rows_b_page_level", "candidates_found": kept, "method": method, "is_index": None})
                     continue
                 # keep family-level candidate instead of dropping entire family due missing row table
                 pid = _stable_aco_id(final_c, family, "configuration_family", title_base)
@@ -1287,7 +1327,7 @@ def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -
     soup = BeautifulSoup(html or "", "lxml")
     title = _extract_title(html, final)
     family = _detect_family(final, title)
-    if family not in {"showerdrain_splus", "showerdrain_mplus", "showerdrain_eplus"}:
+    if family not in {"showerdrain_splus", "showerdrain_mplus", "showerdrain_eplus", "showerdrain_b"}:
         return []
 
     if family == "showerdrain_mplus":
@@ -1330,6 +1370,41 @@ def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -
                 "source_url": href,
                 "option_label": txt[:140],
                 "option_meta": "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; source_limitation=M+ compatibility is official family-level compatibility; no explicit article-to-article matrix found.",
+            })
+        return options
+    if family == "showerdrain_b":
+        options: List[Dict[str, Any]] = []
+        seen = set()
+        main = soup.select_one("main") or soup
+        for sel in ("header", "nav", "footer"):
+            for n in main.select(sel):
+                n.decompose()
+        for a in main.select("a[href]"):
+            href = _abs(a.get("href") or "", final)
+            if not _in_scope(href):
+                continue
+            txt = _clean_text(a.get_text(" ", strip=True))
+            if not txt or "hauptnavigation" in txt.lower():
+                continue
+            if _infer_b_role(href, txt) != "accessory":
+                continue
+            cid = _stable_aco_id(href, family, "accessory", txt)
+            parent_id = _stable_aco_id(final, family, "complete_system", title)
+            if not cid or cid == parent_id:
+                continue
+            key = (cid, "optional_accessory")
+            if key in seen:
+                continue
+            seen.add(key)
+            options.append({
+                "component_id": cid,
+                "option_type": "optional_accessory",
+                "option_role": "accessory",
+                "option_family": family,
+                "parent_family": family,
+                "source_url": href,
+                "option_label": txt[:140],
+                "option_meta": "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; source_limitation=B is an all-in-one product; compatibility only applies to optional accessories, no explicit article-to-article matrix found.",
             })
         return options
     if family == "showerdrain_eplus":

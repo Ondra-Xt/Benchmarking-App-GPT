@@ -11,6 +11,54 @@ from src.connectors import aco
 
 
 class AcoConnectorDiscoveryTests(unittest.TestCase):
+    def test_showerdrain_b_complete_system_discovery_and_tech_extraction(self):
+        b_url = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-b/aco-showerdrain-b/"
+        pages = {
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/": f"<html><body><main><a href='{b_url}'>ShowerDrain B</a></main></body></html>",
+            b_url: "<html><body><main><h1>ACO ShowerDrain B</h1><p>All-in-one Paket: Rinne, Rost & Ablauf</p><p>Sperrwasserhöhe: 30 mm</p><p>Ablaufstutzen DN 40 / DN 50</p><p>0,4 l/s mit 10 mm Aufstau</p><p>0,46 l/s mit 20 mm Aufstau</p><p>Mindesteinbauhöhe 80 mm</p></main></body></html>",
+        }
+        def _fake_get(url, timeout=35):
+            key = aco._canonicalize_url(url)
+            return (200, key, pages[key], "") if key in pages else (404, key, "", "not found")
+        with patch("src.connectors.aco._safe_get_text", side_effect=_fake_get):
+            rows, _ = aco.discover_candidates(1200, 100)
+        bdf = pd.DataFrame(rows)
+        bdf = bdf[bdf["product_family"] == "showerdrain_b"]
+        self.assertFalse(bdf.empty)
+        self.assertTrue((bdf["system_role"].astype(str) == "complete_system").any())
+        self.assertFalse((bdf["system_role"].astype(str) == "profile_channel").any())
+        self.assertFalse((bdf["system_role"].astype(str) == "drain_body").any())
+        row = bdf.iloc[0]
+        self.assertIn(str(row.get("outlet_dn")), {"DN50", "DN40/DN50"})
+        self.assertEqual(int(row.get("water_seal_mm")), 30)
+
+    def test_showerdrain_b_bom_optional_accessory_only_with_metadata(self):
+        url = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-b/aco-showerdrain-b/"
+        html = """<html><body><main>
+        <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-b/'>Direkt zur Hauptnavigation springen</a>
+        <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-b/haarsieb/'>Haarsieb</a>
+        <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-b/design-slot/'>Design Slot</a>
+        </main></body></html>"""
+        with patch("src.connectors.aco._safe_get_text", return_value=(200, url, html, "")):
+            opts = aco.get_bom_options(url)
+        self.assertTrue(opts)
+        self.assertTrue(all(o.get("option_type") == "optional_accessory" for o in opts))
+        self.assertFalse(any(o.get("component_id") == o.get("product_id") for o in opts))
+        self.assertFalse(any(str(o.get("option_label")) == "Direkt zur Hauptnavigation springen" for o in opts))
+        self.assertTrue(all("compatibility_confidence=implicit_family_level" in str(o.get("option_meta")) for o in opts))
+
+    def test_showerdrain_b_pipeline_no_assembled_and_no_product_to_product_bom(self):
+        registry = pd.DataFrame([
+            {"manufacturer":"aco","product_id":"aco-b-main","product_name":"ShowerDrain B","product_family":"showerdrain_b","product_url":"https://example.test/b/main","candidate_type":"drain","system_role":"complete_system","complete_system":"yes"},
+            {"manufacturer":"aco","product_id":"aco-b-hair","product_name":"Haarsieb","product_family":"showerdrain_b","product_url":"https://example.test/b/hair","candidate_type":"component","system_role":"accessory","complete_system":"component"},
+        ])
+        with patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
+            products, comparison, _excluded, _evidence, bom = pipeline.run_update(registry, default_config())
+        b_bom = bom[bom["parent_family"].astype(str) == "showerdrain_b"]
+        self.assertTrue((b_bom["option_type"].astype(str) == "optional_accessory").all())
+        self.assertTrue((b_bom["option_meta"].astype(str).str.contains("B is an all-in-one product", regex=False)).all())
+        self.assertFalse(products["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-b-").any())
+        self.assertFalse(comparison["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-b-").any())
     def test_eplus_discovery_integrated_drain_units_extract_technical_fields(self):
         family = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-eplus/"
         p92 = f"{family}duschrinnen/rinnenkoerper-einbauhoehe-oberkante-estrich-92-140-mm-din-en-1253-1/"
