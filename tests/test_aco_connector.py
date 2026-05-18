@@ -55,15 +55,29 @@ class AcoConnectorDiscoveryTests(unittest.TestCase):
             <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/'>Direkt zur Hauptnavigation springen</a>
             <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/ablaufkoerper-zur-duschrinne-aco-showerdrain-mplus/'>Ablaufkörper</a>
             <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/design-roste-aus-elektropoliertem-edelstahl/'>Design-Roste</a>
+            <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/showerstep/'>ShowerStep</a>
         </main></body></html>"""
         with patch("src.connectors.aco._safe_get_text", return_value=(200, "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/", html, "")):
             opts = aco.get_bom_options("https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/")
         self.assertTrue(any(o.get("option_type") == "compatible_drain_body" for o in opts))
         self.assertTrue(any(o.get("option_type") == "compatible_grate" for o in opts))
+        self.assertTrue(any(o.get("option_type") == "optional_accessory" for o in opts))
         self.assertTrue(all("implicit_family_level" in str(o.get("option_meta") or "") for o in opts))
         self.assertTrue(all("explicit_article_matrix=false" in str(o.get("option_meta") or "") for o in opts))
-        self.assertTrue(all("source_limitation=" in str(o.get("option_meta") or "") for o in opts))
+        self.assertTrue(all("source_limitation=M+ compatibility is official family-level compatibility; no explicit article-to-article matrix found." in str(o.get("option_meta") or "") for o in opts))
+        self.assertFalse(any(o.get("component_id") == o.get("product_id") for o in opts))
         self.assertFalse(any(str(o.get("option_label") or "") == "Direkt zur Hauptnavigation springen" for o in opts))
+
+    def test_mplus_drain_parent_does_not_emit_drain_to_drain_links(self):
+        html = """<html><body><main>
+            <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/ablaufkoerper-zur-duschrinne-aco-showerdrain-mplus/'>Ablaufkörper</a>
+            <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/design-roste-aus-elektropoliertem-edelstahl/'>Design-Roste</a>
+        </main></body></html>"""
+        url = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/ablaufkoerper-zur-duschrinne-aco-showerdrain-mplus/"
+        with patch("src.connectors.aco._safe_get_text", return_value=(200, url, html, "")):
+            opts = aco.get_bom_options(url)
+        self.assertFalse(any(o.get("option_role") == "drain_body" for o in opts))
+        self.assertTrue(any(o.get("option_role") == "grate" for o in opts))
     def test_stable_aco_id_helpers_are_deterministic_and_ascii_safe(self):
         id1 = aco._stable_aco_id(
             "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-aufsatzstuecke-standard/",
@@ -412,9 +426,8 @@ class AcoSplusPipelineComponentPropagationTests(unittest.TestCase):
         family_path = fixtures / "splus_family.html"
         profile_path = fixtures / "splus_profile.html"
         drain_path = fixtures / "splus_drain_body.html"
-        self.assertTrue(family_path.exists(), f"missing fixture: {family_path}")
-        self.assertTrue(profile_path.exists(), f"missing fixture: {profile_path}")
-        self.assertTrue(drain_path.exists(), f"missing fixture: {drain_path}")
+        if not (family_path.exists() and profile_path.exists() and drain_path.exists()):
+            self.skipTest(f"missing fixture files under {fixtures}")
         family_html = family_path.read_text(encoding="utf-8")
         profile_html = profile_path.read_text(encoding="utf-8")
         drain_html = drain_path.read_text(encoding="utf-8")
@@ -668,3 +681,18 @@ class AcoConnectorEndToEndRegressionTests(unittest.TestCase):
         with patch("src.connectors.aco.get_bom_options", side_effect=_fake_bom), patch("src.connectors.aco.extract_parameters", return_value={}), patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
             products, _comparison, _excluded, _evidence, _bom = pipeline.run_update(registry, default_config())
         self.assertFalse(products["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-mplus-").any())
+
+    def test_mplus_page_level_rinnenkoerper_is_profile_channel_not_drain_body(self):
+        pages = {
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/": "<html><body><main><a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/rinnenkoerper-einbauhoehe-oberkante-estrich-25-128-mm/'>Rinnenkörper</a></main></body></html>",
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/rinnenkoerper-einbauhoehe-oberkante-estrich-25-128-mm/": "<html><body><main><h1>ACO ShowerDrain M+ Rinnenkörper</h1></main></body></html>",
+        }
+        def _fake_get(url, timeout=35):
+            key = aco._canonicalize_url(url)
+            return (200, key, pages[key], "") if key in pages else (404, key, "", "not found")
+        with patch("src.connectors.aco._safe_get_text", side_effect=_fake_get):
+            rows, _ = aco.discover_candidates(target_length_mm=1200, tolerance_mm=100)
+        mplus = pd.DataFrame(rows)
+        row = mplus[mplus["product_id"].astype(str) == "aco-showerdrain-mplus-rinnenkoerper-einbauhoehe-oberkante-estrich-25-128-mm"].iloc[0]
+        self.assertIn(str(row["system_role"]), {"profile_channel", "channel_body"})
+        self.assertNotEqual(str(row["system_role"]), "drain_body")

@@ -724,6 +724,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                 product_urls.append(final_c)
                 emitted_rows += 1
         elif cand_type == "component":
+            if family == "showerdrain_mplus":
+                role = _infer_mplus_role(final_c, title_base)
             if family == "showerdrain_mplus" and pairs:
                 for l1_mm, article_no, article_digits in pairs:
                     role_m = _infer_mplus_role(final_c, title_base)
@@ -1218,6 +1220,7 @@ def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -
         return []
 
     if family == "showerdrain_mplus":
+        parent_role = _infer_mplus_role(final, title)
         main = soup.select_one("main") or soup
         for sel in ("header", "nav", "footer"):
             for n in main.select(sel):
@@ -1236,7 +1239,11 @@ def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -
                 role = "drain_body"; otype = "compatible_drain_body"
             elif any(k in txt.lower() for k in ("design-roste", "design-rost", "designrost", "rost")):
                 role = "grate"; otype = "compatible_grate"
+            elif any(k in txt.lower() for k in ("showerstep", "zubehoer", "zubehör", "zubehörteile", "accessory")):
+                role = "accessory"; otype = "optional_accessory"
             else:
+                continue
+            if parent_role == "drain_body" and role == "drain_body":
                 continue
             cid = _stable_aco_id(href, family, role, txt)
             key = (cid, otype)
@@ -1251,7 +1258,7 @@ def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -
                 "parent_family": family,
                 "source_url": href,
                 "option_label": txt[:140],
-                "option_meta": "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; source_limitation=no_explicit_article_matrix_on_mplus_pages; M+ modular family-level compatibility inferred from official profile/body/grate pages.",
+                "option_meta": "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; source_limitation=M+ compatibility is official family-level compatibility; no explicit article-to-article matrix found.",
             })
         return options
 
