@@ -11,6 +11,50 @@ from src.connectors import aco
 
 
 class AcoConnectorDiscoveryTests(unittest.TestCase):
+    def test_eplus_discovery_integrated_drain_units_extract_technical_fields(self):
+        family = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-eplus/"
+        p92 = f"{family}duschrinnen/rinnenkoerper-einbauhoehe-oberkante-estrich-92-140-mm-din-en-1253-1/"
+        p66 = f"{family}duschrinnen/rinnenkoerper-einbauhoehe-oberkante-estrich-66-140-mm/"
+        p15 = f"{family}duschrinnen/rinnenkoerper-einbauhoehe-oberkante-estrich-15-140-mm/"
+        grates = f"{family}duschrinnen/design-roste-aus-elektropoliertem-edelstahl/"
+        html_index = f"""<html><body><main>
+        <a href='{p92}'>Rinnenkörper 92-140</a><a href='{p66}'>Rinnenkörper 66-140</a>
+        <a href='{p15}'>Rinnenkörper 15-140</a><a href='{grates}'>Design-Roste</a></main></body></html>"""
+        def _page(h, ws, fl10, fl20):
+            return f"<html><body><main><h1>{h}</h1><p>Einbauhöhe Oberkante Estrich {h.split()[-1]} mm</p><p>Sperrwasserhöhe: {ws} mm</p><p>Ablaufstutzen DN 50</p><p>Abflusswert {fl10} l/s bei 10 mm; {fl20} l/s bei 20 mm</p><table><tr><th>L1</th><th>Artikel</th></tr><tr><td>1185 mm</td><td>9010.70.01</td></tr></table></main></body></html>"
+        pages = {
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/": html_index,
+            family: "<html><body><main><h1>ACO ShowerDrain E+</h1></main></body></html>",
+            p92: _page("Rinnenkörper Einbauhöhe Oberkante Estrich 92-140", 50, "0,4", "0,6"),
+            p66: _page("Rinnenkörper Einbauhöhe Oberkante Estrich 66-140", 25, "0,4", "0,6"),
+            p15: _page("Rinnenkörper Einbauhöhe Oberkante Estrich 15-140", 50, "0,4", "0,6"),
+            grates: "<html><body><main><h1>Design-Roste aus Edelstahl</h1><table><tr><th>L1</th><th>Artikel</th></tr><tr><td>1185 mm</td><td>9010.99.01</td></tr></table></main></body></html>",
+        }
+        def _fake_get(url, timeout=35):
+            key = aco._canonicalize_url(url)
+            return (200, key, pages[key], "") if key in pages else (404, key, "", "not found")
+        with patch("src.connectors.aco._safe_get_text", side_effect=_fake_get):
+            rows, _ = aco.discover_candidates(1200, 100)
+        eplus = pd.DataFrame(rows)
+        eplus = eplus[eplus["product_family"] == "showerdrain_eplus"]
+        self.assertTrue((eplus["system_role"].astype(str) == "drain_unit").any())
+        self.assertTrue((eplus["system_role"].astype(str) == "grate").any())
+
+    def test_eplus_bom_metadata_and_guards(self):
+        url = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-eplus/duschrinnen/rinnenkoerper-einbauhoehe-oberkante-estrich-92-140-mm-din-en-1253-1/"
+        html = """<html><body><main>
+        <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-eplus/'>Direkt zur Hauptnavigation springen</a>
+        <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-eplus/duschrinnen/design-roste-aus-elektropoliertem-edelstahl/'>Design-Roste</a>
+        <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-eplus/brandschutz-duschrinnen/ablaufkoerper-zu-aco-brandschutz-duschrinne-showerdrain-eplus/'>Brandschutz Ablaufkörper</a>
+        </main></body></html>"""
+        with patch("src.connectors.aco._safe_get_text", return_value=(200, url, html, "")):
+            opts = aco.get_bom_options(url)
+        self.assertTrue(opts)
+        self.assertFalse(any(o.get("component_id") == o.get("product_id") for o in opts))
+        self.assertFalse(any(str(o.get("option_label")) == "Direkt zur Hauptnavigation springen" for o in opts))
+        self.assertTrue(all("compatibility_confidence=implicit_family_level" in str(o.get("option_meta")) for o in opts))
+        self.assertTrue(all("explicit_article_matrix=false" in str(o.get("option_meta")) for o in opts))
+        self.assertTrue(all("source_limitation=E+ compatibility is official family-level compatibility; no explicit article-to-article matrix found." in str(o.get("option_meta")) for o in opts))
     def test_mplus_component_article_rows_classified_and_drain_hydraulics_extracted(self):
         html_index = """<html><body><main>
             <a href="/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/ablaufkoerper-zur-duschrinne-aco-showerdrain-mplus/">Ablaufkörper</a>

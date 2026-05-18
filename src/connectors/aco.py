@@ -350,6 +350,17 @@ def _infer_mplus_role(url: str, title: str) -> str:
         return "grate"
     return "component"
 
+def _infer_eplus_role(url: str, title: str) -> str:
+    txt = f"{url} {title}".lower()
+    if any(k in txt for k in ("design-roste", "design-rost", "designrost", "rost")):
+        return "grate"
+    if any(k in txt for k in ("ablaufkoerper", "ablaufkörper")):
+        return "drain_body"
+    if any(k in txt for k in ("rinnenkoerper", "rinnenkörper", "einbauhoehe", "einbauhöhe")):
+        return "drain_unit"
+    if any(k in txt for k in ("brandschutz",)):
+        return "drain_unit"
+    return "component"
 
 def _is_accessory_page(url: str, title: str = "") -> bool:
     txt = f"{url} {title}".lower()
@@ -686,6 +697,34 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                     candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
                     candidates_by_role[role_splus] = candidates_by_role.get(role_splus, 0) + 1
                     continue
+                if family == "showerdrain_eplus":
+                    pid = _stable_aco_id(final_c, family, "drain_unit", title_base, article_digits)
+                    if pid in seen_ids:
+                        continue
+                    seen_ids.add(pid)
+                    row = {
+                        "manufacturer": "aco",
+                        "product_id": pid,
+                        "product_family": family,
+                        "product_name": f"{title_base} (Artikel-Nr. {article_no})",
+                        "product_url": f"{final_c}#article-{article_digits}",
+                        "sources": final_c,
+                        "candidate_type": "drain",
+                        "system_role": "drain_unit",
+                        "classification_reason": "eplus_integrated_channel_drain",
+                        "complete_system": "yes",
+                        "article_no": article_no,
+                        "row_length_raw_mm": l1_mm,
+                        "row_length_nominal_mm": _nominal_length_from_l1(l1_mm),
+                    }
+                    p = extract_parameters(row["product_url"]) or {}
+                    for k in ("flow_rate_10mm_lps", "flow_rate_20mm_lps", "flow_rate_lps", "flow_rate_unit", "flow_rate_status", "water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn", "din_en_1253_cert"):
+                        if p.get(k) not in (None, ""):
+                            row[k] = p.get(k)
+                    out.append(row)
+                    candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                    candidates_by_role["drain_unit"] = candidates_by_role.get("drain_unit", 0) + 1
+                    continue
                 nominal_length_mm = _nominal_length_from_l1(l1_mm)
                 # row must have concrete length
                 if nominal_length_mm is None:
@@ -726,6 +765,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         elif cand_type == "component":
             if family == "showerdrain_mplus":
                 role = _infer_mplus_role(final_c, title_base)
+            if family == "showerdrain_eplus":
+                role = _infer_eplus_role(final_c, title_base)
             if family == "showerdrain_mplus" and pairs:
                 for l1_mm, article_no, article_digits in pairs:
                     role_m = _infer_mplus_role(final_c, title_base)
@@ -1216,7 +1257,7 @@ def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -
     soup = BeautifulSoup(html or "", "lxml")
     title = _extract_title(html, final)
     family = _detect_family(final, title)
-    if family not in {"showerdrain_splus", "showerdrain_mplus"}:
+    if family not in {"showerdrain_splus", "showerdrain_mplus", "showerdrain_eplus"}:
         return []
 
     if family == "showerdrain_mplus":
@@ -1259,6 +1300,46 @@ def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -
                 "source_url": href,
                 "option_label": txt[:140],
                 "option_meta": "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; source_limitation=M+ compatibility is official family-level compatibility; no explicit article-to-article matrix found.",
+            })
+        return options
+    if family == "showerdrain_eplus":
+        options: List[Dict[str, Any]] = []
+        seen = set()
+        main = soup.select_one("main") or soup
+        for sel in ("header", "nav", "footer"):
+            for n in main.select(sel):
+                n.decompose()
+        for a in main.select("a[href]"):
+            href = _abs(a.get("href") or "", final)
+            if not _in_scope(href):
+                continue
+            txt = _clean_text(a.get_text(" ", strip=True))
+            if not txt or "hauptnavigation" in txt.lower():
+                continue
+            role = _infer_eplus_role(href, txt)
+            if role == "grate":
+                otype = "compatible_grate"
+            elif role == "drain_body" and "brandschutz" in f"{href} {txt}".lower():
+                otype = "related_body_component"
+            else:
+                continue
+            cid = _stable_aco_id(href, family, role, txt)
+            parent_id = _stable_aco_id(final, family, _infer_eplus_role(final, title), title)
+            if not cid or cid == parent_id:
+                continue
+            key = (cid, otype)
+            if key in seen:
+                continue
+            seen.add(key)
+            options.append({
+                "component_id": cid,
+                "option_type": otype,
+                "option_role": role,
+                "option_family": family,
+                "parent_family": family,
+                "source_url": href,
+                "option_label": txt[:140],
+                "option_meta": "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; source_limitation=E+ compatibility is official family-level compatibility; no explicit article-to-article matrix found.",
             })
         return options
 
