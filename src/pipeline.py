@@ -2850,6 +2850,38 @@ def run_update(
             normalized_bom_rows.append(rr)
         bom_rows = normalized_bom_rows
 
+        # E+ Stage 1 cleanup: normalize conservative metadata and remove integrated-body alternatives as BOM components.
+        eplus_meta = (
+            "compatibility_confidence=implicit_family_level; "
+            "explicit_article_matrix=false; "
+            "source_limitation=E+ compatibility is official family-level compatibility; "
+            "no explicit article-to-article matrix found."
+        )
+        eplus_product_role: Dict[str, str] = {}
+        for rr in [r for r in products_rows if str(r.get("manufacturer") or "").lower() == "aco"] + aco_rows:
+            if str(rr.get("product_family") or "").lower() != "showerdrain_eplus":
+                continue
+            pid = str(rr.get("product_id") or "").strip()
+            if pid:
+                eplus_product_role[pid] = str(rr.get("system_role") or "").lower()
+        eplus_norm_rows: List[Dict[str, Any]] = []
+        for br in bom_rows:
+            if str(br.get("manufacturer") or "").lower() != "aco" or str(br.get("parent_family") or "").lower() != "showerdrain_eplus":
+                eplus_norm_rows.append(br)
+                continue
+            pid = str(br.get("product_id") or "").strip()
+            cid = str(br.get("component_id") or "").strip()
+            if not pid or not cid or pid == cid:
+                continue
+            parent_role = eplus_product_role.get(pid, "")
+            comp_role = eplus_product_role.get(cid, str(br.get("option_role") or "").lower())
+            if parent_role in {"drain_unit", "integrated_channel_drain"} and comp_role in {"drain_unit", "integrated_channel_drain", "base_set"}:
+                continue
+            rr = dict(br)
+            rr["option_meta"] = eplus_meta
+            eplus_norm_rows.append(rr)
+        bom_rows = eplus_norm_rows
+
         # first safe ACO assembled products (restricted families, grate-only BOM links)
         allowed_assembled_families = {"easyflow", "easyflowplus", "showerdrain_c", "showerdrain_splus"}
         aco_debug.setdefault("assembled_products_by_family", {})

@@ -39,6 +39,7 @@ class AcoConnectorDiscoveryTests(unittest.TestCase):
         eplus = eplus[eplus["product_family"] == "showerdrain_eplus"]
         self.assertTrue((eplus["system_role"].astype(str) == "drain_unit").any())
         self.assertTrue((eplus["system_role"].astype(str) == "grate").any())
+        self.assertFalse((eplus["system_role"].astype(str) == "configuration_family").any())
 
     def test_eplus_bom_metadata_and_guards(self):
         url = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-eplus/duschrinnen/rinnenkoerper-einbauhoehe-oberkante-estrich-92-140-mm-din-en-1253-1/"
@@ -55,6 +56,23 @@ class AcoConnectorDiscoveryTests(unittest.TestCase):
         self.assertTrue(all("compatibility_confidence=implicit_family_level" in str(o.get("option_meta")) for o in opts))
         self.assertTrue(all("explicit_article_matrix=false" in str(o.get("option_meta")) for o in opts))
         self.assertTrue(all("source_limitation=E+ compatibility is official family-level compatibility; no explicit article-to-article matrix found." in str(o.get("option_meta")) for o in opts))
+
+    def test_eplus_pipeline_normalizes_bom_and_removes_body_to_body_links(self):
+        registry = pd.DataFrame([
+            {"manufacturer":"aco","product_id":"aco-eplus-25","product_name":"E+ RK 25-128","product_family":"showerdrain_eplus","product_url":"https://example.test/eplus/25","candidate_type":"drain","system_role":"drain_unit","complete_system":"yes"},
+            {"manufacturer":"aco","product_id":"aco-eplus-57","product_name":"E+ RK 57-128","product_family":"showerdrain_eplus","product_url":"https://example.test/eplus/57","candidate_type":"drain","system_role":"drain_unit","complete_system":"yes"},
+            {"manufacturer":"aco","product_id":"aco-eplus-grate","product_name":"E+ Design-Roste","product_family":"showerdrain_eplus","product_url":"https://example.test/eplus/grate","candidate_type":"component","system_role":"grate","complete_system":"component"},
+        ])
+        with patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
+            products, comparison, _excluded, _evidence, bom = pipeline.run_update(registry, default_config())
+        eplus_bom = bom[bom["parent_family"].astype(str) == "showerdrain_eplus"].copy()
+        self.assertFalse(eplus_bom.empty)
+        self.assertFalse(((eplus_bom["product_id"].astype(str).str.contains("aco-eplus-", regex=False)) & (eplus_bom["component_id"].astype(str).str.contains("aco-eplus-", regex=False)) & (eplus_bom["component_id"].astype(str) != "aco-eplus-grate")).any())
+        self.assertTrue((eplus_bom["option_meta"].astype(str).str.contains("compatibility_confidence=implicit_family_level", regex=False)).all())
+        self.assertTrue((eplus_bom["option_meta"].astype(str).str.contains("explicit_article_matrix=false", regex=False)).all())
+        self.assertTrue((eplus_bom["option_meta"].astype(str).str.contains("source_limitation=E+ compatibility is official family-level compatibility; no explicit article-to-article matrix found.", regex=False)).all())
+        self.assertFalse(products["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-eplus-").any())
+        self.assertFalse(comparison["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-eplus-").any())
     def test_mplus_component_article_rows_classified_and_drain_hydraulics_extracted(self):
         html_index = """<html><body><main>
             <a href="/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/ablaufkoerper-zur-duschrinne-aco-showerdrain-mplus/">Ablaufkörper</a>

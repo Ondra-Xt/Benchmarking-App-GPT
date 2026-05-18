@@ -547,6 +547,36 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         if cand_type == "drain":
             # row-based product variants only; no page-level drain fallback rows
             if not pairs:
+                if family == "showerdrain_eplus":
+                    pid = _stable_aco_id(final_c, family, "drain_unit", title_base)
+                    if pid not in seen_ids:
+                        seen_ids.add(pid)
+                        kept += 1
+                        kept_total += 1
+                        row = {
+                            "manufacturer": "aco",
+                            "product_id": pid,
+                            "product_family": family,
+                            "product_name": title_base,
+                            "product_url": final_c,
+                            "sources": final_c,
+                            "candidate_type": "drain",
+                            "system_role": "drain_unit",
+                            "classification_reason": "eplus_page_level_integrated_channel_drain",
+                            "complete_system": "yes",
+                            "selected_length_mm": want,
+                            "length_mode": "unknown",
+                            "length_delta_mm": None,
+                        }
+                        p = extract_parameters(final_c) or {}
+                        for k in ("flow_rate_10mm_lps", "flow_rate_20mm_lps", "flow_rate_lps", "flow_rate_unit", "flow_rate_status", "water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn", "din_en_1253_cert"):
+                            if p.get(k) not in (None, ""):
+                                row[k] = p.get(k)
+                        out.append(row)
+                        candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                        candidates_by_role["drain_unit"] = candidates_by_role.get("drain_unit", 0) + 1
+                    debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": "no_article_rows_eplus_page_level", "candidates_found": kept, "method": method, "is_index": None})
+                    continue
                 # keep family-level candidate instead of dropping entire family due missing row table
                 pid = _stable_aco_id(final_c, family, "configuration_family", title_base)
                 if pid not in seen_ids:
