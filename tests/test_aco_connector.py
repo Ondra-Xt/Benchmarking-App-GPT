@@ -11,6 +11,55 @@ from src.connectors import aco
 
 
 class AcoConnectorDiscoveryTests(unittest.TestCase):
+    def test_mplus_component_article_rows_classified_and_drain_hydraulics_extracted(self):
+        html_index = """<html><body><main>
+            <a href="/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/ablaufkoerper-zur-duschrinne-aco-showerdrain-mplus/">Ablaufkörper</a>
+            <a href="/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/rinnenkoerper-einbauhoehe-oberkante-estrich-15-140-mm/">Rinnenkörper</a>
+            <a href="/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/design-roste-aus-elektropoliertem-edelstahl/">Roste</a>
+        </main></body></html>"""
+        html_drain = """<html><body><main><h1>Ablaufkörper zur Duschrinne ACO ShowerDrain M+</h1>
+            <table><tr><th>Artikel</th><th>Daten</th></tr>
+            <tr><td>9010.81.20</td><td>DN 50 100 - 128 mm Sperrwasserhöhe: 50 mm 0,5 l/s mit 20 mm Aufstau</td></tr>
+            <tr><td>9010.81.21</td><td>DN 50 80 - 128 mm Sperrwasserhöhe: 30 mm 0,5 l/s mit 20 mm Aufstau</td></tr>
+            </table></main></body></html>"""
+        html_channel = """<html><body><main><h1>Rinnenkörper Einbauhöhe Oberkante Estrich 15-140 mm</h1>
+            <table><tr><th>L1</th><th>Artikel</th></tr><tr><td>985 mm</td><td>9010.87.03</td></tr></table></main></body></html>"""
+        html_grate = """<html><body><main><h1>Design-Roste aus Edelstahl</h1>
+            <table><tr><th>L1</th><th>Artikel</th></tr><tr><td>985 mm</td><td>9010.99.01</td></tr></table></main></body></html>"""
+        pages = {
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/": html_index,
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/ablaufkoerper-zur-duschrinne-aco-showerdrain-mplus/": html_drain,
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/rinnenkoerper-einbauhoehe-oberkante-estrich-15-140-mm/": html_channel,
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/design-roste-aus-elektropoliertem-edelstahl/": html_grate,
+        }
+        def _fake_get(url, timeout=35):
+            key = aco._canonicalize_url(url)
+            html = pages.get(key)
+            return (200, key, html, "") if html else (404, key, "", "not found")
+        with patch("src.connectors.aco._safe_get_text", side_effect=_fake_get):
+            rows, _ = aco.discover_candidates(1000, 200)
+        df = pd.DataFrame(rows)
+        mplus = df[df["product_family"] == "showerdrain_mplus"]
+        self.assertTrue((mplus["system_role"] == "drain_body").any())
+        self.assertTrue((mplus["system_role"] == "profile_channel").any())
+        self.assertTrue((mplus["system_role"] == "grate").any())
+        d20 = mplus.set_index("product_id").loc["aco-90108120"]
+        self.assertEqual(float(d20["flow_rate_lps"]), 0.5)
+        self.assertEqual(int(d20["water_seal_mm"]), 50)
+        self.assertEqual(str(d20["outlet_dn"]), "DN50")
+
+    def test_mplus_bom_options_implicit_family_level_and_no_navigation_noise(self):
+        html = """<html><body><main>
+            <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/'>Direkt zur Hauptnavigation springen</a>
+            <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/ablaufkoerper-zur-duschrinne-aco-showerdrain-mplus/'>Ablaufkörper</a>
+            <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/design-roste-aus-elektropoliertem-edelstahl/'>Design-Roste</a>
+        </main></body></html>"""
+        with patch("src.connectors.aco._safe_get_text", return_value=(200, "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/", html, "")):
+            opts = aco.get_bom_options("https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/")
+        self.assertTrue(any(o.get("option_type") == "compatible_drain_body" for o in opts))
+        self.assertTrue(any(o.get("option_type") == "compatible_grate" for o in opts))
+        self.assertTrue(all("implicit_family_level" in str(o.get("option_meta") or "") for o in opts))
+        self.assertFalse(any(str(o.get("option_label") or "") == "Direkt zur Hauptnavigation springen" for o in opts))
     def test_stable_aco_id_helpers_are_deterministic_and_ascii_safe(self):
         id1 = aco._stable_aco_id(
             "https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-aufsatzstuecke-standard/",
