@@ -30,8 +30,8 @@ run_windows.bat
 or manually:
 
 ```bash
-.venv\Scripts\activate
-streamlit run app.py
+.\.venv\Scripts\activate
+python -m streamlit run app.py
 ```
 
 ---
