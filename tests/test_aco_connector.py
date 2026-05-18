@@ -43,6 +43,8 @@ class AcoConnectorDiscoveryTests(unittest.TestCase):
         self.assertTrue((mplus["system_role"] == "drain_body").any())
         self.assertTrue((mplus["system_role"] == "profile_channel").any())
         self.assertTrue((mplus["system_role"] == "grate").any())
+        channel = mplus.set_index("product_id").loc["aco-90108703"]
+        self.assertEqual(str(channel["system_role"]), "profile_channel")
         d20 = mplus.set_index("product_id").loc["aco-90108120"]
         self.assertEqual(float(d20["flow_rate_lps"]), 0.5)
         self.assertEqual(int(d20["water_seal_mm"]), 50)
@@ -59,6 +61,8 @@ class AcoConnectorDiscoveryTests(unittest.TestCase):
         self.assertTrue(any(o.get("option_type") == "compatible_drain_body" for o in opts))
         self.assertTrue(any(o.get("option_type") == "compatible_grate" for o in opts))
         self.assertTrue(all("implicit_family_level" in str(o.get("option_meta") or "") for o in opts))
+        self.assertTrue(all("explicit_article_matrix=false" in str(o.get("option_meta") or "") for o in opts))
+        self.assertTrue(all("source_limitation=" in str(o.get("option_meta") or "") for o in opts))
         self.assertFalse(any(str(o.get("option_label") or "") == "Direkt zur Hauptnavigation springen" for o in opts))
     def test_stable_aco_id_helpers_are_deterministic_and_ascii_safe(self):
         id1 = aco._stable_aco_id(
@@ -647,3 +651,20 @@ class AcoConnectorEndToEndRegressionTests(unittest.TestCase):
         self.assertTrue(pd.notna(p24["height_adj_max_mm"]))
         self.assertIn("DN50", str(p24["outlet_dn"]))
         self.assertFalse((comparison["product_id"].astype(str).str.contains("901051", regex=False)).any())
+
+    def test_mplus_rows_do_not_create_assembled_products(self):
+        registry = pd.DataFrame([
+            {"manufacturer": "aco", "product_id": "aco-mplus-profile", "product_name": "M+ profile", "product_family": "showerdrain_mplus", "product_url": "https://example.test/mplus/profile", "candidate_type": "component", "system_role": "profile_channel", "complete_system": "component"},
+            {"manufacturer": "aco", "product_id": "aco-mplus-drain", "product_name": "M+ drain", "product_family": "showerdrain_mplus", "product_url": "https://example.test/mplus/drain", "candidate_type": "component", "system_role": "drain_body", "complete_system": "component"},
+            {"manufacturer": "aco", "product_id": "aco-mplus-grate", "product_name": "M+ grate", "product_family": "showerdrain_mplus", "product_url": "https://example.test/mplus/grate", "candidate_type": "component", "system_role": "grate", "complete_system": "component"},
+        ])
+        def _fake_bom(url, params=None):
+            if "profile" not in url:
+                return []
+            return [
+                {"manufacturer":"aco","product_id":"aco-mplus-profile","component_id":"aco-mplus-drain","option_type":"compatible_drain_body","option_role":"drain_body","parent_family":"showerdrain_mplus","option_family":"showerdrain_mplus","source_url":url},
+                {"manufacturer":"aco","product_id":"aco-mplus-profile","component_id":"aco-mplus-grate","option_type":"compatible_grate","option_role":"grate","parent_family":"showerdrain_mplus","option_family":"showerdrain_mplus","source_url":url},
+            ]
+        with patch("src.connectors.aco.get_bom_options", side_effect=_fake_bom), patch("src.connectors.aco.extract_parameters", return_value={}), patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
+            products, _comparison, _excluded, _evidence, _bom = pipeline.run_update(registry, default_config())
+        self.assertFalse(products["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-mplus-").any())

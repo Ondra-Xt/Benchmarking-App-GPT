@@ -342,10 +342,10 @@ def _classify_role(url: str, title: str, html: str, family: str) -> Tuple[str, s
 
 def _infer_mplus_role(url: str, title: str) -> str:
     txt = f"{url} {title}".lower()
-    if any(k in txt for k in ("ablaufkoerper", "ablaufkörper")):
-        return "drain_body"
     if any(k in txt for k in ("rinnenkoerper", "rinnenkörper", "einbauhoehe", "einbauhöhe")):
         return "profile_channel"
+    if any(k in txt for k in ("ablaufkoerper", "ablaufkörper")):
+        return "drain_body"
     if any(k in txt for k in ("design-roste", "design-rost", "designrost", "rost")):
         return "grate"
     return "component"
@@ -1251,7 +1251,7 @@ def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -
                 "parent_family": family,
                 "source_url": href,
                 "option_label": txt[:140],
-                "option_meta": "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; M+ modular family-level compatibility inferred from official profile/body/grate pages.",
+                "option_meta": "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; source_limitation=no_explicit_article_matrix_on_mplus_pages; M+ modular family-level compatibility inferred from official profile/body/grate pages.",
             })
         return options
 
