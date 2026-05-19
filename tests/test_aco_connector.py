@@ -12,9 +12,11 @@ from src.connectors import aco
 
 class AcoConnectorDiscoveryTests(unittest.TestCase):
     def test_showerdrain_b_complete_system_discovery_and_tech_extraction(self):
+        b_family = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-b/"
         b_url = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-b/aco-showerdrain-b/"
         pages = {
-            "https://www.aco-haustechnik.de/produkte/badentwaesserung/": f"<html><body><main><a href='{b_url}'>ShowerDrain B</a></main></body></html>",
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/": f"<html><body><main><a href='{b_family}'>ShowerDrain B family</a></main></body></html>",
+            b_family: f"<html><body><main><h1>ACO ShowerDrain B</h1><p>Sperrwasserhöhe 25 mm (other context)</p><a href='{b_url}'>ACO ShowerDrain B Produkt</a></main></body></html>",
             b_url: "<html><body><main><h1>ACO ShowerDrain B</h1><p>All-in-one Paket: Rinne, Rost & Ablauf</p><p>Sperrwasserhöhe: 30 mm</p><p>Ablaufstutzen DN 40 / DN 50</p><p>0,4 l/s mit 10 mm Aufstau</p><p>0,46 l/s mit 20 mm Aufstau</p><p>Mindesteinbauhöhe 80 mm</p></main></body></html>",
         }
         def _fake_get(url, timeout=35):
@@ -29,6 +31,7 @@ class AcoConnectorDiscoveryTests(unittest.TestCase):
         self.assertFalse((bdf["system_role"].astype(str) == "profile_channel").any())
         self.assertFalse((bdf["system_role"].astype(str) == "drain_body").any())
         row = bdf.iloc[0]
+        self.assertEqual(str(row.get("product_url")), b_url)
         self.assertIn(str(row.get("outlet_dn")), {"DN50", "DN40/DN50"})
         self.assertEqual(int(row.get("water_seal_mm")), 30)
         self.assertEqual(float(row.get("flow_rate_10mm_lps")), 0.4)

@@ -371,6 +371,23 @@ def _infer_b_role(url: str, title: str) -> str:
         return "complete_system"
     return "component"
 
+def _resolve_b_concrete_product_url(family_url: str, family_html: str) -> str:
+    try:
+        soup = BeautifulSoup(family_html or "", "lxml")
+        preferred = ""
+        for a in soup.select("a[href]"):
+            href = _abs(a.get("href") or "", family_url)
+            if not _in_scope(href):
+                continue
+            href_c = _canonicalize_url(href)
+            if "/aco-showerdrain-b/aco-showerdrain-b/" in href_c:
+                return href_c
+            if "/aco-showerdrain-b/" in href_c and href_c.rstrip("/") != family_url.rstrip("/"):
+                preferred = preferred or href_c
+        return preferred or family_url
+    except Exception:
+        return family_url
+
 def _is_accessory_page(url: str, title: str = "") -> bool:
     txt = f"{url} {title}".lower()
     return any(k in txt for k in ("zubehoer", "zubehör", "rost", "abdeckung", "rahmen", "designrost", "rahmenprofil"))
@@ -589,6 +606,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                     debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": "no_article_rows_eplus_page_level", "candidates_found": kept, "method": method, "is_index": None})
                     continue
                 if family == "showerdrain_b":
+                    concrete_url = _resolve_b_concrete_product_url(final_c, html)
                     pid = _stable_aco_id(final_c, family, "complete_system", title_base)
                     if pid not in seen_ids:
                         seen_ids.add(pid)
@@ -599,7 +617,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                             "product_id": pid,
                             "product_family": family,
                             "product_name": title_base,
-                            "product_url": final_c,
+                            "product_url": concrete_url,
                             "sources": final_c,
                             "candidate_type": "drain",
                             "system_role": "complete_system",
@@ -609,7 +627,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                             "length_mode": "unknown",
                             "length_delta_mm": None,
                         }
-                        p = extract_parameters(final_c) or {}
+                        p = extract_parameters(concrete_url) or {}
                         for k in ("flow_rate_10mm_lps", "flow_rate_20mm_lps", "flow_rate_lps", "flow_rate_unit", "flow_rate_status", "water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn"):
                             if p.get(k) not in (None, ""):
                                 row[k] = p.get(k)
