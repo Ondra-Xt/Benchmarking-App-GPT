@@ -921,3 +921,83 @@ class AcoConnectorEndToEndRegressionTests(unittest.TestCase):
         row = mplus[mplus["product_id"].astype(str) == "aco-showerdrain-mplus-rinnenkoerper-einbauhoehe-oberkante-estrich-25-128-mm"].iloc[0]
         self.assertIn(str(row["system_role"]), {"profile_channel", "channel_body"})
         self.assertNotEqual(str(row["system_role"]), "drain_body")
+
+
+class AcoConnectorCplusFixtureTests(unittest.TestCase):
+    def _cplus_dir(self):
+        return Path(__file__).resolve().parent / "fixtures" / "aco_cplus"
+
+    def test_cplus_fixtures_exist(self):
+        fixtures = self._cplus_dir()
+        required = [
+            "cplus_family_cz.html",
+            "cplus_standard_h92_de.html",
+            "cplus_low_h69_de.html",
+        ]
+        if not fixtures.exists():
+            self.skipTest(f"missing fixture dir: {fixtures}")
+        missing = [n for n in required if not (fixtures / n).exists()]
+        self.assertFalse(missing, f"missing cplus fixtures: {missing}")
+
+    def test_cplus_direct_extraction_standard_h92(self):
+        fixtures = self._cplus_dir()
+        if not fixtures.exists():
+            self.skipTest(f"missing fixture dir: {fixtures}")
+        html = (fixtures / "cplus_standard_h92_de.html").read_text(encoding="utf-8")
+        url = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-cplus/standard-h92/"
+        with patch("src.connectors.aco._safe_get_text", return_value=(200, url, html, "")):
+            p = aco.extract_parameters(url)
+        self.assertEqual(float(p.get("flow_rate_10mm_lps")), 0.72)
+        self.assertEqual(float(p.get("flow_rate_20mm_lps")), 0.91)
+        self.assertEqual(float(p.get("flow_rate_lps")), 0.91)
+        self.assertEqual(int(p.get("water_seal_mm")), 50)
+        self.assertEqual(str(p.get("outlet_dn")), "DN50")
+        self.assertEqual(int(p.get("height_adj_min_mm")), 80)
+        self.assertEqual(int(p.get("height_adj_max_mm")), 128)
+
+    def test_cplus_direct_extraction_low_h69(self):
+        fixtures = self._cplus_dir()
+        if not fixtures.exists():
+            self.skipTest(f"missing fixture dir: {fixtures}")
+        html = (fixtures / "cplus_low_h69_de.html").read_text(encoding="utf-8")
+        url = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-cplus/low-h69/"
+        with patch("src.connectors.aco._safe_get_text", return_value=(200, url, html, "")):
+            p = aco.extract_parameters(url)
+        self.assertEqual(float(p.get("flow_rate_10mm_lps")), 0.56)
+        self.assertEqual(float(p.get("flow_rate_20mm_lps")), 0.62)
+        self.assertEqual(float(p.get("flow_rate_lps")), 0.62)
+        self.assertEqual(int(p.get("water_seal_mm")), 25)
+        self.assertIn(str(p.get("outlet_dn")), {"DN40", "DN40/DN50"})
+        self.assertEqual(int(p.get("height_adj_min_mm")), 57)
+        self.assertEqual(int(p.get("height_adj_max_mm")), 128)
+
+    def test_cplus_pipeline_fixture_path_no_assembled(self):
+        fixtures = self._cplus_dir()
+        if not fixtures.exists():
+            self.skipTest(f"missing fixture dir: {fixtures}")
+        family_html = (fixtures / "cplus_family_cz.html").read_text(encoding="utf-8")
+        h92_html = (fixtures / "cplus_standard_h92_de.html").read_text(encoding="utf-8")
+        h69_html = (fixtures / "cplus_low_h69_de.html").read_text(encoding="utf-8")
+        seed = "https://www.aco-haustechnik.de/produkte/badentwaesserung/"
+        fam = "https://www.aco.cz/produkty/odvodneni-koupelen/sprchove-zlaby/aco-showerdrain-cplus/"
+        h92 = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-cplus/standard-h92/"
+        h69 = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-cplus/low-h69/"
+        pages = {seed: f"<html><body><a href='{fam}'>C+</a><a href='{h92}'>H92</a><a href='{h69}'>H69</a></body></html>", fam: family_html, h92: h92_html, h69: h69_html}
+        def _fake_get(url, timeout=35):
+            key = aco._canonicalize_url(url)
+            return (200, key, pages[key], "") if key in pages else (404, key, "", "not found")
+        with patch("src.connectors.aco._safe_get_text", side_effect=_fake_get):
+            rows, _ = aco.discover_candidates(1200, 100)
+            with patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
+                products, comparison, excluded, _evidence, bom = pipeline.run_update(pd.DataFrame(rows), default_config())
+        cplus = products[products["product_family"].astype(str) == "showerdrain_cplus"]
+        self.assertFalse(cplus.empty)
+        self.assertFalse(cplus["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-cplus-").any())
+        self.assertTrue((comparison["product_family"].astype(str) == "showerdrain_cplus").any())
+        if "excluded_reason" in excluded.columns:
+            cplus_ex = excluded[excluded.get("product_family", pd.Series([], dtype=str)).astype(str) == "showerdrain_cplus"]
+            self.assertFalse((cplus_ex.get("excluded_reason", pd.Series([], dtype=str)).astype(str) == "missing_flow_after_html").any())
+        cplus_bom = bom[bom.get("parent_family", pd.Series([], dtype=str)).astype(str) == "showerdrain_cplus"]
+        if not cplus_bom.empty:
+            self.assertTrue(cplus_bom["option_type"].astype(str).isin(["compatible_grate", "optional_accessory"]).all())
+            self.assertFalse((cplus_bom["product_id"].astype(str) == cplus_bom["component_id"].astype(str)).any())
