@@ -53,7 +53,7 @@ L1_RE = re.compile(r"\b(\d{3,4})\s*mm\b", re.IGNORECASE)
 FLOW_LPS_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*l\s*/\s*s\b", re.IGNORECASE)
 FLOW_AT_RE = re.compile(r"(10|20)\s*mm[^\d]{0,40}(\d+(?:[.,]\d+)?)\s*l\s*/\s*s", re.IGNORECASE)
 FLOW_AT_REV_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*l\s*/\s*s[^\d]{0,12}(10|20)\s*mm", re.IGNORECASE)
-FLOW_AT_AUFSTAU_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*l\s*/\s*s[^\d]{0,40}(?:bei|mit)\s*(10|20)\s*mm\s*aufstau", re.IGNORECASE)
+FLOW_AT_AUFSTAU_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*l\s*/\s*s[^\d]{0,80}(?:bei\s*ws\s*\d{2}\s*(?:mit\s*)?|bei\s*|mit\s*)(10|20)\s*mm\s*aufstau", re.IGNORECASE)
 WS_FLOW_BLOCK_RE = re.compile(
     r"sperrwasserh(?:oe|ö)he[^\d]{0,20}(\d{2,3})\s*mm(?:(?!sperrwasserh(?:oe|ö)he).){0,260}",
     re.IGNORECASE | re.DOTALL,
@@ -1222,6 +1222,17 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
                         res["flow_rate_10mm_lps"] = fv
                     if mm == "20" and res.get("flow_rate_20mm_lps") in (None, ""):
                         res["flow_rate_20mm_lps"] = fv
+                for mv, mm in FLOW_AT_AUFSTAU_RE.findall(row_text):
+                    try:
+                        fv = float(str(mv).replace(",", "."))
+                    except Exception:
+                        continue
+                    if not (0.10 <= fv <= 3.0):
+                        continue
+                    if mm == "10" and res.get("flow_rate_10mm_lps") in (None, ""):
+                        res["flow_rate_10mm_lps"] = fv
+                    if mm == "20" and res.get("flow_rate_20mm_lps") in (None, ""):
+                        res["flow_rate_20mm_lps"] = fv
                 if not row_has_hydraulic:
                     res["evidence"].append(("Article row hydraulics", "article row contains dimensions/price style data but no explicit 10mm/20mm flow or water seal field", final))
                 break
@@ -1280,6 +1291,19 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
                     res["evidence"].append(("Sperrwasserhöhe (mm, reversed phrase)", _snippet(flat, wsm_rev.start(), wsm_rev.end()), final))
             except Exception:
                 pass
+
+    if res.get("flow_rate_10mm_lps") in (None, "") or res.get("flow_rate_20mm_lps") in (None, ""):
+        for mv, mm in FLOW_AT_AUFSTAU_RE.findall(flat):
+            try:
+                fv = float(str(mv).replace(",", "."))
+            except Exception:
+                continue
+            if not (0.10 <= fv <= 3.0):
+                continue
+            if mm == "10" and res.get("flow_rate_10mm_lps") in (None, ""):
+                res["flow_rate_10mm_lps"] = fv
+            elif mm == "20" and res.get("flow_rate_20mm_lps") in (None, ""):
+                res["flow_rate_20mm_lps"] = fv
 
     if family == "showerdrain_b":
         # B is complete-system; prefer explicit 10/20mm Aufstau phrasing when present.
@@ -1368,7 +1392,15 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
         res["flow_rate_lps"] = max(opts)
         res["flow_rate_unit"] = "l/s"
         res["flow_rate_status"] = "ok"
-    elif res.get("flow_rate_10mm_lps") not in (None, "") or res.get("flow_rate_20mm_lps") not in (None, ""):
+
+    if res.get("flow_rate_10mm_lps") not in (None, "") or res.get("flow_rate_20mm_lps") not in (None, ""):
+        # Prefer explicit 10/20 mm hydraulic values over generic marketing-level max statements.
+        vals = [v for v in (res.get("flow_rate_10mm_lps"), res.get("flow_rate_20mm_lps")) if isinstance(v, (int, float))]
+        if vals:
+            res["flow_rate_lps"] = max(vals)
+            res["flow_rate_unit"] = "l/s"
+            res["flow_rate_status"] = "ok"
+    elif not lps_values:
         # fallback for S+ drain-body rows where flows are explicitly tied to 10/20 mm
         # but not prefixed by generic "Abflusswert/Ablaufleistung" labels.
         vals = [v for v in (res.get("flow_rate_10mm_lps"), res.get("flow_rate_20mm_lps")) if isinstance(v, (int, float))]
