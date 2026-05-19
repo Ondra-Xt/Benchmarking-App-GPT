@@ -1108,6 +1108,16 @@ def run_update(
         params = connector.extract_parameters(url) or {}
         if manufacturer == "viega":
             viega_params_by_id[product_id] = {k: v for k, v in params.items() if k != "evidence"}
+        if manufacturer == "aco" and params.get("flow_rate_lps") in (None, ""):
+            vals = []
+            for k in ("flow_rate_10mm_lps", "flow_rate_20mm_lps"):
+                v = params.get(k)
+                if isinstance(v, (int, float)):
+                    vals.append(float(v))
+            if vals:
+                params["flow_rate_lps"] = max(vals)
+                params.setdefault("flow_rate_unit", "l/s")
+                params.setdefault("flow_rate_status", "ok")
 
         # ACO cleanup: drains without flow should be excluded
         if (
@@ -1115,6 +1125,8 @@ def run_update(
             and candidate_type == "drain"
             and params.get("flow_rate_lps") in (None, "")
             and params.get("flow_rate_lps_options") in (None, "")
+            and params.get("flow_rate_10mm_lps") in (None, "")
+            and params.get("flow_rate_20mm_lps") in (None, "")
         ):
             excluded_rows.append({
                 "manufacturer": manufacturer,
