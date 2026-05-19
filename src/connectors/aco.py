@@ -59,6 +59,7 @@ WS_FLOW_BLOCK_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 WATER_SEAL_RE = re.compile(r"(?:geruchverschluss|sperrwasserh(?:oe|ö)he)[^\d]{0,20}(\d{2,3})\s*mm", re.IGNORECASE)
+WATER_SEAL_REV_RE = re.compile(r"(\d{2,3})\s*mm[^\d]{0,24}sperrwasserh(?:oe|ö)he", re.IGNORECASE)
 HEIGHT_OE_RE = re.compile(
     r"einbauh(?:ö|oe)he[^.]{0,80}oberkante\s+estrich[^\d]{0,20}(\d{2,3})\s*[-–]\s*(\d{2,3})\s*mm",
     re.IGNORECASE,
@@ -1269,6 +1270,16 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
                 res["evidence"].append(("Sperrwasserhöhe (mm)", _snippet(flat, wsm_page.start(), wsm_page.end()), final))
         except Exception:
             pass
+    if res.get("water_seal_mm") in (None, ""):
+        wsm_rev = WATER_SEAL_REV_RE.search(flat)
+        if wsm_rev:
+            try:
+                ws = int(wsm_rev.group(1))
+                if 20 <= ws <= 100:
+                    res["water_seal_mm"] = ws
+                    res["evidence"].append(("Sperrwasserhöhe (mm, reversed phrase)", _snippet(flat, wsm_rev.start(), wsm_rev.end()), final))
+            except Exception:
+                pass
 
     if family == "showerdrain_b":
         # B is complete-system; prefer explicit 10/20mm Aufstau phrasing when present.
@@ -1286,6 +1297,13 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
         # Some pages expose both 25 and 30 mm values across contexts; keep explicit B row value 30 when available.
         ws_vals: List[int] = []
         for wm in WATER_SEAL_RE.finditer(flat):
+            try:
+                ws = int(wm.group(1))
+            except Exception:
+                continue
+            if 20 <= ws <= 100:
+                ws_vals.append(ws)
+        for wm in WATER_SEAL_REV_RE.finditer(flat):
             try:
                 ws = int(wm.group(1))
             except Exception:

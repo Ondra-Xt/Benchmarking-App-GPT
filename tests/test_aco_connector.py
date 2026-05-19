@@ -95,6 +95,13 @@ class AcoConnectorDiscoveryTests(unittest.TestCase):
         self.assertEqual(float(p["flow_rate_lps"]), 0.46)
         self.assertEqual(int(p["water_seal_mm"]), 30)
         self.assertIn(str(p["outlet_dn"]), {"DN40/DN50", "DN50"})
+
+    def test_showerdrain_b_extracts_ws30_from_reversed_phrase(self):
+        url = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-b/aco-showerdrain-b/"
+        html = "<html><body><main><h1>ACO ShowerDrain B</h1><p>Abflussleistung mit 30 mm Sperrwasserhöhe 0,46 l/s bei 20 mm Aufstau</p></main></body></html>"
+        with patch("src.connectors.aco._safe_get_text", return_value=(200, url, html, "")):
+            p = aco.extract_parameters(url)
+        self.assertEqual(int(p["water_seal_mm"]), 30)
     def test_eplus_discovery_integrated_drain_units_extract_technical_fields(self):
         family = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-eplus/"
         p92 = f"{family}duschrinnen/rinnenkoerper-einbauhoehe-oberkante-estrich-92-140-mm-din-en-1253-1/"
