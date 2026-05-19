@@ -78,6 +78,20 @@ class AcoConnectorDiscoveryTests(unittest.TestCase):
         self.assertTrue((comparison["product_id"].astype(str) == "aco-b-main").any())
         if "product_id" in excluded.columns:
             self.assertFalse((excluded["product_id"].astype(str) == "aco-b-main").any())
+
+    def test_showerdrain_b_fixture_production_path_extracts_flow_and_prefers_ws30(self):
+        fixture = Path(__file__).resolve().parent / "fixtures" / "aco_b" / "b_product_de.html"
+        if not fixture.exists():
+            self.skipTest(f"missing fixture: {fixture}")
+        html = fixture.read_text(encoding="utf-8")
+        url = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-b/aco-showerdrain-b/"
+        with patch("src.connectors.aco._safe_get_text", return_value=(200, url, html, "")):
+            p = aco.extract_parameters(url)
+        self.assertEqual(float(p["flow_rate_10mm_lps"]), 0.4)
+        self.assertEqual(float(p["flow_rate_20mm_lps"]), 0.46)
+        self.assertEqual(float(p["flow_rate_lps"]), 0.46)
+        self.assertEqual(int(p["water_seal_mm"]), 30)
+        self.assertIn(str(p["outlet_dn"]), {"DN40/DN50", "DN50"})
     def test_eplus_discovery_integrated_drain_units_extract_technical_fields(self):
         family = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-eplus/"
         p92 = f"{family}duschrinnen/rinnenkoerper-einbauhoehe-oberkante-estrich-92-140-mm-din-en-1253-1/"
