@@ -942,3 +942,39 @@ class AcoConnectorEndToEndRegressionTests(unittest.TestCase):
         row = mplus[mplus["product_id"].astype(str) == "aco-showerdrain-mplus-rinnenkoerper-einbauhoehe-oberkante-estrich-25-128-mm"].iloc[0]
         self.assertIn(str(row["system_role"]), {"profile_channel", "channel_body"})
         self.assertNotEqual(str(row["system_role"]), "drain_body")
+
+class AcoConnectorCplusStage1Tests(unittest.TestCase):
+    def test_cplus_fixtures_exist(self):
+        fixtures = Path(__file__).resolve().parent / "fixtures" / "aco_cplus"
+        required = [
+            "cplus_family_cz.html","c_family_cz.html","c_family_de.html","c_standard_h92_de.html","c_low_h69_de.html","c_design_grates_de.html","c_showerstep_de.html","cplus_showerdrain_catalog_2025_cz.pdf","cplus_bathroom_channels_catalog_cz.pdf",
+        ]
+        self.assertFalse([n for n in required if not (fixtures / n).exists()])
+
+    def test_cplus_standard_direct_extraction_fixture(self):
+        f = Path(__file__).resolve().parent / "fixtures" / "aco_cplus" / "c_standard_h92_de.html"
+        html = f.read_text(encoding="utf-8")
+        url = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-standard-h92/"
+        with patch("src.connectors.aco._safe_get_text", return_value=(200, url, html, "")):
+            p = aco.extract_parameters(url)
+        self.assertEqual(float(p["flow_rate_10mm_lps"]), 0.72)
+        self.assertEqual(float(p["flow_rate_20mm_lps"]), 0.91)
+        self.assertEqual(float(p["flow_rate_lps"]), 0.91)
+        self.assertEqual(int(p["water_seal_mm"]), 50)
+        self.assertIn("DN50", str(p["outlet_dn"]))
+        self.assertEqual(int(p["height_adj_min_mm"]), 80)
+        self.assertEqual(int(p["height_adj_max_mm"]), 128)
+
+    def test_cplus_low_direct_extraction_fixture(self):
+        f = Path(__file__).resolve().parent / "fixtures" / "aco_cplus" / "c_low_h69_de.html"
+        html = f.read_text(encoding="utf-8")
+        url = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-low-h69/"
+        with patch("src.connectors.aco._safe_get_text", return_value=(200, url, html, "")):
+            p = aco.extract_parameters(url)
+        self.assertEqual(float(p["flow_rate_10mm_lps"]), 0.56)
+        self.assertEqual(float(p["flow_rate_20mm_lps"]), 0.62)
+        self.assertEqual(float(p["flow_rate_lps"]), 0.62)
+        self.assertEqual(int(p["water_seal_mm"]), 25)
+        self.assertIn("DN40", str(p["outlet_dn"]))
+        self.assertEqual(int(p["height_adj_min_mm"]), 57)
+        self.assertEqual(int(p["height_adj_max_mm"]), 128)
