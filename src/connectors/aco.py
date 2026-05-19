@@ -364,6 +364,14 @@ def _infer_eplus_role(url: str, title: str) -> str:
         return "drain_unit"
     return "component"
 
+def _infer_cplus_variant(url: str, title: str) -> Optional[Dict[str, str]]:
+    txt = f"{url} {title}".lower()
+    if "rinnenkoerper-standard-h92" in txt or "rinnenkörper-standard-h92" in txt:
+        return {"variant": "standard_h92", "slug": "aco-showerdrain-cplus-standard-h92", "name_suffix": "Standard H92"}
+    if "rinnenkoerper-low-h69" in txt or "rinnenkörper-low-h69" in txt:
+        return {"variant": "low_h69", "slug": "aco-showerdrain-cplus-low-h69", "name_suffix": "Low H69"}
+    return None
+
 def _infer_b_role(url: str, title: str) -> str:
     txt = f"{url} {title}".lower()
     if any(k in txt for k in ("haarsieb", "schmutzfang", "zubehoer", "zubehör", "accessory")):
@@ -571,9 +579,41 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
         pairs = _extract_pairs_from_table(html)
         method = "table" if pairs else "detail_only"
+        cplus_variant = _infer_cplus_variant(final_c, title_base)
 
         kept = 0
         if cand_type == "drain":
+            if family in {"showerdrain_c", "showerdrain_cplus"} and cplus_variant:
+                pid = cplus_variant["slug"]
+                if pid not in seen_ids:
+                    seen_ids.add(pid)
+                    kept += 1
+                    kept_total += 1
+                    row = {
+                        "manufacturer": "aco",
+                        "product_id": pid,
+                        "product_family": "showerdrain_cplus",
+                        "product_name": f"ACO ShowerDrain C+ {cplus_variant['name_suffix']}",
+                        "product_url": final_c,
+                        "sources": final_c,
+                        "candidate_type": "drain",
+                        "system_role": "integrated_channel_drain",
+                        "classification_reason": f"cplus_integrated_channel_drain_{cplus_variant['variant']}",
+                        "complete_system": "partial",
+                        "selected_length_mm": want,
+                        "length_mode": "unknown",
+                        "length_delta_mm": None,
+                        "assembled_from_bom": "false",
+                    }
+                    p = extract_parameters(final_c) or {}
+                    for k in ("flow_rate_10mm_lps", "flow_rate_20mm_lps", "flow_rate_lps", "flow_rate_unit", "flow_rate_status", "water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn", "din_en_1253_cert"):
+                        if p.get(k) not in (None, ""):
+                            row[k] = p.get(k)
+                    out.append(row)
+                    candidates_by_family["showerdrain_cplus"] = candidates_by_family.get("showerdrain_cplus", 0) + 1
+                    candidates_by_role["integrated_channel_drain"] = candidates_by_role.get("integrated_channel_drain", 0) + 1
+                debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": "cplus_page_level_variant", "candidates_found": kept, "method": method, "is_index": None})
+                continue
             # row-based product variants only; no page-level drain fallback rows
             if not pairs:
                 if family == "showerdrain_eplus":
@@ -1426,7 +1466,7 @@ def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -
     soup = BeautifulSoup(html or "", "lxml")
     title = _extract_title(html, final)
     family = _detect_family(final, title)
-    if family not in {"showerdrain_splus", "showerdrain_mplus", "showerdrain_eplus", "showerdrain_b"}:
+    if family not in {"showerdrain_splus", "showerdrain_mplus", "showerdrain_eplus", "showerdrain_b", "showerdrain_c", "showerdrain_cplus"}:
         return []
 
     if family == "showerdrain_mplus":
@@ -1544,6 +1584,48 @@ def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -
                 "source_url": href,
                 "option_label": txt[:140],
                 "option_meta": "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; source_limitation=E+ compatibility is official family-level compatibility; no explicit article-to-article matrix found.",
+            })
+        return options
+    if family in {"showerdrain_c", "showerdrain_cplus"}:
+        options: List[Dict[str, Any]] = []
+        seen = set()
+        main = soup.select_one("main") or soup
+        for sel in ("header", "nav", "footer"):
+            for n in main.select(sel):
+                n.decompose()
+        for a in main.select("a[href]"):
+            href = _abs(a.get("href") or "", final)
+            if not _in_scope(href):
+                continue
+            txt = _clean_text(a.get_text(" ", strip=True))
+            txt_l = txt.lower()
+            href_l = href.lower()
+            if not txt or "hauptnavigation" in txt_l:
+                continue
+            role = ""
+            otype = ""
+            if any(k in txt_l for k in ("design-roste", "design-rost", "designrost", "rost", "abdeckung")) or "design-rost" in href_l:
+                role = "grate"; otype = "compatible_grate"
+            elif "showerstep" in txt_l or "showerstep" in href_l:
+                role = "accessory"; otype = "optional_accessory"
+            else:
+                continue
+            cid = _stable_aco_id(href, "showerdrain_cplus", role, txt)
+            if not cid:
+                continue
+            key = (cid, otype)
+            if key in seen:
+                continue
+            seen.add(key)
+            options.append({
+                "component_id": cid,
+                "option_type": otype,
+                "option_role": role,
+                "option_family": "showerdrain_cplus",
+                "parent_family": "showerdrain_cplus",
+                "source_url": href,
+                "option_label": txt[:140],
+                "option_meta": "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; source_limitation=C+ / C grate compatibility is family-level and length-based; no explicit article-to-article matrix found.",
             })
         return options
 
