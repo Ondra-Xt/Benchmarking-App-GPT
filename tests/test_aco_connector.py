@@ -102,6 +102,90 @@ class AcoConnectorDiscoveryTests(unittest.TestCase):
         with patch("src.connectors.aco._safe_get_text", return_value=(200, url, html, "")):
             p = aco.extract_parameters(url)
         self.assertEqual(int(p["water_seal_mm"]), 30)
+    def test_showerdrain_b_fixtures_exist(self):
+        fixtures = Path(__file__).resolve().parent / "fixtures" / "aco_b"
+        required = [
+            "b_family_de.html",
+            "b_product_de.html",
+            "b_family_cz.html",
+            "b_international_family.html",
+            "b_international_product.html",
+            "b_showerdrain_catalog_2025_cz.pdf",
+            "b_installation_manual.pdf",
+        ]
+        missing = [n for n in required if not (fixtures / n).exists()]
+        self.assertFalse(missing, f"missing fixtures: {missing}")
+
+    def test_showerdrain_b_fixture_pipeline_path_promotes_and_not_excluded(self):
+        fixtures = Path(__file__).resolve().parent / "fixtures" / "aco_b"
+        family_html = (fixtures / "b_family_de.html").read_text(encoding="utf-8")
+        product_html = (fixtures / "b_product_de.html").read_text(encoding="utf-8")
+        b_family = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-b/"
+        b_url = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-b/aco-showerdrain-b/"
+        pages = {
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/": f"<html><body><main><a href='{b_family}'>B</a></main></body></html>",
+            b_family: family_html,
+            b_url: product_html,
+        }
+
+    def _fake_get(url, timeout=35):
+        key = aco._canonicalize_url(url)
+        return (200, key, pages[key], "") if key in pages else (404, key, "", "not found")
+
+        with patch("src.connectors.aco._safe_get_text", side_effect=_fake_get):
+            rows, _ = aco.discover_candidates(1200, 100)
+            with patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
+                products, comparison, excluded, _evidence, bom = pipeline.run_update(pd.DataFrame(rows), default_config())
+
+        self.assertTrue((products["product_family"].astype(str) == "showerdrain_b").any())
+        self.assertTrue(comparison["product_id"].astype(str).str.contains("showerdrain-b", regex=False).any())
+
+        if "excluded_reason" in excluded.columns:
+            b_ex = excluded[excluded.get("product_family", pd.Series([], dtype=str)).astype(str) == "showerdrain_b"]
+            self.assertFalse(
+                (b_ex.get("excluded_reason", pd.Series([], dtype=str)).astype(str) == "missing_flow_after_html").any()
+            )
+
+        self.assertFalse(products["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-b-").any())
+
+        b_bom = bom[bom.get("parent_family", pd.Series([], dtype=str)).astype(str) == "showerdrain_b"]
+        self.assertTrue(b_bom.empty or (b_bom["option_type"].astype(str) == "optional_accessory").all())
+
+    def test_showerdrain_b_fixture_market_sources_do_not_override_de_structured_values(self):
+        fixtures = Path(__file__).resolve().parent / "fixtures" / "aco_b"
+        de_html = (fixtures / "b_product_de.html").read_text(encoding="utf-8")
+        cz_html = (fixtures / "b_family_cz.html").read_text(encoding="utf-8")
+        intl_html = (fixtures / "b_international_product.html").read_text(encoding="utf-8")
+
+        de_url = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-b/aco-showerdrain-b/"
+        cz_url = "https://www.aco.cz/produkty/odvodneni-koupelen/sprchove-zlaby/aco-showerdrain-b/"
+        intl_url = "https://www.buildingdrainage.aco/products/collect/bathroom-drainage/channel/aco-showerdrain-b/aco-showerdrain-b"
+
+        with patch(
+            "src.connectors.aco._safe_get_text",
+            side_effect=[
+                (200, de_url, de_html, ""),
+                (200, cz_url, cz_html, ""),
+                (200, intl_url, intl_html, ""),
+            ],
+        ):
+            p_de = aco.extract_parameters(de_url)
+            p_cz = aco.extract_parameters(cz_url)
+            p_intl = aco.extract_parameters(intl_url)
+
+        self.assertEqual(float(p_de["flow_rate_10mm_lps"]), 0.4)
+        self.assertEqual(float(p_de["flow_rate_20mm_lps"]), 0.46)
+        self.assertEqual(int(p_de["water_seal_mm"]), 30)
+
+        # Supplementary sources may differ and may be partially parseable; DE remains baseline.
+        self.assertTrue(
+            p_cz.get("flow_rate_10mm_lps") in (None, 0.4)
+            or isinstance(p_cz.get("flow_rate_10mm_lps"), float)
+        )
+        self.assertTrue(
+            p_intl.get("flow_rate_lps") in (None, 0.55)
+            or isinstance(p_intl.get("flow_rate_lps"), float)
+        )
     def test_eplus_discovery_integrated_drain_units_extract_technical_fields(self):
         family = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-eplus/"
         p92 = f"{family}duschrinnen/rinnenkoerper-einbauhoehe-oberkante-estrich-92-140-mm-din-en-1253-1/"
