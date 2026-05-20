@@ -2980,6 +2980,25 @@ def run_update(
                 continue
             pid = str(br.get("product_id") or "").strip()
             cid = str(br.get("component_id") or "").strip()
+
+            # Stage 1b canonicalization: article-backed ShowerDrain C grates (aco-901088xx)
+            # remain component/BOM evidence, but assembly uses one family baseline grate token
+            # so baseline 4 C assemblies remain stable without exploding combinations.
+            if fam == "showerdrain_c" and cid.lower().startswith("aco-901088"):
+                canonical_c_grate = "aco-showerdrain-c-grate-baseline"
+                if canonical_c_grate not in aco_by_id:
+                    src_comp = aco_by_id.get(cid, {})
+                    aco_by_id[canonical_c_grate] = {
+                        "manufacturer": "aco",
+                        "product_id": canonical_c_grate,
+                        "product_name": "ACO ShowerDrain C Design-Rost (baseline assembly token)",
+                        "product_family": "showerdrain_c",
+                        "product_url": str(src_comp.get("product_url") or br.get("source_url") or ""),
+                        "candidate_type": "component",
+                        "system_role": "grate",
+                    }
+                cid = canonical_c_grate
+
             parent = aco_by_id.get(pid, {})
             comp = aco_by_id.get(cid, {})
             if not parent or not comp:
@@ -2993,15 +3012,6 @@ def run_update(
                 if len(aco_debug["sample_aco_assembly_skipped_reasons"]) < 20:
                     aco_debug["sample_aco_assembly_skipped_reasons"].append(f"{fam}:{pid}->{cid}:cross_family")
                 continue
-            if fam == "showerdrain_c":
-                comp_role = str(comp.get("system_role") or "").strip().lower()
-                comp_ct = str(comp.get("candidate_type") or "").strip().lower()
-                cid_l = cid.lower()
-                if comp_role == "grate" and comp_ct == "component" and cid_l.startswith("aco-901088"):
-                    aco_debug["assembled_products_skipped_count"] += 1
-                    if len(aco_debug["sample_aco_assembly_skipped_reasons"]) < 20:
-                        aco_debug["sample_aco_assembly_skipped_reasons"].append(f"{fam}:{pid}->{cid}:stage1b_article_grate_guard")
-                    continue
 
             k = (fam, pid, cid)
             if k in seen_assembled_keys:
