@@ -3994,6 +3994,17 @@ def run_update(
                     products_df = products_df.drop(columns=[cc])
     excluded_df = pd.DataFrame(excluded_rows)
     evidence_df = pd.DataFrame(evidence_rows)
+    if bom_rows:
+        universe_ids = {str(r.get("product_id") or "") for r in products_rows if str(r.get("manufacturer") or "").lower() == "aco"}
+        filtered_bom_rows = []
+        for rr in bom_rows:
+            if str(rr.get("manufacturer") or "").lower() != "aco" or str(rr.get("parent_family") or "").lower() != "showerdrain_cplus":
+                filtered_bom_rows.append(rr)
+                continue
+            component_id = str(rr.get("component_id") or "")
+            if component_id and component_id in universe_ids:
+                filtered_bom_rows.append(rr)
+        bom_rows = filtered_bom_rows
     bom_options_df = pd.DataFrame(bom_rows)
 
     # Final safety guard: Comparison must be a subset of benchmark-eligible Products only.
