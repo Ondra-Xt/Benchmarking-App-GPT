@@ -1019,9 +1019,19 @@ class AcoConnectorCplusStage1Tests(unittest.TestCase):
         for pid in ["aco-showerdrain-cplus-standard-h92", "aco-showerdrain-cplus-low-h69"]:
             self.assertTrue((products["product_id"].astype(str) == pid).any())
             self.assertTrue((comparison["product_id"].astype(str) == pid).any())
+            prow = products[products["product_id"].astype(str) == pid].iloc[0]
+            self.assertEqual(str(prow.get("candidate_type")), "drain")
+            self.assertEqual(str(prow.get("promote_to_product")).lower(), "yes")
+            self.assertNotEqual(str(prow.get("promotion_reason")), "incomplete_assembly")
+            self.assertNotEqual(str(prow.get("why_not_product_reason")), "incomplete_assembly")
         self.assertFalse(products["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-cplus-").any())
         cplus_bom = bom[bom["parent_family"].astype(str) == "showerdrain_cplus"]
         self.assertTrue(cplus_bom["option_type"].astype(str).isin(["compatible_grate", "optional_accessory"]).all())
+        self.assertFalse(((cplus_bom["option_type"].astype(str) == "related_body_component") | (cplus_bom["option_role"].astype(str) == "base_set")).any())
+        self.assertFalse(((cplus_bom["product_id"].astype(str) == "aco-showerdrain-cplus-standard-h92") & (cplus_bom["component_id"].astype(str) == "aco-showerdrain-cplus-low-h69")).any())
+        self.assertFalse(((cplus_bom["product_id"].astype(str) == "aco-showerdrain-cplus-low-h69") & (cplus_bom["component_id"].astype(str) == "aco-showerdrain-cplus-standard-h92")).any())
         self.assertTrue(cplus_bom["option_meta"].astype(str).str.contains("compatibility_confidence=implicit_family_level", regex=False).all())
         self.assertTrue(cplus_bom["option_meta"].astype(str).str.contains("explicit_article_matrix=false", regex=False).all())
         self.assertTrue(cplus_bom["option_meta"].astype(str).str.contains("source_limitation=C+ / C grate compatibility is family-level and length-based; no explicit article-to-article matrix found.", regex=False).all())
+        low = products[products["product_id"].astype(str) == "aco-showerdrain-cplus-low-h69"].iloc[0]
+        self.assertNotEqual(str(low.get("flow_rate_lps_options")), "[0.91]")
