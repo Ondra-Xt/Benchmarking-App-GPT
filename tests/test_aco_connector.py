@@ -978,3 +978,60 @@ class AcoConnectorCplusStage1Tests(unittest.TestCase):
         self.assertIn("DN40", str(p["outlet_dn"]))
         self.assertEqual(int(p["height_adj_min_mm"]), 57)
         self.assertEqual(int(p["height_adj_max_mm"]), 128)
+
+    def test_cplus_discovery_promotes_two_distinct_integrated_drain_rows(self):
+        fixtures = Path(__file__).resolve().parent / "fixtures" / "aco_cplus"
+        standard_url = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-standard-h92/"
+        low_url = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-low-h69/"
+        pages = {
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/": f"<html><body><main><a href='{standard_url}'>Standard</a><a href='{low_url}'>Low</a></main></body></html>",
+            standard_url: (fixtures / "c_standard_h92_de.html").read_text(encoding="utf-8"),
+            low_url: (fixtures / "c_low_h69_de.html").read_text(encoding="utf-8"),
+        }
+        def _fake_get(url, timeout=35):
+            key = aco._canonicalize_url(url)
+            return (200, key, pages[key], "") if key in pages else (404, key, "", "not found")
+        with patch("src.connectors.aco._safe_get_text", side_effect=_fake_get):
+            rows, _ = aco.discover_candidates(1200, 100)
+        df = pd.DataFrame(rows)
+        cplus = df[df["product_family"].astype(str) == "showerdrain_cplus"].copy()
+        self.assertTrue((cplus["product_id"] == "aco-showerdrain-cplus-standard-h92").any())
+        self.assertTrue((cplus["product_id"] == "aco-showerdrain-cplus-low-h69").any())
+        self.assertTrue((cplus["candidate_type"].astype(str) == "drain").all())
+        self.assertFalse((cplus["system_role"].astype(str).isin(["profile_channel", "drain_body"])).any())
+        self.assertTrue((cplus["complete_system"].astype(str).isin(["partial", "no"])).all())
+
+    def test_cplus_pipeline_products_comparison_scoring_and_bom_guardrails(self):
+        registry = pd.DataFrame([
+            {"manufacturer":"aco","product_id":"aco-showerdrain-cplus-standard-h92","product_name":"ACO ShowerDrain C+ Standard H92","product_family":"showerdrain_cplus","product_url":"https://example.test/cplus/standard","candidate_type":"drain","system_role":"integrated_channel_drain","complete_system":"partial","flow_rate_10mm_lps":0.72,"flow_rate_20mm_lps":0.91,"flow_rate_lps":0.91,"water_seal_mm":50,"outlet_dn":"DN50","height_adj_min_mm":80,"height_adj_max_mm":128},
+            {"manufacturer":"aco","product_id":"aco-showerdrain-cplus-low-h69","product_name":"ACO ShowerDrain C+ Low H69","product_family":"showerdrain_cplus","product_url":"https://example.test/cplus/low","candidate_type":"drain","system_role":"integrated_channel_drain","complete_system":"partial","flow_rate_10mm_lps":0.56,"flow_rate_20mm_lps":0.62,"flow_rate_lps":0.62,"water_seal_mm":25,"outlet_dn":"DN40","height_adj_min_mm":57,"height_adj_max_mm":128},
+            {"manufacturer":"aco","product_id":"aco-showerdrain-cplus-grate","product_name":"C+ Grate","product_family":"showerdrain_cplus","product_url":"https://example.test/cplus/grate","candidate_type":"component","system_role":"grate","complete_system":"component"},
+        ])
+        bom_stub = [
+            {"manufacturer":"aco","product_id":"aco-showerdrain-cplus-standard-h92","component_id":"aco-showerdrain-cplus-grate","option_type":"compatible_grate","option_role":"grate","parent_family":"showerdrain_cplus","option_family":"showerdrain_cplus","source_url":"https://example.test/cplus","option_meta":"compatibility_confidence=implicit_family_level; explicit_article_matrix=false; source_limitation=C+ / C grate compatibility is family-level and length-based; no explicit article-to-article matrix found."},
+        ]
+        tech = {
+            "https://example.test/cplus/standard": {"flow_rate_10mm_lps":0.72,"flow_rate_20mm_lps":0.91,"flow_rate_lps":0.91,"water_seal_mm":50,"outlet_dn":"DN50","height_adj_min_mm":80,"height_adj_max_mm":128},
+            "https://example.test/cplus/low": {"flow_rate_10mm_lps":0.56,"flow_rate_20mm_lps":0.62,"flow_rate_lps":0.62,"water_seal_mm":25,"outlet_dn":"DN40","height_adj_min_mm":57,"height_adj_max_mm":128},
+        }
+        with patch("src.connectors.aco.extract_parameters", side_effect=lambda u: tech.get(u, {})), patch("src.connectors.aco.get_bom_options", return_value=bom_stub), patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
+            products, comparison, _excluded, _evidence, bom = pipeline.run_update(registry, default_config())
+        for pid in ["aco-showerdrain-cplus-standard-h92", "aco-showerdrain-cplus-low-h69"]:
+            self.assertTrue((products["product_id"].astype(str) == pid).any())
+            self.assertTrue((comparison["product_id"].astype(str) == pid).any())
+            prow = products[products["product_id"].astype(str) == pid].iloc[0]
+            self.assertEqual(str(prow.get("candidate_type")), "drain")
+            self.assertEqual(str(prow.get("promote_to_product")).lower(), "yes")
+            self.assertNotEqual(str(prow.get("promotion_reason")), "incomplete_assembly")
+            self.assertNotEqual(str(prow.get("why_not_product_reason")), "incomplete_assembly")
+        self.assertFalse(products["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-cplus-").any())
+        cplus_bom = bom[bom["parent_family"].astype(str) == "showerdrain_cplus"]
+        self.assertTrue(cplus_bom["option_type"].astype(str).isin(["compatible_grate", "optional_accessory"]).all())
+        self.assertFalse(((cplus_bom["option_type"].astype(str) == "related_body_component") | (cplus_bom["option_role"].astype(str) == "base_set")).any())
+        self.assertFalse(((cplus_bom["product_id"].astype(str) == "aco-showerdrain-cplus-standard-h92") & (cplus_bom["component_id"].astype(str) == "aco-showerdrain-cplus-low-h69")).any())
+        self.assertFalse(((cplus_bom["product_id"].astype(str) == "aco-showerdrain-cplus-low-h69") & (cplus_bom["component_id"].astype(str) == "aco-showerdrain-cplus-standard-h92")).any())
+        self.assertTrue(cplus_bom["option_meta"].astype(str).str.contains("compatibility_confidence=implicit_family_level", regex=False).all())
+        self.assertTrue(cplus_bom["option_meta"].astype(str).str.contains("explicit_article_matrix=false", regex=False).all())
+        self.assertTrue(cplus_bom["option_meta"].astype(str).str.contains("source_limitation=C+ / C grate compatibility is family-level and length-based; no explicit article-to-article matrix found.", regex=False).all())
+        low = products[products["product_id"].astype(str) == "aco-showerdrain-cplus-low-h69"].iloc[0]
+        self.assertNotEqual(str(low.get("flow_rate_lps_options")), "[0.91]")

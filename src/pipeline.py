@@ -134,11 +134,16 @@ ACO_ACCESSORY_ROLES = {"accessory", "service_part", "adapter", "showerstep", "ge
 
 def _classify_aco_promotion(row: Dict[str, Any], candidate_type: str) -> Tuple[str, bool, str]:
     role = str(row.get("system_role") or "").strip().lower()
+    fam = str(row.get("product_family") or "").strip().lower()
     txt = f"{row.get('product_name','')} {row.get('product_url','')}".lower()
     classification_reason = str(row.get("classification_reason") or "").strip().lower()
     is_article_row_variant = candidate_type == "drain" and classification_reason == "article_row_variant"
     has_easyflow_family = any(tok in txt for tok in ("easyflow+", "easyflow-plus", "easyflow-", " easyflow "))
     has_complete_tokens = any(tok in txt for tok in ("komplettablauf", "komplettabläufe", "komplettablaeufe", "complete drain"))
+    if fam == "showerdrain_cplus" and role in {"integrated_channel_drain", "drain_unit"} and candidate_type == "drain":
+        flow = row.get("flow_rate_lps")
+        if flow not in (None, "", "nan"):
+            return "drain", True, "cplus_integrated_channel_drain"
 
     if role == "configuration_family" and has_easyflow_family and has_complete_tokens:
         return "drain", True, "complete_system"
@@ -2722,7 +2727,7 @@ def run_update(
                     _add_aco_bom(b, g, "compatible_grate", "grate")
                 for a in accessories:
                     _add_aco_bom(b, a, "optional_accessory", "accessory")
-                if fam != "showerdrain_mplus":
+                if fam not in {"showerdrain_mplus", "showerdrain_cplus"}:
                     for b2 in bases:
                         if str(b.get("product_id") or "") != str(b2.get("product_id") or ""):
                             _add_aco_bom(b, b2, "related_body_component", "base_set")
@@ -3899,6 +3904,26 @@ def run_update(
                     products_df.at[i, "flow_rate_lps"] = d
                     products_df.at[i, "flow_rate_unit"] = products_df.at[i, "flow_rate_unit"] or "l/s"
                     products_df.at[i, "flow_rate_status"] = products_df.at[i, "flow_rate_status"] or "ok"
+        cplus_mask = (
+            products_df.get("manufacturer", pd.Series(dtype=str)).astype(str).str.lower().eq("aco")
+            & products_df.get("product_family", pd.Series(dtype=str)).astype(str).str.lower().eq("showerdrain_cplus")
+            & products_df.get("system_role", pd.Series(dtype=str)).astype(str).str.lower().isin({"integrated_channel_drain", "drain_unit"})
+        )
+        for i in products_df.index[cplus_mask]:
+            vals = []
+            for k in ("flow_rate_10mm_lps", "flow_rate_20mm_lps"):
+                try:
+                    v = products_df.at[i, k]
+                except Exception:
+                    v = None
+                try:
+                    if v not in (None, "") and not pd.isna(v):
+                        vals.append(float(v))
+                except Exception:
+                    continue
+            if vals:
+                opts = sorted(set(vals))
+                products_df.at[i, "flow_rate_lps_options"] = json.dumps(opts, ensure_ascii=False)
     if not comparison_df.empty and not products_df.empty:
         extra_cols = [
             # Product validation / audit fields required in Comparison exports.
@@ -3994,6 +4019,17 @@ def run_update(
                     products_df = products_df.drop(columns=[cc])
     excluded_df = pd.DataFrame(excluded_rows)
     evidence_df = pd.DataFrame(evidence_rows)
+    if bom_rows:
+        universe_ids = {str(r.get("product_id") or "") for r in products_rows if str(r.get("manufacturer") or "").lower() == "aco"}
+        filtered_bom_rows = []
+        for rr in bom_rows:
+            if str(rr.get("manufacturer") or "").lower() != "aco" or str(rr.get("parent_family") or "").lower() != "showerdrain_cplus":
+                filtered_bom_rows.append(rr)
+                continue
+            component_id = str(rr.get("component_id") or "")
+            if component_id and component_id in universe_ids:
+                filtered_bom_rows.append(rr)
+        bom_rows = filtered_bom_rows
     bom_options_df = pd.DataFrame(bom_rows)
 
     # Final safety guard: Comparison must be a subset of benchmark-eligible Products only.
