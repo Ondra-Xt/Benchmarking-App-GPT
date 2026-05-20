@@ -2980,6 +2980,25 @@ def run_update(
                 continue
             pid = str(br.get("product_id") or "").strip()
             cid = str(br.get("component_id") or "").strip()
+
+            # Stage 1b canonicalization: article-backed ShowerDrain C grates (aco-901088xx)
+            # remain component/BOM evidence, but assembly uses one family baseline grate token
+            # so baseline 4 C assemblies remain stable without exploding combinations.
+            if fam == "showerdrain_c" and cid.lower().startswith("aco-901088"):
+                canonical_c_grate = "aco-showerdrain-c-grate-baseline"
+                if canonical_c_grate not in aco_by_id:
+                    src_comp = aco_by_id.get(cid, {})
+                    aco_by_id[canonical_c_grate] = {
+                        "manufacturer": "aco",
+                        "product_id": canonical_c_grate,
+                        "product_name": "ACO ShowerDrain C Design-Rost (baseline assembly token)",
+                        "product_family": "showerdrain_c",
+                        "product_url": str(src_comp.get("product_url") or br.get("source_url") or ""),
+                        "candidate_type": "component",
+                        "system_role": "grate",
+                    }
+                cid = canonical_c_grate
+
             parent = aco_by_id.get(pid, {})
             comp = aco_by_id.get(cid, {})
             if not parent or not comp:
@@ -2993,6 +3012,7 @@ def run_update(
                 if len(aco_debug["sample_aco_assembly_skipped_reasons"]) < 20:
                     aco_debug["sample_aco_assembly_skipped_reasons"].append(f"{fam}:{pid}->{cid}:cross_family")
                 continue
+
             k = (fam, pid, cid)
             if k in seen_assembled_keys:
                 aco_debug["assembled_product_duplicate_skipped_count"] += 1
@@ -4031,6 +4051,28 @@ def run_update(
                 filtered_bom_rows.append(rr)
         bom_rows = filtered_bom_rows
     bom_options_df = pd.DataFrame(bom_rows)
+
+    # Final ACO product-output guard: component-only grate/cover rows stay in Candidates_All/Components,
+    # never in final Products/Comparison product universe.
+    if not products_df.empty:
+        mfg = products_df.get("manufacturer", pd.Series(dtype=str)).astype(str).str.lower()
+        role = products_df.get("system_role", pd.Series(dtype=str)).astype(str).str.lower()
+        ctype = products_df.get("candidate_type", pd.Series(dtype=str)).astype(str).str.lower()
+        promote = products_df.get("promote_to_product", pd.Series(dtype=str)).astype(str).str.lower()
+        reason = products_df.get("promotion_reason", pd.Series(dtype=str)).astype(str).str.lower()
+        why_not = products_df.get("why_not_product_reason", pd.Series(dtype=str)).astype(str).str.lower()
+
+        aco_component_only_mask = (
+            mfg.eq("aco")
+            & (
+                role.eq("grate")
+                | reason.eq("cover_only_component")
+                | why_not.eq("cover_only_component")
+                | (ctype.eq("component") & promote.eq("no"))
+            )
+        )
+        if aco_component_only_mask.any():
+            products_df = products_df[~aco_component_only_mask].copy()
 
     # Final safety guard: Comparison must be a subset of benchmark-eligible Products only.
     if not comparison_df.empty and not products_df.empty and "product_id" in comparison_df.columns and "product_id" in products_df.columns:
