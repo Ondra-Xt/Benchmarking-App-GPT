@@ -587,7 +587,7 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue((assembled["assembly_reason"] == "aco_bom_body_grate_assembly").all())
         self.assertTrue((assembled["product_id"].astype(str).str.startswith("aco-assembled-")).all())
         # allowed families only
-        self.assertTrue(set(assembled["parent_family"].dropna().tolist()).issubset({"easyflow", "easyflowplus", "showerdrain_c"}))
+        self.assertTrue(set(assembled["parent_family"].dropna().tolist()).issubset({"easyflow", "easyflowplus"}))
         # accessory rows must not create assembled variants
         self.assertFalse(assembled["matched_component_ids"].astype(str).str.contains("adapter|aufsatz", case=False, regex=True).any())
         # cross-family forbidden

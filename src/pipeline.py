@@ -2931,7 +2931,7 @@ def run_update(
         bom_rows = b_norm_rows
 
         # first safe ACO assembled products (restricted families, grate-only BOM links)
-        allowed_assembled_families = {"easyflow", "easyflowplus", "showerdrain_c", "showerdrain_splus"}
+        allowed_assembled_families = {"easyflow", "easyflowplus", "showerdrain_splus"}
         aco_debug.setdefault("assembled_products_by_family", {})
         aco_debug.setdefault("sample_aco_assembled_products", [])
         aco_debug.setdefault("assembled_products_skipped_count", 0)
