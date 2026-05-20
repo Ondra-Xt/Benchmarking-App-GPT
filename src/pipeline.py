@@ -3007,6 +3007,10 @@ def run_update(
                     aco_debug["sample_aco_assembly_skipped_reasons"].append(f"{fam}:{pid}->{cid}:missing_parent_or_component")
                 continue
             ofam = str(br.get("option_family") or "")
+            # Stage 1b compatibility nuance: C article grates may be tagged under showerdrain_cplus
+            # while still valid for ShowerDrain C family-level grate compatibility.
+            if fam == "showerdrain_c" and ofam == "showerdrain_cplus" and str(br.get("option_type") or "").lower() == "compatible_grate":
+                ofam = fam
             if fam != ofam:
                 aco_debug["assembled_products_skipped_count"] += 1
                 if len(aco_debug["sample_aco_assembly_skipped_reasons"]) < 20:
