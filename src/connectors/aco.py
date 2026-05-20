@@ -372,6 +372,20 @@ def _infer_cplus_variant(url: str, title: str) -> Optional[Dict[str, str]]:
         return {"variant": "low_h69", "slug": "aco-showerdrain-cplus-low-h69", "name_suffix": "Low H69"}
     return None
 
+def _cplus_variant_sources() -> List[Dict[str, str]]:
+    return [
+        {
+            "product_id": "aco-showerdrain-cplus-standard-h92",
+            "name_suffix": "Standard H92",
+            "url": f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-c/rinnenkoerper-einbauhoehe-oberkante-estrich-80-128-mm-200-mm/",
+        },
+        {
+            "product_id": "aco-showerdrain-cplus-low-h69",
+            "name_suffix": "Low H69",
+            "url": f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-c/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm-200-mm/",
+        },
+    ]
+
 def _infer_b_role(url: str, title: str) -> str:
     txt = f"{url} {title}".lower()
     if any(k in txt for k in ("haarsieb", "schmutzfang", "zubehoer", "zubehör", "accessory")):
@@ -1015,6 +1029,37 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": err, "candidates_found": kept, "method": method, "is_index": None})
 
     # final safety guard: never emit invalid product rows
+    cplus_in_scope = any(str(r.get("product_family") or "").lower() == "showerdrain_cplus" for r in out) or any("aco-showerdrain-cplus" in str(u).lower() for u in detail_pages)
+    if cplus_in_scope:
+        existing_ids = {str(r.get("product_id") or "") for r in out}
+        for src in _cplus_variant_sources():
+            pid = src["product_id"]
+            if pid in existing_ids:
+                continue
+            purl = src["url"]
+            p = extract_parameters(purl) or {}
+            out.append({
+                "manufacturer": "aco",
+                "product_id": pid,
+                "product_family": "showerdrain_cplus",
+                "product_name": f"ACO ShowerDrain C+ {src['name_suffix']}",
+                "product_url": purl,
+                "sources": purl,
+                "candidate_type": "drain",
+                "system_role": "integrated_channel_drain",
+                "classification_reason": "cplus_post_discovery_enrichment",
+                "complete_system": "partial",
+                "assembled_from_bom": "false",
+                "flow_rate_10mm_lps": p.get("flow_rate_10mm_lps"),
+                "flow_rate_20mm_lps": p.get("flow_rate_20mm_lps"),
+                "flow_rate_lps": p.get("flow_rate_lps"),
+                "water_seal_mm": p.get("water_seal_mm"),
+                "outlet_dn": p.get("outlet_dn"),
+                "height_adj_min_mm": p.get("height_adj_min_mm"),
+                "height_adj_max_mm": p.get("height_adj_max_mm"),
+            })
+            existing_ids.add(pid)
+
     safe_out: List[Dict[str, Any]] = []
     for r in out:
         pid = str(r.get("product_id") or "").strip()
