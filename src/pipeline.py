@@ -2993,6 +2993,16 @@ def run_update(
                 if len(aco_debug["sample_aco_assembly_skipped_reasons"]) < 20:
                     aco_debug["sample_aco_assembly_skipped_reasons"].append(f"{fam}:{pid}->{cid}:cross_family")
                 continue
+            if fam == "showerdrain_c":
+                comp_role = str(comp.get("system_role") or "").strip().lower()
+                comp_ct = str(comp.get("candidate_type") or "").strip().lower()
+                cid_l = cid.lower()
+                if comp_role == "grate" and comp_ct == "component" and cid_l.startswith("aco-901088"):
+                    aco_debug["assembled_products_skipped_count"] += 1
+                    if len(aco_debug["sample_aco_assembly_skipped_reasons"]) < 20:
+                        aco_debug["sample_aco_assembly_skipped_reasons"].append(f"{fam}:{pid}->{cid}:stage1b_article_grate_guard")
+                    continue
+
             k = (fam, pid, cid)
             if k in seen_assembled_keys:
                 aco_debug["assembled_product_duplicate_skipped_count"] += 1
@@ -4031,6 +4041,28 @@ def run_update(
                 filtered_bom_rows.append(rr)
         bom_rows = filtered_bom_rows
     bom_options_df = pd.DataFrame(bom_rows)
+
+    # Final ACO product-output guard: component-only grate/cover rows stay in Candidates_All/Components,
+    # never in final Products/Comparison product universe.
+    if not products_df.empty:
+        mfg = products_df.get("manufacturer", pd.Series(dtype=str)).astype(str).str.lower()
+        role = products_df.get("system_role", pd.Series(dtype=str)).astype(str).str.lower()
+        ctype = products_df.get("candidate_type", pd.Series(dtype=str)).astype(str).str.lower()
+        promote = products_df.get("promote_to_product", pd.Series(dtype=str)).astype(str).str.lower()
+        reason = products_df.get("promotion_reason", pd.Series(dtype=str)).astype(str).str.lower()
+        why_not = products_df.get("why_not_product_reason", pd.Series(dtype=str)).astype(str).str.lower()
+
+        aco_component_only_mask = (
+            mfg.eq("aco")
+            & (
+                role.eq("grate")
+                | reason.eq("cover_only_component")
+                | why_not.eq("cover_only_component")
+                | (ctype.eq("component") & promote.eq("no"))
+            )
+        )
+        if aco_component_only_mask.any():
+            products_df = products_df[~aco_component_only_mask].copy()
 
     # Final safety guard: Comparison must be a subset of benchmark-eligible Products only.
     if not comparison_df.empty and not products_df.empty and "product_id" in comparison_df.columns and "product_id" in products_df.columns:
