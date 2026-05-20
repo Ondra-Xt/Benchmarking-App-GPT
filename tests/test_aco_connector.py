@@ -685,56 +685,53 @@ class AcoSplusPipelineComponentPropagationTests(unittest.TestCase):
         self.assertFalse(products["product_id"].astype(str).isin(["aco-90105120","aco-90105121"]).any())
         self.assertFalse(evidence[evidence["manufacturer"] == "aco"].empty)
 
-    def test_showerdrain_c_assembled_rows_restore_flow_from_options_and_sync_to_comparison(self):
+    def test_showerdrain_c_article_grates_do_not_create_assembled_products(self):
         registry = pd.DataFrame([
-            {"manufacturer": "aco", "product_id": "aco-90108524", "product_name": "C body 90108524", "product_family": "showerdrain_c", "product_url": "https://example.test/c#article-90108524", "candidate_type": "drain", "system_role": "drain_unit", "complete_system": "yes"},
-            {"manufacturer": "aco", "product_id": "aco-90108534", "product_name": "C body 90108534", "product_family": "showerdrain_c", "product_url": "https://example.test/c#article-90108534", "candidate_type": "drain", "system_role": "drain_unit", "complete_system": "yes"},
             {"manufacturer": "aco", "product_id": "aco-90108544", "product_name": "C body 90108544", "product_family": "showerdrain_c", "product_url": "https://example.test/c#article-90108544", "candidate_type": "drain", "system_role": "drain_unit", "complete_system": "yes"},
-            {"manufacturer": "aco", "product_id": "aco-90108554", "product_name": "C body 90108554", "product_family": "showerdrain_c", "product_url": "https://example.test/c#article-90108554", "candidate_type": "drain", "system_role": "drain_unit", "complete_system": "yes"},
-            {"manufacturer": "aco", "product_id": "aco-grate-c", "product_name": "C grate", "product_family": "showerdrain_c", "product_url": "https://example.test/c-grate", "candidate_type": "component", "system_role": "grate", "complete_system": "component"},
+            {"manufacturer": "aco", "product_id": "aco-90108861", "product_name": "C grate 90108861", "product_family": "showerdrain_c", "product_url": "https://example.test/c-grate#article-90108861", "candidate_type": "component", "system_role": "grate", "complete_system": "component"},
         ])
-        params_map = {
-            "aco-90108524": {"flow_rate_lps": None, "flow_rate_lps_options": "[0.91]", "water_seal_mm": 50, "height_adj_min_mm": 80, "height_adj_max_mm": 128, "outlet_dn": "DN50"},
-            "aco-90108534": {"flow_rate_lps": None, "flow_rate_lps_options": "[0.91]", "water_seal_mm": 50, "height_adj_min_mm": 80, "height_adj_max_mm": 128, "outlet_dn": "DN50"},
-            "aco-90108544": {"flow_rate_lps": None, "flow_rate_lps_options": "[0.91]", "water_seal_mm": 25, "height_adj_min_mm": 57, "height_adj_max_mm": 128, "outlet_dn": "DN40"},
-            "aco-90108554": {"flow_rate_lps": None, "flow_rate_lps_options": "[0.91]", "water_seal_mm": 25, "height_adj_min_mm": 57, "height_adj_max_mm": 128, "outlet_dn": "DN40"},
-            "aco-grate-c": {},
-        }
-        def _fake_extract(url):
-            for pid, params in params_map.items():
-                if pid.split("aco-")[1] in url or pid in url:
-                    return dict(params)
-            if "c-grate" in url:
-                return {}
-            return {}
         def _fake_bom(url, params=None):
-            if "#article-90108524" in url:
-                pid = "aco-90108524"
-            elif "#article-90108534" in url:
-                pid = "aco-90108534"
-            elif "#article-90108544" in url:
-                pid = "aco-90108544"
-            elif "#article-90108554" in url:
-                pid = "aco-90108554"
-            else:
+            if "90108544" not in url:
                 return []
-            return [{"manufacturer":"aco","product_id":pid,"component_id":"aco-grate-c","option_type":"compatible_grate","option_role":"grate","parent_family":"showerdrain_c","option_family":"showerdrain_c","source_url":url}]
-        with patch("src.connectors.aco.extract_parameters", side_effect=_fake_extract), patch("src.connectors.aco.get_bom_options", side_effect=_fake_bom), patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
-            products, comparison, _excluded, _evidence, _bom = pipeline.run_update(registry, default_config())
-        asm = products[products["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-c-aco-901085")].copy()
-        self.assertEqual(len(asm), 4)
-        self.assertTrue((pd.to_numeric(asm["flow_rate_lps"], errors="coerce").notna()).all())
-        self.assertTrue((pd.to_numeric(asm["flow_rate_lps"], errors="coerce") == 0.91).all())
-        self.assertTrue((asm["flow_rate_unit"].astype(str) == "l/s").all())
-        self.assertTrue((asm["flow_rate_status"].astype(str) == "ok").all())
-        for col in ("water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn"):
-            self.assertTrue((asm[col].notna()).all(), col)
+            return [{"manufacturer":"aco","product_id":"aco-90108544","component_id":"aco-90108861","option_type":"compatible_grate","option_role":"grate","parent_family":"showerdrain_c","option_family":"showerdrain_c","source_url":url}]
+        with patch("src.connectors.aco.get_bom_options", side_effect=_fake_bom), patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
+            products, comparison, _excluded, _evidence, bom = pipeline.run_update(registry, default_config())
+        self.assertTrue((products["product_id"].astype(str) == "aco-90108861").any())
+        self.assertFalse(products["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-c-").any())
+        self.assertFalse(comparison["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-c-").any())
+        self.assertTrue(((bom["product_id"].astype(str) == "aco-90108544") & (bom["component_id"].astype(str) == "aco-90108861") & (bom["option_type"].astype(str) == "compatible_grate")).any())
 
-        comp_asm = comparison[comparison["product_id"].astype(str).isin(set(asm["product_id"].astype(str)))]
-        self.assertEqual(len(comp_asm), 4)
-        self.assertTrue((pd.to_numeric(comp_asm["flow_rate_lps"], errors="coerce") == 0.91).all())
-        for col in ("water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn"):
-            self.assertTrue((comp_asm[col].notna()).all(), f"comparison:{col}")
+    def test_showerdrain_c_stage1b_article_grates_are_not_assembled(self):
+        registry = pd.DataFrame([
+            {"manufacturer": "aco", "product_id": "aco-90108544", "product_name": "C body 90108544", "product_family": "showerdrain_c", "product_url": "https://example.test/c#article-90108544", "candidate_type": "drain", "system_role": "drain_unit", "complete_system": "yes"},
+            {"manufacturer": "aco", "product_id": "aco-90108861", "product_name": "C grate 90108861", "product_family": "showerdrain_c", "product_url": "https://example.test/c-grate#article-90108861", "candidate_type": "component", "system_role": "grate", "complete_system": "component"},
+        ])
+        def _fake_bom(url, params=None):
+            if "90108544" not in url:
+                return []
+            return [{"manufacturer":"aco","product_id":"aco-90108544","component_id":"aco-90108861","option_type":"compatible_grate","option_role":"grate","parent_family":"showerdrain_c","option_family":"showerdrain_c","source_url":url}]
+        with patch("src.connectors.aco.get_bom_options", side_effect=_fake_bom), patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
+            products, comparison, _excluded, _evidence, bom = pipeline.run_update(registry, default_config())
+        self.assertTrue((products["product_id"].astype(str) == "aco-90108861").any())
+        self.assertFalse(products["product_id"].astype(str).str.contains("__aco-901088", regex=False).any())
+        self.assertFalse(comparison["product_id"].astype(str).str.contains("__aco-901088", regex=False).any())
+        self.assertTrue(((bom["product_id"].astype(str) == "aco-90108544") & (bom["component_id"].astype(str) == "aco-90108861") & (bom["option_type"].astype(str) == "compatible_grate")).any())
+
+    def test_showerdrain_c_stage1b_article_grates_are_not_assembled(self):
+        registry = pd.DataFrame([
+            {"manufacturer": "aco", "product_id": "aco-90108544", "product_name": "C body 90108544", "product_family": "showerdrain_c", "product_url": "https://example.test/c#article-90108544", "candidate_type": "drain", "system_role": "drain_unit", "complete_system": "yes"},
+            {"manufacturer": "aco", "product_id": "aco-90108861", "product_name": "C grate 90108861", "product_family": "showerdrain_c", "product_url": "https://example.test/c-grate#article-90108861", "candidate_type": "component", "system_role": "grate", "complete_system": "component"},
+        ])
+        def _fake_bom(url, params=None):
+            if "90108544" not in url:
+                return []
+            return [{"manufacturer":"aco","product_id":"aco-90108544","component_id":"aco-90108861","option_type":"compatible_grate","option_role":"grate","parent_family":"showerdrain_c","option_family":"showerdrain_c","source_url":url}]
+        with patch("src.connectors.aco.get_bom_options", side_effect=_fake_bom), patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
+            products, comparison, _excluded, _evidence, bom = pipeline.run_update(registry, default_config())
+        self.assertFalse((products["product_id"].astype(str) == "aco-90108861").any())
+        self.assertFalse(products["product_id"].astype(str).str.contains("__aco-901088", regex=False).any())
+        self.assertFalse(comparison["product_id"].astype(str).str.contains("__aco-901088", regex=False).any())
+        self.assertTrue(((bom["product_id"].astype(str) == "aco-90108544") & (bom["component_id"].astype(str) == "aco-90108861") & (bom["option_type"].astype(str) == "compatible_grate")).any())
 
     def test_showerdrain_c_stage1b_article_grates_are_not_assembled(self):
         registry = pd.DataFrame([
