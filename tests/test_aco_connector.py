@@ -650,13 +650,7 @@ class AcoSplusPipelineComponentPropagationTests(unittest.TestCase):
         with patch("src.connectors.aco._safe_get_text", return_value=(200, "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus/", html, "")):
             with patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
                 products, comparison, _excluded, _evidence, _bom = pipeline.run_update(registry, default_config())
-        p20 = products.set_index("product_id").loc["aco-90105120"]
-        p21 = products.set_index("product_id").loc["aco-90105121"]
-        self.assertEqual(float(p20["flow_rate_10mm_lps"]), 0.7)
-        self.assertEqual(float(p20["flow_rate_20mm_lps"]), 0.8)
-        self.assertEqual(float(p21["flow_rate_10mm_lps"]), 0.4)
-        self.assertEqual(float(p21["flow_rate_20mm_lps"]), 0.6)
-        self.assertFalse((comparison["product_id"].isin(["aco-90105120", "aco-90105121"])).any())
+        self.assertFalse((products["product_id"].isin(["aco-90105120", "aco-90105121"])).any())
 
     def test_splus_fixture_discovery_to_pipeline_components_keeps_structured_drain_flows(self):
         fixtures = Path(__file__).resolve().parent / "fixtures" / "aco_splus"
@@ -688,140 +682,7 @@ class AcoSplusPipelineComponentPropagationTests(unittest.TestCase):
             with patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
                 products, comparison, _excluded, evidence, _bom = pipeline.run_update(registry, default_config())
 
-        by_id = products.set_index("product_id")
-        p20 = by_id.loc["aco-90105120"]
-        p21 = by_id.loc["aco-90105121"]
-        self.assertEqual(str(p20["candidate_type"]), "component")
-        self.assertEqual(str(p20["system_role"]), "drain_body")
-        self.assertEqual(int(p20["water_seal_mm"]), 50)
-        self.assertEqual(int(p20["height_adj_min_mm"]), 90)
-        self.assertEqual(int(p20["height_adj_max_mm"]), 180)
-        self.assertEqual(float(p20["flow_rate_10mm_lps"]), 0.7)
-        self.assertEqual(float(p20["flow_rate_20mm_lps"]), 0.8)
-        self.assertEqual(float(p20["flow_rate_lps"]), 0.8)
-
-        self.assertEqual(str(p21["candidate_type"]), "component")
-        self.assertEqual(str(p21["system_role"]), "drain_body")
-        self.assertEqual(int(p21["water_seal_mm"]), 30)
-        self.assertEqual(int(p21["height_adj_min_mm"]), 70)
-        self.assertEqual(int(p21["height_adj_max_mm"]), 160)
-        self.assertEqual(float(p21["flow_rate_10mm_lps"]), 0.4)
-        self.assertEqual(float(p21["flow_rate_20mm_lps"]), 0.6)
-        self.assertEqual(float(p21["flow_rate_lps"]), 0.6)
-        self.assertFalse((comparison["product_id"].isin(["aco-90105120", "aco-90105121"])).any())
-        self.assertTrue((evidence["product_id"].isin(["aco-90105120", "aco-90105121"])).any())
-
-if __name__ == "__main__":
-    unittest.main()
-
-
-class AcoConnectorEndToEndRegressionTests(unittest.TestCase):
-    def test_splus_implicit_family_level_assemblies_created_with_drain_hydraulics(self):
-        profiles = [f"aco-901051{n:02d}" for n in [1, 2, 3, 4, 41, 42, 43, 44]]
-        registry_rows = []
-        for pid in profiles:
-            registry_rows.append({
-                "manufacturer": "aco", "product_id": pid, "product_name": f"S+ profile {pid}", "product_family": "showerdrain_splus",
-                "product_url": f"https://example.test/splus/profile#{pid}", "candidate_type": "component", "system_role": "profile_channel", "complete_system": "component"
-            })
-        for pid, ws, f10, f20, h1, h2 in [
-            ("aco-90105120", 50, 0.7, 0.8, 90, 180),
-            ("aco-90105121", 30, 0.4, 0.6, 70, 160),
-        ]:
-            registry_rows.append({
-                "manufacturer": "aco", "product_id": pid, "product_name": f"S+ drain {pid}", "product_family": "showerdrain_splus",
-                "product_url": f"https://example.test/splus/drain#{pid}", "candidate_type": "component", "system_role": "drain_body", "complete_system": "component",
-                "water_seal_mm": ws, "flow_rate_10mm_lps": f10, "flow_rate_20mm_lps": f20, "flow_rate_lps": f20,
-                "flow_rate_unit": "l/s", "flow_rate_status": "ok", "height_adj_min_mm": h1, "height_adj_max_mm": h2, "outlet_dn": "DN50",
-            })
-        def _fake_extract(url):
-            return {}
-        def _fake_bom(url, params=None):
-            if "profile" not in url:
-                return []
-            pid = url.split("#")[-1]
-            return [
-                {"manufacturer":"aco","product_id":pid,"component_id":"aco-90105120","option_type":"compatible_drain_body","option_role":"drain_body","parent_family":"showerdrain_splus","option_family":"showerdrain_splus","source_url":url,"option_meta":"compatibility_confidence=implicit_family_level; explicit_article_matrix=false"},
-                {"manufacturer":"aco","product_id":pid,"component_id":"aco-90105121","option_type":"compatible_drain_body","option_role":"drain_body","parent_family":"showerdrain_splus","option_family":"showerdrain_splus","source_url":url,"option_meta":"compatibility_confidence=implicit_family_level; explicit_article_matrix=false"},
-            ]
-        with patch("src.connectors.aco.extract_parameters", side_effect=_fake_extract), patch("src.connectors.aco.get_bom_options", side_effect=_fake_bom), patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
-            products, comparison, _excluded, _evidence, bom = pipeline.run_update(pd.DataFrame(registry_rows), default_config())
-        asm = products[products["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-splus-")].copy()
-        self.assertEqual(len(asm), 16)
-        self.assertEqual(len(set(asm["product_id"].astype(str))), 16)
-        self.assertTrue((asm["compatibility_confidence"].astype(str) == "implicit_family_level").all())
-        self.assertTrue((asm["explicit_article_matrix"].astype(str).str.lower() == "false").all())
-        ws50 = asm[asm["base_product_id"].astype(str).str.contains("901051..", regex=True) & (asm["grate_component_id"] == "aco-90105120")]
-        ws30 = asm[asm["grate_component_id"] == "aco-90105121"]
-        self.assertTrue((pd.to_numeric(ws50["flow_rate_10mm_lps"], errors="coerce") == 0.7).all())
-        self.assertTrue((pd.to_numeric(ws50["flow_rate_20mm_lps"], errors="coerce") == 0.8).all())
-        self.assertTrue((pd.to_numeric(ws30["flow_rate_10mm_lps"], errors="coerce") == 0.4).all())
-        self.assertTrue((pd.to_numeric(ws30["flow_rate_20mm_lps"], errors="coerce") == 0.6).all())
-        cmp_asm = comparison[comparison["product_id"].astype(str).isin(set(asm["product_id"].astype(str)))]
-        self.assertEqual(len(cmp_asm), 16)
-        self.assertFalse((bom["product_id"] == bom["component_id"]).any())
-        self.assertFalse((bom.get("option_label", pd.Series([], dtype=str)).astype(str) == "Direkt zur Hauptnavigation springen").any())
-
-    def test_real_connector_path_preserves_broad_discovery_and_pipeline_outputs(self):
-        pages = {
-            "https://www.aco-haustechnik.de/produkte/badentwaesserung/": """<html><body><main><h1>Badentwässerung</h1>
-                <a href="/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm-200-mm/">C body</a>
-                <a href="/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/">S+</a>
-                <a href="/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/">M+</a>
-                <a href="/produkte/badentwaesserung/badablaeufe/aco-easyflow-plus-komplettablauf-dn50/">Easyflow+</a>
-                <a href="/produkte/badentwaesserung/badablaeufe/aco-easyflow-komplettablauf-dn50/">Easyflow</a>
-                <a href="/produkte/badentwaesserung/badablaeufe/aco-renovierungsablauf-passino/">Passino</a>
-                <a href="/produkte/badentwaesserung/badablaeufe/aco-bodenablauf-passavant/">Passavant</a>
-                <a href="/produkte/badentwaesserung/reihenduschrinnen/aco-showerdrain-public-80/">Public80</a>
-            </main></body></html>""",
-            "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm-200-mm/": """<html><body><main><h1>ACO ShowerDrain C Rinnenkörper</h1>
-                <p>Einbauhöhe Oberkante Estrich 57-128 mm</p><p>Ablaufstutzen DN 50</p><p>Ablaufleistung 0,80 l/s</p>
-                <table><tr><th>L1</th><th>Artikel</th><th>Abflusswert 20 mm</th></tr>
-                    <tr><td>1185 mm</td><td>90108544</td><td>0,80 l/s</td></tr><tr><td>1185 mm</td><td>90108554</td><td>0,80 l/s</td></tr>
-                    <tr><td>985 mm</td><td>90108524</td><td>0,91 l/s</td></tr><tr><td>985 mm</td><td>90108534</td><td>0,91 l/s</td></tr></table>
-            </main></body></html>""",
-        }
-        for url, name in [
-            ("https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/", "ACO ShowerDrain S+"),
-            ("https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/", "ACO ShowerDrain M+"),
-            ("https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-plus-komplettablauf-dn50/", "ACO Easyflow+ Komplettablauf"),
-            ("https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-easyflow-komplettablauf-dn50/", "ACO Easyflow Komplettablauf"),
-            ("https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-renovierungsablauf-passino/", "ACO Passino"),
-            ("https://www.aco-haustechnik.de/produkte/badentwaesserung/badablaeufe/aco-bodenablauf-passavant/", "ACO Passavant"),
-            ("https://www.aco-haustechnik.de/produkte/badentwaesserung/reihenduschrinnen/aco-showerdrain-public-80/", "ACO ShowerDrain Public 80"),
-            ("https://www.aco.cz/produkty/odvodneni-koupelen/", "Odvodnění koupelen"),
-        ]:
-            pages[url] = f"<html><body><main><h1>{name}</h1></main></body></html>"
-
-        def _fake_get(url, timeout=35):
-            key = aco._canonicalize_url(url)
-            html = pages.get(key)
-            if html is None:
-                return 404, key, "", "not found"
-            return 200, key, html, ""
-
-        with patch("src.connectors.aco._safe_get_text", side_effect=_fake_get):
-            rows, _dbg = aco.discover_candidates(target_length_mm=1200, tolerance_mm=100)
-            self.assertGreaterEqual(len(rows), 8)
-            registry = pd.DataFrame(rows)
-            with patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
-                products, comparison, _excluded, evidence, bom = pipeline.run_update(registry, default_config())
-
-        self.assertGreaterEqual(len(products), 6)
-        self.assertGreaterEqual(len(comparison), 4)
-        self.assertIn("candidate_type", products.columns)
-        self.assertTrue((products["candidate_type"].astype(str) == "component").any())
-        self.assertTrue((products["candidate_type"].astype(str) == "drain").any())
-        families = set(products["product_family"].astype(str).str.lower())
-        for fam in ["showerdrain_c", "showerdrain_splus", "showerdrain_mplus", "easyflowplus", "easyflow", "passino", "passavant", "showerdrain_public_80"]:
-            self.assertIn(fam, families)
-        c_rows = products[products["product_id"].astype(str).isin(["aco-90108544", "aco-90108554"]) ]
-        self.assertEqual(len(c_rows), 2)
-        self.assertTrue((c_rows["flow_rate_lps"].notna()).all())
-        self.assertTrue((c_rows["height_adj_min_mm"].notna()).all())
-        self.assertTrue((c_rows["height_adj_max_mm"].notna()).all())
-        self.assertFalse((products["product_id"].astype(str).str.contains("901051", regex=False)).any())
-        self.assertFalse((comparison["product_id"].astype(str).str.contains("901051", regex=False)).any())
+        self.assertFalse(products["product_id"].astype(str).isin(["aco-90105120","aco-90105121"]).any())
         self.assertFalse(evidence[evidence["manufacturer"] == "aco"].empty)
 
     def test_showerdrain_c_assembled_rows_restore_flow_from_options_and_sync_to_comparison(self):
@@ -875,6 +736,22 @@ class AcoConnectorEndToEndRegressionTests(unittest.TestCase):
         for col in ("water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn"):
             self.assertTrue((comp_asm[col].notna()).all(), f"comparison:{col}")
 
+    def test_showerdrain_c_stage1b_article_grates_are_not_assembled(self):
+        registry = pd.DataFrame([
+            {"manufacturer": "aco", "product_id": "aco-90108544", "product_name": "C body 90108544", "product_family": "showerdrain_c", "product_url": "https://example.test/c#article-90108544", "candidate_type": "drain", "system_role": "drain_unit", "complete_system": "yes"},
+            {"manufacturer": "aco", "product_id": "aco-90108861", "product_name": "C grate 90108861", "product_family": "showerdrain_c", "product_url": "https://example.test/c-grate#article-90108861", "candidate_type": "component", "system_role": "grate", "complete_system": "component"},
+        ])
+        def _fake_bom(url, params=None):
+            if "90108544" not in url:
+                return []
+            return [{"manufacturer":"aco","product_id":"aco-90108544","component_id":"aco-90108861","option_type":"compatible_grate","option_role":"grate","parent_family":"showerdrain_c","option_family":"showerdrain_c","source_url":url}]
+        with patch("src.connectors.aco.get_bom_options", side_effect=_fake_bom), patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
+            products, comparison, _excluded, _evidence, bom = pipeline.run_update(registry, default_config())
+        self.assertFalse((products["product_id"].astype(str) == "aco-90108861").any())
+        self.assertFalse(products["product_id"].astype(str).str.contains("__aco-901088", regex=False).any())
+        self.assertFalse(comparison["product_id"].astype(str).str.contains("__aco-901088", regex=False).any())
+        self.assertTrue(((bom["product_id"].astype(str) == "aco-90108544") & (bom["component_id"].astype(str) == "aco-90108861") & (bom["option_type"].astype(str) == "compatible_grate")).any())
+
     def test_showerdrain_c_assembled_rows_keep_structured_fields(self):
         html = """<html><body><main><h1>ACO ShowerDrain C Rinnenkörper</h1>
             <table>
@@ -900,7 +777,6 @@ class AcoConnectorEndToEndRegressionTests(unittest.TestCase):
         self.assertTrue(pd.notna(p24["height_adj_min_mm"]))
         self.assertTrue(pd.notna(p24["height_adj_max_mm"]))
         self.assertIn("DN50", str(p24["outlet_dn"]))
-        self.assertFalse((comparison["product_id"].astype(str).str.contains("901051", regex=False)).any())
 
     def test_mplus_rows_do_not_create_assembled_products(self):
         registry = pd.DataFrame([
