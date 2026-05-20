@@ -842,6 +842,30 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                     candidates_by_role[role_splus] = candidates_by_role.get(role_splus, 0) + 1
                     continue
                 if family == "showerdrain_eplus":
+                    role_eplus = _infer_eplus_role(final_c, title_base)
+                    if role_eplus == "grate":
+                        pid = _stable_aco_id(final_c, family, "grate", title_base, article_digits)
+                        if pid in seen_ids:
+                            continue
+                        seen_ids.add(pid)
+                        out.append({
+                            "manufacturer": "aco",
+                            "product_id": pid,
+                            "product_family": family,
+                            "product_name": f"{title_base} (Artikel-Nr. {article_no})",
+                            "product_url": f"{final_c}#article-{article_digits}",
+                            "sources": final_c,
+                            "candidate_type": "component",
+                            "system_role": "grate",
+                            "classification_reason": "eplus_grate_article_component",
+                            "complete_system": "component",
+                            "article_no": article_no,
+                            "row_length_raw_mm": l1_mm,
+                            "row_length_nominal_mm": _nominal_length_from_l1(l1_mm),
+                        })
+                        candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                        candidates_by_role["grate"] = candidates_by_role.get("grate", 0) + 1
+                        continue
                     pid = _stable_aco_id(final_c, family, "drain_unit", title_base, article_digits)
                     if pid in seen_ids:
                         continue
@@ -997,6 +1021,36 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                     candidates_by_role[role_splus] = candidates_by_role.get(role_splus, 0) + 1
                 debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": err, "candidates_found": kept, "method": "table", "is_index": None})
                 continue
+
+            if family in {"showerdrain_eplus", "showerdrain_c", "showerdrain_cplus"} and pairs:
+                role_family = "grate" if role == "grate" else role
+                if role_family == "grate":
+                    for l1_mm, article_no, article_digits in pairs:
+                        pid = _stable_aco_id(final_c, family, "grate", title_base, article_digits)
+                        if pid in seen_ids:
+                            continue
+                        seen_ids.add(pid)
+                        kept += 1
+                        kept_total += 1
+                        out.append({
+                            "manufacturer": "aco",
+                            "product_id": pid,
+                            "product_family": family,
+                            "product_name": f"{title_base} (Artikel-Nr. {article_no})",
+                            "product_url": f"{final_c}#article-{article_digits}",
+                            "sources": final_c,
+                            "candidate_type": "component",
+                            "system_role": "grate",
+                            "classification_reason": f"{family}_grate_article_component",
+                            "complete_system": "component",
+                            "article_no": article_no,
+                            "row_length_raw_mm": l1_mm,
+                            "row_length_nominal_mm": _nominal_length_from_l1(l1_mm),
+                        })
+                        candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                        candidates_by_role["grate"] = candidates_by_role.get("grate", 0) + 1
+                    debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": err, "candidates_found": kept, "method": "table", "is_index": None})
+                    continue
             pid = _stable_aco_id(final_c, family, role, title_base)
             if pid not in seen_ids:
                 seen_ids.add(pid)
@@ -1502,6 +1556,34 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
     return res
 
 
+
+
+def _grate_component_options_from_page(page_url: str, family: str, label: str, option_meta: str) -> List[Dict[str, Any]]:
+    st, final, html, _err = _safe_get_text(page_url, timeout=35)
+    if st != 200 or not html:
+        return []
+    pairs = _extract_pairs_from_table(html)
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for l1_mm, article_no, article_digits in pairs:
+        if len(article_digits) < 6:
+            continue
+        cid = _stable_aco_id(final, family, "grate", label, article_digits)
+        if not cid or cid in seen:
+            continue
+        seen.add(cid)
+        out.append({
+            "component_id": cid,
+            "option_type": "compatible_grate",
+            "option_role": "grate",
+            "option_family": family,
+            "parent_family": family,
+            "source_url": f"{final}#article-{article_digits}",
+            "option_label": f"{label} (Artikel-Nr. {article_no})"[:140],
+            "option_meta": option_meta,
+        })
+    return out
+
 def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     src = (product_url or "").split("#", 1)[0].strip()
     st, final, html, err = _safe_get_text(src, timeout=35)
@@ -1607,6 +1689,16 @@ def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -
                 continue
             role = _infer_eplus_role(href, txt)
             if role == "grate":
+                option_meta = "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; source_limitation=E+ compatibility is official family-level compatibility; no explicit article-to-article matrix found."
+                grate_rows = _grate_component_options_from_page(href, family, txt, option_meta)
+                if grate_rows:
+                    for row in grate_rows:
+                        key = (row["component_id"], row["option_type"])
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        options.append(row)
+                    continue
                 otype = "compatible_grate"
             elif role == "drain_body" and "brandschutz" in f"{href} {txt}".lower():
                 otype = "related_body_component"
@@ -1651,6 +1743,16 @@ def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -
             otype = ""
             if any(k in txt_l for k in ("design-roste", "design-rost", "designrost", "rost", "abdeckung")) or "design-rost" in href_l:
                 role = "grate"; otype = "compatible_grate"
+                option_meta = "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; source_limitation=grate compatibility is family-level and length/design based; no explicit article-to-article matrix found."
+                grate_rows = _grate_component_options_from_page(href, "showerdrain_cplus", txt, option_meta)
+                if grate_rows:
+                    for row in grate_rows:
+                        key = (row["component_id"], row["option_type"])
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        options.append(row)
+                    continue
             elif "showerstep" in txt_l or "showerstep" in href_l:
                 role = "accessory"; otype = "optional_accessory"
             else:
@@ -1670,7 +1772,7 @@ def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -
                 "parent_family": "showerdrain_cplus",
                 "source_url": href,
                 "option_label": txt[:140],
-                "option_meta": "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; source_limitation=C+ / C grate compatibility is family-level and length-based; no explicit article-to-article matrix found.",
+                "option_meta": "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; source_limitation=grate compatibility is family-level and length/design based; no explicit article-to-article matrix found.",
             })
         return options
 

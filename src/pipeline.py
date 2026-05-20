@@ -2993,6 +2993,16 @@ def run_update(
                 if len(aco_debug["sample_aco_assembly_skipped_reasons"]) < 20:
                     aco_debug["sample_aco_assembly_skipped_reasons"].append(f"{fam}:{pid}->{cid}:cross_family")
                 continue
+            if fam == "showerdrain_c":
+                comp_role = str(comp.get("system_role") or "").strip().lower()
+                comp_ct = str(comp.get("candidate_type") or "").strip().lower()
+                cid_l = cid.lower()
+                if comp_role == "grate" and comp_ct == "component" and cid_l.startswith("aco-901088"):
+                    aco_debug["assembled_products_skipped_count"] += 1
+                    if len(aco_debug["sample_aco_assembly_skipped_reasons"]) < 20:
+                        aco_debug["sample_aco_assembly_skipped_reasons"].append(f"{fam}:{pid}->{cid}:stage1b_article_grate_guard")
+                    continue
+
             k = (fam, pid, cid)
             if k in seen_assembled_keys:
                 aco_debug["assembled_product_duplicate_skipped_count"] += 1
