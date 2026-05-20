@@ -1021,6 +1021,36 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                     candidates_by_role[role_splus] = candidates_by_role.get(role_splus, 0) + 1
                 debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": err, "candidates_found": kept, "method": "table", "is_index": None})
                 continue
+
+            if family in {"showerdrain_eplus", "showerdrain_c", "showerdrain_cplus"} and pairs:
+                role_family = "grate" if role == "grate" else role
+                if role_family == "grate":
+                    for l1_mm, article_no, article_digits in pairs:
+                        pid = _stable_aco_id(final_c, family, "grate", title_base, article_digits)
+                        if pid in seen_ids:
+                            continue
+                        seen_ids.add(pid)
+                        kept += 1
+                        kept_total += 1
+                        out.append({
+                            "manufacturer": "aco",
+                            "product_id": pid,
+                            "product_family": family,
+                            "product_name": f"{title_base} (Artikel-Nr. {article_no})",
+                            "product_url": f"{final_c}#article-{article_digits}",
+                            "sources": final_c,
+                            "candidate_type": "component",
+                            "system_role": "grate",
+                            "classification_reason": f"{family}_grate_article_component",
+                            "complete_system": "component",
+                            "article_no": article_no,
+                            "row_length_raw_mm": l1_mm,
+                            "row_length_nominal_mm": _nominal_length_from_l1(l1_mm),
+                        })
+                        candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                        candidates_by_role["grate"] = candidates_by_role.get("grate", 0) + 1
+                    debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": err, "candidates_found": kept, "method": "table", "is_index": None})
+                    continue
             pid = _stable_aco_id(final_c, family, role, title_base)
             if pid not in seen_ids:
                 seen_ids.add(pid)
