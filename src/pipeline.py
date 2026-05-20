@@ -2993,6 +2993,16 @@ def run_update(
                 if len(aco_debug["sample_aco_assembly_skipped_reasons"]) < 20:
                     aco_debug["sample_aco_assembly_skipped_reasons"].append(f"{fam}:{pid}->{cid}:cross_family")
                 continue
+            if fam == "showerdrain_c":
+                comp_role = str(comp.get("system_role") or "").strip().lower()
+                comp_ct = str(comp.get("candidate_type") or "").strip().lower()
+                cid_l = cid.lower()
+                if comp_role == "grate" and comp_ct == "component" and cid_l.startswith("aco-901088"):
+                    aco_debug["assembled_products_skipped_count"] += 1
+                    if len(aco_debug["sample_aco_assembly_skipped_reasons"]) < 20:
+                        aco_debug["sample_aco_assembly_skipped_reasons"].append(f"{fam}:{pid}->{cid}:stage1b_article_grate_guard")
+                    continue
+
             k = (fam, pid, cid)
             if k in seen_assembled_keys:
                 aco_debug["assembled_product_duplicate_skipped_count"] += 1
@@ -4031,6 +4041,24 @@ def run_update(
                 filtered_bom_rows.append(rr)
         bom_rows = filtered_bom_rows
     bom_options_df = pd.DataFrame(bom_rows)
+
+    # Stage 1b guard: keep article-backed ShowerDrain C grates in candidates/components,
+    # but do not expose them as final Products/Comparison rows.
+    if not products_df.empty:
+        mfg = products_df.get("manufacturer", pd.Series(dtype=str)).astype(str).str.lower()
+        fam = products_df.get("product_family", pd.Series(dtype=str)).astype(str).str.lower()
+        role = products_df.get("system_role", pd.Series(dtype=str)).astype(str).str.lower()
+        ctype = products_df.get("candidate_type", pd.Series(dtype=str)).astype(str).str.lower()
+        pid = products_df.get("product_id", pd.Series(dtype=str)).astype(str).str.lower()
+        stage1b_grate_mask = (
+            mfg.eq("aco")
+            & fam.eq("showerdrain_c")
+            & role.eq("grate")
+            & ctype.eq("component")
+            & pid.str.startswith("aco-901088")
+        )
+        if stage1b_grate_mask.any():
+            products_df = products_df[~stage1b_grate_mask].copy()
 
     # Final safety guard: Comparison must be a subset of benchmark-eligible Products only.
     if not comparison_df.empty and not products_df.empty and "product_id" in comparison_df.columns and "product_id" in products_df.columns:
