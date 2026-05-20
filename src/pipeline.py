@@ -4042,23 +4042,27 @@ def run_update(
         bom_rows = filtered_bom_rows
     bom_options_df = pd.DataFrame(bom_rows)
 
-    # Stage 1b guard: keep article-backed ShowerDrain C grates in candidates/components,
-    # but do not expose them as final Products/Comparison rows.
+    # Final ACO product-output guard: component-only grate/cover rows stay in Candidates_All/Components,
+    # never in final Products/Comparison product universe.
     if not products_df.empty:
         mfg = products_df.get("manufacturer", pd.Series(dtype=str)).astype(str).str.lower()
-        fam = products_df.get("product_family", pd.Series(dtype=str)).astype(str).str.lower()
         role = products_df.get("system_role", pd.Series(dtype=str)).astype(str).str.lower()
         ctype = products_df.get("candidate_type", pd.Series(dtype=str)).astype(str).str.lower()
-        pid = products_df.get("product_id", pd.Series(dtype=str)).astype(str).str.lower()
-        stage1b_grate_mask = (
+        promote = products_df.get("promote_to_product", pd.Series(dtype=str)).astype(str).str.lower()
+        reason = products_df.get("promotion_reason", pd.Series(dtype=str)).astype(str).str.lower()
+        why_not = products_df.get("why_not_product_reason", pd.Series(dtype=str)).astype(str).str.lower()
+
+        aco_component_only_mask = (
             mfg.eq("aco")
-            & fam.eq("showerdrain_c")
-            & role.eq("grate")
-            & ctype.eq("component")
-            & pid.str.startswith("aco-901088")
+            & (
+                role.eq("grate")
+                | reason.eq("cover_only_component")
+                | why_not.eq("cover_only_component")
+                | (ctype.eq("component") & promote.eq("no"))
+            )
         )
-        if stage1b_grate_mask.any():
-            products_df = products_df[~stage1b_grate_mask].copy()
+        if aco_component_only_mask.any():
+            products_df = products_df[~aco_component_only_mask].copy()
 
     # Final safety guard: Comparison must be a subset of benchmark-eligible Products only.
     if not comparison_df.empty and not products_df.empty and "product_id" in comparison_df.columns and "product_id" in products_df.columns:

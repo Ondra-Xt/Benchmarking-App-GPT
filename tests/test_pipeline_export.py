@@ -441,56 +441,14 @@ class PipelineExportTests(unittest.TestCase):
             products, comparison, excluded, evidence, bom = pipeline.run_update(registry, default_config())
 
         drains = products[products["candidate_type"] == "drain"]
-        components = products[products["candidate_type"] == "component"]
         self.assertTrue({"aco-90108544", "aco-90108554", "aco-90108524", "aco-90108534"}.issubset(set(drains["product_id"].tolist())))
         self.assertIn("aco-comp-showerpoint", set(drains["product_id"].tolist()))
         self.assertIn("aco-comp-passino", set(drains["product_id"].tolist()))
-        self.assertIn("aco-comp-family", set(components["product_id"].tolist()))
-        self.assertIn("aco-comp-grate", set(components["product_id"].tolist()))
-        self.assertIn("aco-comp-accessory", set(components["product_id"].tolist()))
-        self.assertIn("aco-fp-public-designrost", set(components["product_id"].tolist()))
-        self.assertIn("aco-fp-showerstep-keil", set(components["product_id"].tolist()))
-        self.assertIn("aco-fp-aufsatz", set(components["product_id"].tolist()))
-        self.assertIn("aco-fp-ablaufkoerper", set(components["product_id"].tolist()))
-        self.assertIn("aco-fp-config-family", set(components["product_id"].tolist()))
         self.assertNotIn("aco-fp-public-designrost", set(drains["product_id"].tolist()))
         self.assertNotIn("aco-fp-showerstep-keil", set(drains["product_id"].tolist()))
         self.assertNotIn("aco-fp-aufsatz", set(drains["product_id"].tolist()))
         self.assertNotIn("aco-fp-ablaufkoerper", set(drains["product_id"].tolist()))
         self.assertNotIn("aco-fp-config-family", set(drains["product_id"].tolist()))
-        self.assertEqual(
-            components.set_index("product_id").loc["aco-comp-family", "why_not_product_reason"],
-            "configuration_family_not_final_product",
-        )
-        self.assertEqual(
-            components.set_index("product_id").loc["aco-comp-grate", "why_not_product_reason"],
-            "cover_only_component",
-        )
-        self.assertEqual(
-            components.set_index("product_id").loc["aco-comp-accessory", "why_not_product_reason"],
-            "accessory_only",
-        )
-        self.assertEqual(
-            components.set_index("product_id").loc["aco-fp-public-designrost", "why_not_product_reason"],
-            "cover_only_component",
-        )
-        self.assertEqual(
-            components.set_index("product_id").loc["aco-fp-showerstep-keil", "why_not_product_reason"],
-            "accessory_only",
-        )
-        self.assertEqual(
-            components.set_index("product_id").loc["aco-fp-aufsatz", "why_not_product_reason"],
-            "accessory_only",
-        )
-        self.assertEqual(
-            components.set_index("product_id").loc["aco-fp-ablaufkoerper", "why_not_product_reason"],
-            "incomplete_assembly",
-        )
-        self.assertEqual(
-            components.set_index("product_id").loc["aco-fp-config-family", "why_not_product_reason"],
-            "configuration_family_not_final_product",
-        )
-        self.assertFalse(((components["promote_to_product"] == "yes") & (components["promotion_reason"] == "default")).any())
         self.assertTrue(excluded.empty)
         self.assertFalse(bom.empty)
         aco_bom = bom[bom["manufacturer"] == "aco"]
@@ -558,11 +516,9 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue({"aco-90108544", "aco-90108554", "aco-90108524", "aco-90108534"}.issubset(set(drains["product_id"].tolist())))
         self.assertEqual(drains.set_index("product_id").loc["aco-easyflowplus-complete", "system_role"], "complete_system")
         self.assertEqual(drains.set_index("product_id").loc["aco-easyflow-complete", "system_role"], "complete_system")
-        components = products[products["candidate_type"] == "component"].set_index("product_id")
-        self.assertEqual(components.loc["aco-easyflowplus-grate", "why_not_product_reason"], "cover_only_component")
-        self.assertEqual(components.loc["aco-easyflow-adapter", "why_not_product_reason"], "accessory_only")
-        self.assertEqual(components.loc["aco-easyflowplus-body", "why_not_product_reason"], "incomplete_assembly")
-        self.assertEqual(components.loc["aco-easyflow-body", "why_not_product_reason"], "incomplete_assembly")
+        self.assertFalse((products["system_role"].astype(str).str.lower() == "grate").any())
+        self.assertFalse((products["promotion_reason"].astype(str).str.lower() == "cover_only_component").any())
+        self.assertFalse(((products["candidate_type"].astype(str).str.lower()=="component") & (products["promote_to_product"].astype(str).str.lower()=="no")).any())
 
         aco_bom = bom[bom["manufacturer"] == "aco"]
         self.assertTrue(((aco_bom["product_id"] == "aco-90108544") & (aco_bom["component_id"] == "aco-showerdrainc-grate") & (aco_bom["option_type"] == "compatible_grate")).any())
@@ -576,7 +532,6 @@ class PipelineExportTests(unittest.TestCase):
         self.assertFalse(((aco_bom["product_id"] == "aco-easyflow-complete") & (aco_bom["component_id"] == "aco-easyflowplus-grate")).any())
         self.assertFalse(((aco_bom["product_id"] == "aco-90108544") & (aco_bom["component_id"] == "aco-showerdraine-grate")).any())
         self.assertFalse(((aco_bom["product_id"] == "aco-90108544") & (aco_bom["component_id"] == "aco-showerdrainm-grate")).any())
-        self.assertEqual(components.loc["aco-easyflow-adapter", "system_role"], "accessory")
         self.assertTrue(((aco_bom["parent_family"] == "easyflow") & (aco_bom["option_family"] == "easyflow")).any())
         assembled = products[
             (products["manufacturer"] == "aco")
@@ -595,9 +550,6 @@ class PipelineExportTests(unittest.TestCase):
         self.assertFalse(((assembled["parent_family"] == "easyflowplus") & assembled["matched_component_ids"].astype(str).str.contains("easyflow-")).any())
         # technical inheritance (present in base connector fixtures)
         self.assertTrue((assembled["flow_rate_lps"].notna()).any())
-        components_all = products[(products["manufacturer"] == "aco") & (products["candidate_type"] == "component")]
-        self.assertFalse((components_all["promotion_reason"] == "assembled_from_bom").any())
-        self.assertFalse((components_all["assembled_from_bom"].astype(str).str.lower() == "true").any())
 
         labels = set(evidence[evidence["manufacturer"] == "aco"]["label"].tolist())
         self.assertIn("aco_reference_v2_showerdrain_c_bom_count", labels)
