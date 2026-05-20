@@ -856,6 +856,22 @@ class AcoConnectorEndToEndRegressionTests(unittest.TestCase):
         self.assertFalse(comparison["product_id"].astype(str).str.contains("__aco-901088", regex=False).any())
         self.assertTrue(((bom["product_id"].astype(str) == "aco-90108544") & (bom["component_id"].astype(str) == "aco-90108861") & (bom["option_type"].astype(str) == "compatible_grate")).any())
 
+    def test_showerdrain_c_stage1b_article_grates_are_not_assembled(self):
+        registry = pd.DataFrame([
+            {"manufacturer": "aco", "product_id": "aco-90108544", "product_name": "C body 90108544", "product_family": "showerdrain_c", "product_url": "https://example.test/c#article-90108544", "candidate_type": "drain", "system_role": "drain_unit", "complete_system": "yes"},
+            {"manufacturer": "aco", "product_id": "aco-90108861", "product_name": "C grate 90108861", "product_family": "showerdrain_c", "product_url": "https://example.test/c-grate#article-90108861", "candidate_type": "component", "system_role": "grate", "complete_system": "component"},
+        ])
+        def _fake_bom(url, params=None):
+            if "90108544" not in url:
+                return []
+            return [{"manufacturer":"aco","product_id":"aco-90108544","component_id":"aco-90108861","option_type":"compatible_grate","option_role":"grate","parent_family":"showerdrain_c","option_family":"showerdrain_c","source_url":url}]
+        with patch("src.connectors.aco.get_bom_options", side_effect=_fake_bom), patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
+            products, comparison, _excluded, _evidence, bom = pipeline.run_update(registry, default_config())
+        self.assertFalse((products["product_id"].astype(str) == "aco-90108861").any())
+        self.assertFalse(products["product_id"].astype(str).str.contains("__aco-901088", regex=False).any())
+        self.assertFalse(comparison["product_id"].astype(str).str.contains("__aco-901088", regex=False).any())
+        self.assertTrue(((bom["product_id"].astype(str) == "aco-90108544") & (bom["component_id"].astype(str) == "aco-90108861") & (bom["option_type"].astype(str) == "compatible_grate")).any())
+
     def test_showerdrain_c_assembled_rows_keep_structured_fields(self):
         html = """<html><body><main><h1>ACO ShowerDrain C Rinnenkörper</h1>
             <table>
