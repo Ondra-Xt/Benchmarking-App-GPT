@@ -1084,6 +1084,46 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             })
             existing_ids.add(pid)
 
+    # discovery-only article-backed grate components (must not affect assembly baselines)
+    discovery_grate_pages = [
+        f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-cplus/design-roste/",
+        f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-cplus/design-roste-aus-edelstahl/",
+        f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-c/design-roste/",
+    ]
+    existing_ids = {str(r.get("product_id") or "") for r in out}
+    for page_url in discovery_grate_pages:
+        st_g, final_g, html_g, _err_g = _safe_get_text(page_url, timeout=35)
+        if not st_g or st_g >= 400 or not html_g:
+            continue
+        title_g = _extract_title(html_g, final_g)
+        role_g, _reason_g = _classify_role(final_g, title_g, html_g, "showerdrain_c")
+        if role_g != "grate":
+            continue
+        for l1_mm, article_no, article_digits in _extract_pairs_from_table(html_g):
+            if len(article_digits) != 8:
+                continue
+            pid = f"aco-{article_digits}"
+            if pid in existing_ids:
+                continue
+            out.append({
+                "manufacturer": "aco",
+                "product_id": pid,
+                "product_family": "showerdrain_c_grate_discovery",
+                "product_name": f"{title_g} (Artikel-Nr. {article_no})",
+                "product_url": f"{_canonicalize_url(final_g)}#article-{article_digits}",
+                "sources": _canonicalize_url(final_g),
+                "candidate_type": "component",
+                "system_role": "grate",
+                "classification_reason": "article_backed_grate_discovery_only",
+                "complete_system": "component",
+                "promote_to_product": "no",
+                "why_not_product_reason": "cover_only_component",
+                "article_no": article_no,
+                "row_length_raw_mm": l1_mm,
+                "row_length_nominal_mm": _nominal_length_from_l1(l1_mm),
+            })
+            existing_ids.add(pid)
+
     safe_out: List[Dict[str, Any]] = []
     for r in out:
         pid = str(r.get("product_id") or "").strip()

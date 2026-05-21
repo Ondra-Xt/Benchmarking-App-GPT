@@ -752,6 +752,22 @@ class AcoSplusPipelineComponentPropagationTests(unittest.TestCase):
         self.assertTrue(meta.str.contains("explicit_article_matrix=false", regex=False).all())
         self.assertTrue(meta.str.contains("source_limitation=grate compatibility is family-level and length/design based; no explicit article-to-article matrix found.", regex=False).all())
 
+    def test_article_backed_grate_discovery_emits_component_contract(self):
+        rows, _ = aco.discover_candidates(target_length_mm=1200, tolerance_mm=100)
+        if not rows:
+            self.skipTest("ACO discovery returned 0 rows in this environment")
+        df = pd.DataFrame(rows)
+        grate = df[
+            (df["candidate_type"].astype(str) == "component")
+            & (df["system_role"].astype(str) == "grate")
+            & (df["classification_reason"].astype(str) == "article_backed_grate_discovery_only")
+        ]
+        self.assertFalse(grate.empty)
+        self.assertTrue(grate["product_id"].astype(str).str.match(r"^aco-\d{8}$").all())
+        self.assertTrue(grate["product_url"].astype(str).str.contains("#article-", regex=False).all())
+        self.assertTrue((grate["promote_to_product"].astype(str) == "no").all())
+        self.assertTrue(grate["why_not_product_reason"].astype(str).isin(["cover_only_component", "component_not_final_product"]).all())
+
 if __name__ == "__main__":
     unittest.main()
 
