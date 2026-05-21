@@ -4028,15 +4028,16 @@ def run_update(
             aco_ct = aco_rows_df.get("candidate_type", pd.Series(index=aco_rows_df.index, dtype=object)).astype(str).str.lower()
             aco_prom = aco_rows_df.get("promote_to_product", pd.Series(index=aco_rows_df.index, dtype=object)).astype(str).str.lower()
             aco_role = aco_rows_df.get("system_role", pd.Series(index=aco_rows_df.index, dtype=object)).astype(str).str.lower()
+            aco_reason = aco_rows_df.get("promotion_reason", pd.Series(index=aco_rows_df.index, dtype=object)).astype(str).str.lower()
             aco_why_not = aco_rows_df.get("why_not_product_reason", pd.Series(index=aco_rows_df.index, dtype=object)).astype(str).str.lower()
-
-            aco_pid = aco_rows_df.get("product_id", pd.Series(index=aco_rows_df.index, dtype=object)).astype(str)
-            is_article_backed_grate = (
-                aco_role.isin({"grate", "cover", "design_grate", "rost", "abdeckung"})
-                & aco_pid.str.match(r"^aco-\d{8}$")
+            component_only_reason = {"cover_only_component", "accessory_only", "incomplete_assembly", "configuration_family", "not_complete_system"}
+            component_only_why_not = {"cover_only_component", "accessory_only", "incomplete_assembly", "configuration_family_not_final_product", "not_complete_system"}
+            is_component_only = (
+                ((aco_ct == "component") & (aco_prom == "no"))
+                | aco_reason.isin(component_only_reason)
+                | aco_why_not.isin(component_only_why_not)
             )
-            is_grate_component = is_article_backed_grate
-            keep_aco_in_products = ~is_grate_component
+            keep_aco_in_products = ~is_component_only
             move_to_excluded = aco_rows_df.loc[~keep_aco_in_products].copy()
             if not move_to_excluded.empty:
                 if "current_status" not in move_to_excluded.columns:
@@ -4087,6 +4088,21 @@ def run_update(
             )
             if component_ids:
                 comparison_df = comparison_df[~comparison_df["product_id"].astype(str).isin(component_ids)].copy()
+        if not comparison_df.empty and "manufacturer" in comparison_df.columns:
+            aco_cmp = comparison_df["manufacturer"].astype(str).str.lower().eq("aco")
+            if aco_cmp.any():
+                cmp_ct = comparison_df.get("candidate_type", pd.Series(index=comparison_df.index, dtype=object)).astype(str).str.lower()
+                cmp_prom = comparison_df.get("promote_to_product", pd.Series(index=comparison_df.index, dtype=object)).astype(str).str.lower()
+                comparison_df = comparison_df[~(aco_cmp & (cmp_ct == "component") & (cmp_prom == "no"))].copy()
+        if not comparison_df.empty and not excluded_df.empty:
+            excluded_aco_ids = set(
+                excluded_df.loc[
+                    excluded_df.get("manufacturer", pd.Series(dtype=str)).astype(str).str.lower().eq("aco"),
+                    "product_id",
+                ].astype(str)
+            )
+            if excluded_aco_ids:
+                comparison_df = comparison_df[~comparison_df["product_id"].astype(str).isin(excluded_aco_ids)].copy()
 
         # If concrete NEXSYS + KA4121/KA4122 assembled benchmark rows exist,
         # remove the generic base NEXSYS row from Comparison. Otherwise it would
