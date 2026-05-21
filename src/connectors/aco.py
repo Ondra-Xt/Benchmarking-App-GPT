@@ -1232,6 +1232,41 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "sample_missing_length_rows": json.dumps(sample_missing_length_rows, ensure_ascii=False),
     })
 
+    # Stage-1 enrichment: ensure article-backed grate components discovered from
+    # real compatibility pages are present in candidate registry.
+    try:
+        existing_ids = {str(r.get("product_id") or "") for r in out}
+        seed_rows = [r for r in out if str(r.get("manufacturer") or "").lower() == "aco" and str(r.get("product_family") or "") in {"showerdrain_c", "showerdrain_cplus", "showerdrain_eplus", "showerdrain_mplus"}]
+        for rr in seed_rows:
+            purl = str(rr.get("product_url") or "")
+            if not purl:
+                continue
+            for opt in get_bom_options(purl):
+                cid = str(opt.get("component_id") or "").strip()
+                if not cid or cid in existing_ids:
+                    continue
+                if not re.match(r"^aco-\d{8}$", cid):
+                    continue
+                if str(opt.get("option_role") or "").lower() != "grate":
+                    continue
+                src_url = str(opt.get("source_url") or purl)
+                out.append({
+                    "manufacturer": "aco",
+                    "product_id": cid,
+                    "product_family": str(opt.get("option_family") or rr.get("product_family") or ""),
+                    "product_name": str(opt.get("option_label") or f"Grate {cid}"),
+                    "product_url": src_url,
+                    "sources": src_url.split("#", 1)[0],
+                    "candidate_type": "component",
+                    "system_role": "grate",
+                    "classification_reason": "grate_article_component_from_bom_discovery",
+                    "complete_system": "component",
+                    "article_no": cid.replace("aco-", ""),
+                })
+                existing_ids.add(cid)
+    except Exception:
+        pass
+
     return out, debug
 
 

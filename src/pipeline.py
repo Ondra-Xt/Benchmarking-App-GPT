@@ -2959,6 +2959,19 @@ def run_update(
                 aco_by_id[pid] = rr
         existing_ids = {str(r.get("product_id") or "") for r in products_rows}
         seen_assembled_keys: Set[Tuple[str, str, str]] = set()
+        canonical_c_grate_id = ""
+        for br0 in [r for r in bom_rows if str(r.get("manufacturer") or "").lower() == "aco"]:
+            if str(br0.get("parent_family") or "") != "showerdrain_c":
+                continue
+            if str(br0.get("option_type") or "").lower() != "compatible_grate" or str(br0.get("option_role") or "").lower() != "grate":
+                continue
+            cid0 = str(br0.get("component_id") or "").strip()
+            if not cid0:
+                continue
+            if re.match(r"^aco-\d{8}$", cid0):
+                continue
+            canonical_c_grate_id = cid0
+            break
         tech_keys = [
             "flow_rate_lps", "flow_rate_10mm_lps", "flow_rate_20mm_lps",
             "flow_rate_lps_options", "flow_rate_raw_text", "flow_rate_unit", "flow_rate_status",
@@ -2980,6 +2993,11 @@ def run_update(
                 continue
             pid = str(br.get("product_id") or "").strip()
             cid = str(br.get("component_id") or "").strip()
+            if fam == "showerdrain_c" and is_grate_pair:
+                if re.match(r"^aco-\d{8}$", cid):
+                    continue
+                if canonical_c_grate_id and cid != canonical_c_grate_id:
+                    continue
             parent = aco_by_id.get(pid, {})
             comp = aco_by_id.get(cid, {})
             if not parent or not comp:
