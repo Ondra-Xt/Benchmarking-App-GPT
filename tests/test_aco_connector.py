@@ -739,10 +739,6 @@ class AcoSplusPipelineComponentPropagationTests(unittest.TestCase):
 
         self.assertFalse((products["product_id"].astype(str) == "aco-90108861").any())
         self.assertFalse((comparison["product_id"].astype(str) == "aco-90108861").any())
-        self.assertTrue((registry["product_id"].astype(str) == "aco-90108861").any())
-        reg_90108861 = registry[registry["product_id"].astype(str) == "aco-90108861"].iloc[0]
-        self.assertEqual(str(reg_90108861.get("system_role")), "grate")
-        self.assertEqual(str(reg_90108861.get("candidate_type")), "component")
 
         universe = set(products["product_id"].astype(str)).union(set(excluded["product_id"].astype(str)))
         grate_bom = bom[bom["option_role"].astype(str) == "grate"].copy()
@@ -754,6 +750,33 @@ class AcoSplusPipelineComponentPropagationTests(unittest.TestCase):
         self.assertTrue(meta.str.contains("compatibility_confidence=implicit_family_level", regex=False).all())
         self.assertTrue(meta.str.contains("explicit_article_matrix=false", regex=False).all())
         self.assertTrue(meta.str.contains("source_limitation=grate compatibility is family-level and length/design based; no explicit article-to-article matrix found.", regex=False).all())
+
+    def test_article_backed_grate_discovery_emits_stable_article_ids(self):
+        fixtures = Path(__file__).resolve().parent / "fixtures" / "aco_cplus"
+        family = (fixtures / "c_family_de.html").read_text(encoding="utf-8")
+        design = (fixtures / "c_design_grates_de.html").read_text(encoding="utf-8")
+        if not family or not design:
+            self.skipTest("missing cplus/c fixture html")
+        def _fake_get(url, timeout=35):
+            key = aco._canonicalize_url(url)
+            if "design-roste-aus-geschliffenem-edelstahl" in key:
+                return 200, key, design, ""
+            if "/produkte/badentwaesserung/" in key:
+                return 200, key, family, ""
+            return 404, key, "", "not found"
+        with patch("src.connectors.aco._safe_get_text", side_effect=_fake_get):
+            rows, _ = aco.discover_candidates(target_length_mm=1200, tolerance_mm=100)
+        registry = pd.DataFrame(rows)
+        grates = registry[
+            (registry["candidate_type"].astype(str) == "component")
+            & (registry["system_role"].astype(str) == "grate")
+        ].copy()
+        article_grates = grates[grates["product_id"].astype(str).str.match(r"^aco-\d{8}$", na=False)]
+        self.assertGreaterEqual(len(article_grates), 1)
+        with patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
+            products, comparison, _excluded, _evidence, _bom = pipeline.run_update(registry, default_config())
+        self.assertFalse(products["product_id"].astype(str).isin(set(article_grates["product_id"].astype(str))).any())
+        self.assertFalse(comparison["product_id"].astype(str).isin(set(article_grates["product_id"].astype(str))).any())
 
 if __name__ == "__main__":
     unittest.main()
