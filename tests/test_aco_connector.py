@@ -752,6 +752,28 @@ class AcoSplusPipelineComponentPropagationTests(unittest.TestCase):
         self.assertTrue(meta.str.contains("explicit_article_matrix=false", regex=False).all())
         self.assertTrue(meta.str.contains("source_limitation=grate compatibility is family-level and length/design based; no explicit article-to-article matrix found.", regex=False).all())
 
+    def test_article_backed_grate_discovery_emits_component_contract(self):
+        grate_url = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-cplus/design-roste/"
+        pages = {
+            "https://www.aco-haustechnik.de/produkte/badentwaesserung/": f"<html><body><main><a href='{grate_url}'>Design-Roste</a></main></body></html>",
+            grate_url: """<html><body><main><h1>ACO ShowerDrain C+ Design-Roste</h1>
+                <table><tr><th>L1</th><th>Artikel</th></tr><tr><td>1185 mm</td><td>9010.88.61</td></tr></table>
+            </main></body></html>""",
+        }
+        def _fake_get(url, timeout=35):
+            key = aco._canonicalize_url(url)
+            html = pages.get(key)
+            return (200, key, html, "") if html is not None else (404, key, "", "not found")
+
+        with patch("src.connectors.aco._safe_get_text", side_effect=_fake_get):
+            rows, _ = aco.discover_candidates(target_length_mm=1200, tolerance_mm=100)
+
+        df = pd.DataFrame(rows)
+        grate = df[(df["candidate_type"].astype(str) == "component") & (df["system_role"].astype(str) == "grate")]
+        self.assertFalse(grate.empty)
+        self.assertTrue(grate["product_id"].astype(str).str.match(r"^aco-\d{8}$").any())
+        self.assertTrue(grate["product_url"].astype(str).str.contains("#article-", regex=False).any())
+
 if __name__ == "__main__":
     unittest.main()
 
