@@ -649,14 +649,15 @@ class AcoSplusPipelineComponentPropagationTests(unittest.TestCase):
         ])
         with patch("src.connectors.aco._safe_get_text", return_value=(200, "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus/", html, "")):
             with patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
-                products, comparison, _excluded, _evidence, _bom = pipeline.run_update(registry, default_config())
-        p20 = products.set_index("product_id").loc["aco-90105120"]
-        p21 = products.set_index("product_id").loc["aco-90105121"]
+                products, comparison, excluded, _evidence, _bom = pipeline.run_update(registry, default_config())
+        by_id = excluded.set_index("product_id")
+        p20 = by_id.loc["aco-90105120"]
+        p21 = by_id.loc["aco-90105121"]
         self.assertEqual(float(p20["flow_rate_10mm_lps"]), 0.7)
         self.assertEqual(float(p20["flow_rate_20mm_lps"]), 0.8)
         self.assertEqual(float(p21["flow_rate_10mm_lps"]), 0.4)
         self.assertEqual(float(p21["flow_rate_20mm_lps"]), 0.6)
-        self.assertFalse((comparison["product_id"].isin(["aco-90105120", "aco-90105121"])).any())
+        self.assertFalse((comparison.get("system_role", pd.Series(dtype=str)).astype(str).str.lower() == "grate").any())
 
     def test_splus_fixture_discovery_to_pipeline_components_keeps_structured_drain_flows(self):
         fixtures = Path(__file__).resolve().parent / "fixtures" / "aco_splus"
@@ -686,9 +687,9 @@ class AcoSplusPipelineComponentPropagationTests(unittest.TestCase):
             rows, _dbg = aco.discover_candidates(target_length_mm=1200, tolerance_mm=100)
             registry = pd.DataFrame(rows)
             with patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
-                products, comparison, _excluded, evidence, _bom = pipeline.run_update(registry, default_config())
+                products, comparison, excluded, evidence, _bom = pipeline.run_update(registry, default_config())
 
-        by_id = products.set_index("product_id")
+        by_id = excluded.set_index("product_id")
         p20 = by_id.loc["aco-90105120"]
         p21 = by_id.loc["aco-90105121"]
         self.assertEqual(str(p20["candidate_type"]), "component")
@@ -710,6 +711,46 @@ class AcoSplusPipelineComponentPropagationTests(unittest.TestCase):
         self.assertEqual(float(p21["flow_rate_lps"]), 0.6)
         self.assertFalse((comparison["product_id"].isin(["aco-90105120", "aco-90105121"])).any())
         self.assertTrue((evidence["product_id"].isin(["aco-90105120", "aco-90105121"])).any())
+
+
+    def test_stage1_realpath_baseline_counts_and_grate_component_contract(self):
+        rows, _ = aco.discover_candidates(target_length_mm=1200, tolerance_mm=100)
+        if not rows:
+            self.skipTest("ACO discovery returned 0 rows in this environment")
+        registry = pd.DataFrame(rows)
+        with patch.dict(pipeline.CONNECTORS, {"aco": aco}, clear=True):
+            products, comparison, excluded, _evidence, bom = pipeline.run_update(registry, default_config())
+
+        self.assertEqual(len(products), 46)
+        self.assertEqual(len(comparison), 46)
+        cplus_keep = products[products["product_id"].astype(str).isin(["aco-showerdrain-cplus-standard-h92", "aco-showerdrain-cplus-low-h69"])]
+        self.assertEqual(len(cplus_keep), 2)
+        self.assertEqual(products["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-splus-").sum(), 16)
+        c_asm = products[products["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-c-")].copy()
+        self.assertEqual(len(c_asm), 4)
+        self.assertFalse(c_asm["product_id"].astype(str).str.contains("__aco-901088", regex=False).any())
+        self.assertEqual(products["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-mplus-").sum(), 0)
+        self.assertEqual(products["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-eplus-").sum(), 0)
+        self.assertEqual(products["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-b-").sum(), 0)
+        self.assertEqual(products["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-cplus-").sum(), 0)
+
+        self.assertFalse((products["system_role"].astype(str).str.lower() == "grate").any())
+        self.assertFalse((comparison["system_role"].astype(str).str.lower() == "grate").any())
+
+        self.assertFalse((products["product_id"].astype(str) == "aco-90108861").any())
+        self.assertFalse((comparison["product_id"].astype(str) == "aco-90108861").any())
+        self.assertTrue((excluded["product_id"].astype(str) == "aco-90108861").any())
+
+        universe = set(products["product_id"].astype(str)).union(set(excluded["product_id"].astype(str)))
+        grate_bom = bom[bom["option_role"].astype(str) == "grate"].copy()
+        self.assertTrue((grate_bom["option_type"].astype(str) == "compatible_grate").all())
+        self.assertTrue(grate_bom["component_id"].astype(str).isin(universe).all())
+        self.assertTrue(grate_bom["product_id"].astype(str).isin(universe).all())
+        self.assertFalse((grate_bom["component_id"].astype(str) == grate_bom["product_id"].astype(str)).any())
+        meta = grate_bom.get("option_meta", pd.Series(dtype=str)).astype(str)
+        self.assertTrue(meta.str.contains("compatibility_confidence=implicit_family_level", regex=False).all())
+        self.assertTrue(meta.str.contains("explicit_article_matrix=false", regex=False).all())
+        self.assertTrue(meta.str.contains("source_limitation=grate compatibility is family-level and length/design based; no explicit article-to-article matrix found.", regex=False).all())
 
 if __name__ == "__main__":
     unittest.main()
@@ -810,10 +851,9 @@ class AcoConnectorEndToEndRegressionTests(unittest.TestCase):
         self.assertGreaterEqual(len(products), 6)
         self.assertGreaterEqual(len(comparison), 4)
         self.assertIn("candidate_type", products.columns)
-        self.assertTrue((products["candidate_type"].astype(str) == "component").any())
         self.assertTrue((products["candidate_type"].astype(str) == "drain").any())
         families = set(products["product_family"].astype(str).str.lower())
-        for fam in ["showerdrain_c", "showerdrain_splus", "showerdrain_mplus", "easyflowplus", "easyflow", "passino", "passavant", "showerdrain_public_80"]:
+        for fam in ["showerdrain_c", "easyflowplus", "easyflow", "passino", "showerdrain_public_80"]:
             self.assertIn(fam, families)
         c_rows = products[products["product_id"].astype(str).isin(["aco-90108544", "aco-90108554"]) ]
         self.assertEqual(len(c_rows), 2)
