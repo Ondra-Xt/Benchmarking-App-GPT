@@ -2959,6 +2959,19 @@ def run_update(
                 aco_by_id[pid] = rr
         existing_ids = {str(r.get("product_id") or "") for r in products_rows}
         seen_assembled_keys: Set[Tuple[str, str, str]] = set()
+        canonical_c_grate_id = ""
+        for br0 in [r for r in bom_rows if str(r.get("manufacturer") or "").lower() == "aco"]:
+            if str(br0.get("parent_family") or "") != "showerdrain_c":
+                continue
+            if str(br0.get("option_type") or "").lower() != "compatible_grate" or str(br0.get("option_role") or "").lower() != "grate":
+                continue
+            cid0 = str(br0.get("component_id") or "").strip()
+            if not cid0:
+                continue
+            if re.match(r"^aco-\d{8}$", cid0):
+                continue
+            canonical_c_grate_id = cid0
+            break
         tech_keys = [
             "flow_rate_lps", "flow_rate_10mm_lps", "flow_rate_20mm_lps",
             "flow_rate_lps_options", "flow_rate_raw_text", "flow_rate_unit", "flow_rate_status",
@@ -2980,6 +2993,11 @@ def run_update(
                 continue
             pid = str(br.get("product_id") or "").strip()
             cid = str(br.get("component_id") or "").strip()
+            if fam == "showerdrain_c" and is_grate_pair:
+                if re.match(r"^aco-\d{8}$", cid):
+                    continue
+                if canonical_c_grate_id and cid != canonical_c_grate_id:
+                    continue
             parent = aco_by_id.get(pid, {})
             comp = aco_by_id.get(cid, {})
             if not parent or not comp:
@@ -4019,6 +4037,49 @@ def run_update(
                     products_df = products_df.drop(columns=[cc])
     excluded_df = pd.DataFrame(excluded_rows)
     evidence_df = pd.DataFrame(evidence_rows)
+    # ACO Stage-1 guardrail: keep component-only rows out of final Products while
+    # preserving them in the candidate/component universe (Excluded).
+    if not products_df.empty and "manufacturer" in products_df.columns:
+        aco_mask = products_df["manufacturer"].astype(str).str.lower().eq("aco")
+        if aco_mask.any():
+            aco_rows_df = products_df.loc[aco_mask].copy()
+            aco_ct = aco_rows_df.get("candidate_type", pd.Series(index=aco_rows_df.index, dtype=object)).astype(str).str.lower()
+            aco_prom = aco_rows_df.get("promote_to_product", pd.Series(index=aco_rows_df.index, dtype=object)).astype(str).str.lower()
+            aco_role = aco_rows_df.get("system_role", pd.Series(index=aco_rows_df.index, dtype=object)).astype(str).str.lower()
+            aco_reason = aco_rows_df.get("promotion_reason", pd.Series(index=aco_rows_df.index, dtype=object)).astype(str).str.lower()
+            aco_why_not = aco_rows_df.get("why_not_product_reason", pd.Series(index=aco_rows_df.index, dtype=object)).astype(str).str.lower()
+            component_only_reason = {"cover_only_component", "accessory_only", "incomplete_assembly", "configuration_family", "not_complete_system"}
+            component_only_why_not = {"cover_only_component", "accessory_only", "incomplete_assembly", "configuration_family_not_final_product", "not_complete_system"}
+            is_component_only = (
+                ((aco_ct == "component") & (aco_prom == "no"))
+                | aco_reason.isin(component_only_reason)
+                | aco_why_not.isin(component_only_why_not)
+            )
+            keep_aco_in_products = ~is_component_only
+            move_to_excluded = aco_rows_df.loc[~keep_aco_in_products].copy()
+            if not move_to_excluded.empty:
+                if "current_status" not in move_to_excluded.columns:
+                    move_to_excluded["current_status"] = ""
+                if "promote_to_product" not in move_to_excluded.columns:
+                    move_to_excluded["promote_to_product"] = "no"
+                move_to_excluded.loc[move_to_excluded["current_status"].astype(str).str.strip().eq(""), "current_status"] = "excluded_from_products_component_only"
+                # Preserve explicit reasons when present; otherwise mark as component-only exclusion.
+                move_to_excluded.loc[
+                    move_to_excluded.get("why_not_product_reason", pd.Series(index=move_to_excluded.index, dtype=object)).astype(str).str.strip().eq(""),
+                    "why_not_product_reason",
+                ] = "component_not_final_product"
+                # Ensure known cover-only semantics remain explicit.
+                move_to_excluded.loc[aco_why_not.reindex(move_to_excluded.index).eq("cover_only_component"), "why_not_product_reason"] = "cover_only_component"
+                excluded_df = pd.concat([excluded_df, move_to_excluded], ignore_index=True, sort=False)
+
+            products_df = pd.concat(
+                [
+                    products_df.loc[~aco_mask],
+                    aco_rows_df.loc[keep_aco_in_products],
+                ],
+                ignore_index=True,
+                sort=False,
+            )
     if bom_rows:
         universe_ids = {str(r.get("product_id") or "") for r in products_rows if str(r.get("manufacturer") or "").lower() == "aco"}
         filtered_bom_rows = []
@@ -4045,6 +4106,21 @@ def run_update(
             )
             if component_ids:
                 comparison_df = comparison_df[~comparison_df["product_id"].astype(str).isin(component_ids)].copy()
+        if not comparison_df.empty and "manufacturer" in comparison_df.columns:
+            aco_cmp = comparison_df["manufacturer"].astype(str).str.lower().eq("aco")
+            if aco_cmp.any():
+                cmp_ct = comparison_df.get("candidate_type", pd.Series(index=comparison_df.index, dtype=object)).astype(str).str.lower()
+                cmp_prom = comparison_df.get("promote_to_product", pd.Series(index=comparison_df.index, dtype=object)).astype(str).str.lower()
+                comparison_df = comparison_df[~(aco_cmp & (cmp_ct == "component") & (cmp_prom == "no"))].copy()
+        if not comparison_df.empty and not excluded_df.empty:
+            excluded_aco_ids = set(
+                excluded_df.loc[
+                    excluded_df.get("manufacturer", pd.Series(dtype=str)).astype(str).str.lower().eq("aco"),
+                    "product_id",
+                ].astype(str)
+            )
+            if excluded_aco_ids:
+                comparison_df = comparison_df[~comparison_df["product_id"].astype(str).isin(excluded_aco_ids)].copy()
 
         # If concrete NEXSYS + KA4121/KA4122 assembled benchmark rows exist,
         # remove the generic base NEXSYS row from Comparison. Otherwise it would

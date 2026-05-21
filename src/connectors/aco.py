@@ -223,6 +223,30 @@ def _extract_pairs_from_table(html: str) -> List[Tuple[int, str, str]]:
     return out
 
 
+def _extract_article_numbers_from_table(html: str) -> List[Tuple[str, str]]:
+    soup = BeautifulSoup(html or "", "lxml")
+    out: List[Tuple[str, str]] = []
+    seen = set()
+    for table in soup.select("table"):
+        txt = _clean_text(table.get_text(" ", strip=True)).lower()
+        if "artikel" not in txt:
+            continue
+        for tr in table.select("tr"):
+            row_text = _clean_text(tr.get_text(" ", strip=True))
+            m = ARTICLE_RE.search(row_text)
+            if not m:
+                continue
+            article_no = m.group(0)
+            article_digits = _digits_only(article_no)
+            if len(article_digits) < 6:
+                continue
+            if article_digits in seen:
+                continue
+            seen.add(article_digits)
+            out.append((article_no, article_digits))
+    return out
+
+
 
 
 def _extract_article_row_diagnostics_from_table(html: str) -> List[Dict[str, Any]]:
@@ -935,6 +959,60 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                 role = _infer_mplus_role(final_c, title_base)
             if family == "showerdrain_eplus":
                 role = _infer_eplus_role(final_c, title_base)
+            if family in {"showerdrain_c", "showerdrain_cplus", "showerdrain_eplus"} and role == "grate" and pairs:
+                for l1_mm, article_no, article_digits in pairs:
+                    pid = _stable_aco_id(final_c, family, "grate", title_base, article_digits)
+                    if pid in seen_ids:
+                        continue
+                    seen_ids.add(pid)
+                    kept += 1
+                    kept_total += 1
+                    out.append({
+                        "manufacturer": "aco",
+                        "product_id": pid,
+                        "product_family": family,
+                        "product_name": f"{title_base} (Artikel-Nr. {article_no})",
+                        "product_url": f"{final_c}#article-{article_digits}",
+                        "sources": final_c,
+                        "candidate_type": "component",
+                        "system_role": "grate",
+                        "classification_reason": "grate_article_component",
+                        "complete_system": "component",
+                        "article_no": article_no,
+                        "row_length_raw_mm": l1_mm,
+                        "row_length_nominal_mm": _nominal_length_from_l1(l1_mm),
+                    })
+                    candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                    candidates_by_role["grate"] = candidates_by_role.get("grate", 0) + 1
+                debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": err, "candidates_found": kept, "method": "table", "is_index": None})
+                continue
+            if family in {"showerdrain_c", "showerdrain_cplus", "showerdrain_mplus", "showerdrain_eplus"} and role == "grate" and not pairs:
+                article_rows = _extract_article_numbers_from_table(html)
+                for article_no, article_digits in article_rows:
+                    pid = _stable_aco_id(final_c, family, "grate", title_base, article_digits)
+                    if pid in seen_ids:
+                        continue
+                    seen_ids.add(pid)
+                    kept += 1
+                    kept_total += 1
+                    out.append({
+                        "manufacturer": "aco",
+                        "product_id": pid,
+                        "product_family": family,
+                        "product_name": f"{title_base} (Artikel-Nr. {article_no})",
+                        "product_url": f"{final_c}#article-{article_digits}",
+                        "sources": final_c,
+                        "candidate_type": "component",
+                        "system_role": "grate",
+                        "classification_reason": "grate_article_component",
+                        "complete_system": "component",
+                        "article_no": article_no,
+                    })
+                    candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                    candidates_by_role["grate"] = candidates_by_role.get("grate", 0) + 1
+                if article_rows:
+                    debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": err, "candidates_found": kept, "method": "table_article_only", "is_index": None})
+                    continue
             if family == "showerdrain_mplus" and pairs:
                 for l1_mm, article_no, article_digits in pairs:
                     role_m = _infer_mplus_role(final_c, title_base)
@@ -1153,6 +1231,41 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "sample_rejected_lengths": json.dumps(sample_rejected_lengths, ensure_ascii=False),
         "sample_missing_length_rows": json.dumps(sample_missing_length_rows, ensure_ascii=False),
     })
+
+    # Stage-1 enrichment: ensure article-backed grate components discovered from
+    # real compatibility pages are present in candidate registry.
+    try:
+        existing_ids = {str(r.get("product_id") or "") for r in out}
+        seed_rows = [r for r in out if str(r.get("manufacturer") or "").lower() == "aco" and str(r.get("product_family") or "") in {"showerdrain_c", "showerdrain_cplus", "showerdrain_eplus", "showerdrain_mplus"}]
+        for rr in seed_rows:
+            purl = str(rr.get("product_url") or "")
+            if not purl:
+                continue
+            for opt in get_bom_options(purl):
+                cid = str(opt.get("component_id") or "").strip()
+                if not cid or cid in existing_ids:
+                    continue
+                if not re.match(r"^aco-\d{8}$", cid):
+                    continue
+                if str(opt.get("option_role") or "").lower() != "grate":
+                    continue
+                src_url = str(opt.get("source_url") or purl)
+                out.append({
+                    "manufacturer": "aco",
+                    "product_id": cid,
+                    "product_family": str(opt.get("option_family") or rr.get("product_family") or ""),
+                    "product_name": str(opt.get("option_label") or f"Grate {cid}"),
+                    "product_url": src_url,
+                    "sources": src_url.split("#", 1)[0],
+                    "candidate_type": "component",
+                    "system_role": "grate",
+                    "classification_reason": "grate_article_component_from_bom_discovery",
+                    "complete_system": "component",
+                    "article_no": cid.replace("aco-", ""),
+                })
+                existing_ids.add(cid)
+    except Exception:
+        pass
 
     return out, debug
 
