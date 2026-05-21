@@ -4019,6 +4019,48 @@ def run_update(
                     products_df = products_df.drop(columns=[cc])
     excluded_df = pd.DataFrame(excluded_rows)
     evidence_df = pd.DataFrame(evidence_rows)
+    # ACO Stage-1 guardrail: keep component-only rows out of final Products while
+    # preserving them in the candidate/component universe (Excluded).
+    if not products_df.empty and "manufacturer" in products_df.columns:
+        aco_mask = products_df["manufacturer"].astype(str).str.lower().eq("aco")
+        if aco_mask.any():
+            aco_rows_df = products_df.loc[aco_mask].copy()
+            aco_ct = aco_rows_df.get("candidate_type", pd.Series(index=aco_rows_df.index, dtype=object)).astype(str).str.lower()
+            aco_prom = aco_rows_df.get("promote_to_product", pd.Series(index=aco_rows_df.index, dtype=object)).astype(str).str.lower()
+            aco_role = aco_rows_df.get("system_role", pd.Series(index=aco_rows_df.index, dtype=object)).astype(str).str.lower()
+            aco_why_not = aco_rows_df.get("why_not_product_reason", pd.Series(index=aco_rows_df.index, dtype=object)).astype(str).str.lower()
+
+            aco_pid = aco_rows_df.get("product_id", pd.Series(index=aco_rows_df.index, dtype=object)).astype(str)
+            is_article_backed_grate = (
+                aco_role.isin({"grate", "cover", "design_grate", "rost", "abdeckung"})
+                & aco_pid.str.match(r"^aco-\d{8}$")
+            )
+            is_grate_component = is_article_backed_grate
+            keep_aco_in_products = ~is_grate_component
+            move_to_excluded = aco_rows_df.loc[~keep_aco_in_products].copy()
+            if not move_to_excluded.empty:
+                if "current_status" not in move_to_excluded.columns:
+                    move_to_excluded["current_status"] = ""
+                if "promote_to_product" not in move_to_excluded.columns:
+                    move_to_excluded["promote_to_product"] = "no"
+                move_to_excluded.loc[move_to_excluded["current_status"].astype(str).str.strip().eq(""), "current_status"] = "excluded_from_products_component_only"
+                # Preserve explicit reasons when present; otherwise mark as component-only exclusion.
+                move_to_excluded.loc[
+                    move_to_excluded.get("why_not_product_reason", pd.Series(index=move_to_excluded.index, dtype=object)).astype(str).str.strip().eq(""),
+                    "why_not_product_reason",
+                ] = "component_not_final_product"
+                # Ensure known cover-only semantics remain explicit.
+                move_to_excluded.loc[aco_why_not.reindex(move_to_excluded.index).eq("cover_only_component"), "why_not_product_reason"] = "cover_only_component"
+                excluded_df = pd.concat([excluded_df, move_to_excluded], ignore_index=True, sort=False)
+
+            products_df = pd.concat(
+                [
+                    products_df.loc[~aco_mask],
+                    aco_rows_df.loc[keep_aco_in_products],
+                ],
+                ignore_index=True,
+                sort=False,
+            )
     if bom_rows:
         universe_ids = {str(r.get("product_id") or "") for r in products_rows if str(r.get("manufacturer") or "").lower() == "aco"}
         filtered_bom_rows = []
