@@ -2695,6 +2695,13 @@ def run_update(
             if len(aco_debug["sample_aco_bom_options"]) < 20:
                 aco_debug["sample_aco_bom_options"].append(f"{pid}->{cid}:{option_type}")
 
+        grate_meta_required = (
+            "compatibility_confidence=implicit_family_level; "
+            "explicit_article_matrix=false; "
+            "source_limitation=grate compatibility is family-level and length/design based; "
+            "no explicit article-to-article matrix found."
+        )
+
         for fam, grp in by_family.items():
             bases = grp.get("base_set", [])
             grates = grp.get("grate", [])
@@ -2757,6 +2764,23 @@ def run_update(
         ef_opts = by_family.get("easyflow", {}).get("grate", []) + by_family.get("easyflow", {}).get("accessory", [])
         aco_debug["reference_v2_cross_family_rejected_count"] += len(by_family.get("easyflowplus", {}).get("base_set", [])) * len(ef_opts)
         aco_debug["reference_v2_cross_family_rejected_count"] += len(by_family.get("easyflow", {}).get("base_set", [])) * len(efp_opts)
+
+        # Normalize only ACO grate compatibility BOM metadata contract.
+        for rr in bom_rows:
+            if str(rr.get("manufacturer") or "").strip().lower() != "aco":
+                continue
+            if str(rr.get("option_type") or "").strip().lower() != "compatible_grate":
+                continue
+            if str(rr.get("option_role") or "").strip().lower() != "grate":
+                continue
+            meta = str(rr.get("option_meta") or "")
+            if (
+                "compatibility_confidence=implicit_family_level" in meta
+                and "explicit_article_matrix=false" in meta
+                and "source_limitation=grate compatibility is family-level and length/design based; no explicit article-to-article matrix found." in meta
+            ):
+                continue
+            rr["option_meta"] = grate_meta_required
 
         # reference v2 force-path: if easyflow family still has no emitted BOM rows,
         # use easyflow complete-system product(s) as BOM parents for easyflow option components.
@@ -4019,6 +4043,49 @@ def run_update(
                     products_df = products_df.drop(columns=[cc])
     excluded_df = pd.DataFrame(excluded_rows)
     evidence_df = pd.DataFrame(evidence_rows)
+    # ACO Stage-1 guardrail: keep component-only rows out of final Products while
+    # preserving them in the candidate/component universe (Excluded).
+    if not products_df.empty and "manufacturer" in products_df.columns:
+        aco_mask = products_df["manufacturer"].astype(str).str.lower().eq("aco")
+        if aco_mask.any():
+            aco_rows_df = products_df.loc[aco_mask].copy()
+            aco_ct = aco_rows_df.get("candidate_type", pd.Series(index=aco_rows_df.index, dtype=object)).astype(str).str.lower()
+            aco_prom = aco_rows_df.get("promote_to_product", pd.Series(index=aco_rows_df.index, dtype=object)).astype(str).str.lower()
+            aco_role = aco_rows_df.get("system_role", pd.Series(index=aco_rows_df.index, dtype=object)).astype(str).str.lower()
+            aco_reason = aco_rows_df.get("promotion_reason", pd.Series(index=aco_rows_df.index, dtype=object)).astype(str).str.lower()
+            aco_why_not = aco_rows_df.get("why_not_product_reason", pd.Series(index=aco_rows_df.index, dtype=object)).astype(str).str.lower()
+            component_only_reason = {"cover_only_component", "accessory_only", "incomplete_assembly", "configuration_family", "not_complete_system"}
+            component_only_why_not = {"cover_only_component", "accessory_only", "incomplete_assembly", "configuration_family_not_final_product", "not_complete_system"}
+            is_component_only = (
+                ((aco_ct == "component") & (aco_prom == "no"))
+                | aco_reason.isin(component_only_reason)
+                | aco_why_not.isin(component_only_why_not)
+            )
+            keep_aco_in_products = ~is_component_only
+            move_to_excluded = aco_rows_df.loc[~keep_aco_in_products].copy()
+            if not move_to_excluded.empty:
+                if "current_status" not in move_to_excluded.columns:
+                    move_to_excluded["current_status"] = ""
+                if "promote_to_product" not in move_to_excluded.columns:
+                    move_to_excluded["promote_to_product"] = "no"
+                move_to_excluded.loc[move_to_excluded["current_status"].astype(str).str.strip().eq(""), "current_status"] = "excluded_from_products_component_only"
+                # Preserve explicit reasons when present; otherwise mark as component-only exclusion.
+                move_to_excluded.loc[
+                    move_to_excluded.get("why_not_product_reason", pd.Series(index=move_to_excluded.index, dtype=object)).astype(str).str.strip().eq(""),
+                    "why_not_product_reason",
+                ] = "component_not_final_product"
+                # Ensure known cover-only semantics remain explicit.
+                move_to_excluded.loc[aco_why_not.reindex(move_to_excluded.index).eq("cover_only_component"), "why_not_product_reason"] = "cover_only_component"
+                excluded_df = pd.concat([excluded_df, move_to_excluded], ignore_index=True, sort=False)
+
+            products_df = pd.concat(
+                [
+                    products_df.loc[~aco_mask],
+                    aco_rows_df.loc[keep_aco_in_products],
+                ],
+                ignore_index=True,
+                sort=False,
+            )
     if bom_rows:
         universe_ids = {str(r.get("product_id") or "") for r in products_rows if str(r.get("manufacturer") or "").lower() == "aco"}
         filtered_bom_rows = []
@@ -4030,6 +4097,31 @@ def run_update(
             if component_id and component_id in universe_ids:
                 filtered_bom_rows.append(rr)
         bom_rows = filtered_bom_rows
+
+        # Final boundary normalization for ACO grate compatibility metadata.
+        # This runs after all BOM production/filter passes to cover late-added rows.
+        grate_meta_required = (
+            "compatibility_confidence=implicit_family_level; "
+            "explicit_article_matrix=false; "
+            "source_limitation=grate compatibility is family-level and length/design based; "
+            "no explicit article-to-article matrix found."
+        )
+        for rr in bom_rows:
+            if str(rr.get("manufacturer") or "").strip().lower() != "aco":
+                continue
+            if str(rr.get("option_type") or "").strip().lower() != "compatible_grate":
+                continue
+            if str(rr.get("option_role") or "").strip().lower() != "grate":
+                continue
+            meta = str(rr.get("option_meta") or "")
+            if (
+                "compatibility_confidence=" in meta
+                or "explicit_article_matrix=" in meta
+                or "source_limitation=" in meta
+            ):
+                continue
+            if meta.strip().endswith(":compatible_grate:grate"):
+                rr["option_meta"] = grate_meta_required
     bom_options_df = pd.DataFrame(bom_rows)
 
     # Final safety guard: Comparison must be a subset of benchmark-eligible Products only.
@@ -4045,6 +4137,21 @@ def run_update(
             )
             if component_ids:
                 comparison_df = comparison_df[~comparison_df["product_id"].astype(str).isin(component_ids)].copy()
+        if not comparison_df.empty and "manufacturer" in comparison_df.columns:
+            aco_cmp = comparison_df["manufacturer"].astype(str).str.lower().eq("aco")
+            if aco_cmp.any():
+                cmp_ct = comparison_df.get("candidate_type", pd.Series(index=comparison_df.index, dtype=object)).astype(str).str.lower()
+                cmp_prom = comparison_df.get("promote_to_product", pd.Series(index=comparison_df.index, dtype=object)).astype(str).str.lower()
+                comparison_df = comparison_df[~(aco_cmp & (cmp_ct == "component") & (cmp_prom == "no"))].copy()
+        if not comparison_df.empty and not excluded_df.empty:
+            excluded_aco_ids = set(
+                excluded_df.loc[
+                    excluded_df.get("manufacturer", pd.Series(dtype=str)).astype(str).str.lower().eq("aco"),
+                    "product_id",
+                ].astype(str)
+            )
+            if excluded_aco_ids:
+                comparison_df = comparison_df[~comparison_df["product_id"].astype(str).isin(excluded_aco_ids)].copy()
 
         # If concrete NEXSYS + KA4121/KA4122 assembled benchmark rows exist,
         # remove the generic base NEXSYS row from Comparison. Otherwise it would
