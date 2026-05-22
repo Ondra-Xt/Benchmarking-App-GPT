@@ -1072,6 +1072,6 @@ class AcoConnectorCplusStage1Tests(unittest.TestCase):
         self.assertFalse(((cplus_bom["product_id"].astype(str) == "aco-showerdrain-cplus-low-h69") & (cplus_bom["component_id"].astype(str) == "aco-showerdrain-cplus-standard-h92")).any())
         self.assertTrue(cplus_bom["option_meta"].astype(str).str.contains("compatibility_confidence=implicit_family_level", regex=False).all())
         self.assertTrue(cplus_bom["option_meta"].astype(str).str.contains("explicit_article_matrix=false", regex=False).all())
-        self.assertTrue(cplus_bom["option_meta"].astype(str).str.contains("source_limitation=C+ / C grate compatibility is family-level and length-based; no explicit article-to-article matrix found.", regex=False).all())
+        self.assertTrue(cplus_bom["option_meta"].astype(str).str.contains("source_limitation=grate compatibility is family-level and length/design based; no explicit article-to-article matrix found.", regex=False).all())
         low = products[products["product_id"].astype(str) == "aco-showerdrain-cplus-low-h69"].iloc[0]
         self.assertNotEqual(str(low.get("flow_rate_lps_options")), "[0.91]")

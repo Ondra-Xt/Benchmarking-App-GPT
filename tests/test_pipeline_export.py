@@ -470,8 +470,9 @@ class PipelineExportTests(unittest.TestCase):
         aco_bom = bom[bom["manufacturer"] == "aco"]
         self.assertFalse(aco_bom.empty)
         self.assertTrue({"component_id", "option_type", "option_family", "option_role", "parent_family", "source_url", "option_meta"}.issubset(set(aco_bom.columns)))
-        # ensure options are concise and cleaned
-        self.assertTrue((aco_bom["option_meta"].astype(str).str.len() < 180).all())
+        # ensure options are concise and cleaned (grate contract string is intentionally longer)
+        short_meta = aco_bom[~((aco_bom["option_type"].astype(str) == "compatible_grate") & (aco_bom["option_role"].astype(str) == "grate"))]
+        self.assertTrue((short_meta["option_meta"].astype(str).str.len() < 180).all())
         self.assertTrue((aco_bom["option_label"].astype(str).str.len() < 150).all())
         self.assertTrue((aco_bom["option_label"].astype(str).str.contains("wishlist|warenkorb|menge", case=False, regex=True) == False).all())
         # spot-check at least one showerdrain base->grate and one accessory option
