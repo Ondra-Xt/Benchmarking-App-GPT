@@ -4097,6 +4097,31 @@ def run_update(
             if component_id and component_id in universe_ids:
                 filtered_bom_rows.append(rr)
         bom_rows = filtered_bom_rows
+
+        # Final boundary normalization for ACO grate compatibility metadata.
+        # This runs after all BOM production/filter passes to cover late-added rows.
+        grate_meta_required = (
+            "compatibility_confidence=implicit_family_level; "
+            "explicit_article_matrix=false; "
+            "source_limitation=grate compatibility is family-level and length/design based; "
+            "no explicit article-to-article matrix found."
+        )
+        for rr in bom_rows:
+            if str(rr.get("manufacturer") or "").strip().lower() != "aco":
+                continue
+            if str(rr.get("option_type") or "").strip().lower() != "compatible_grate":
+                continue
+            if str(rr.get("option_role") or "").strip().lower() != "grate":
+                continue
+            meta = str(rr.get("option_meta") or "")
+            if (
+                "compatibility_confidence=" in meta
+                or "explicit_article_matrix=" in meta
+                or "source_limitation=" in meta
+            ):
+                continue
+            if meta.strip().endswith(":compatible_grate:grate"):
+                rr["option_meta"] = grate_meta_required
     bom_options_df = pd.DataFrame(bom_rows)
 
     # Final safety guard: Comparison must be a subset of benchmark-eligible Products only.
