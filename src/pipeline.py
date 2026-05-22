@@ -2695,6 +2695,13 @@ def run_update(
             if len(aco_debug["sample_aco_bom_options"]) < 20:
                 aco_debug["sample_aco_bom_options"].append(f"{pid}->{cid}:{option_type}")
 
+        grate_meta_required = (
+            "compatibility_confidence=implicit_family_level; "
+            "explicit_article_matrix=false; "
+            "source_limitation=grate compatibility is family-level and length/design based; "
+            "no explicit article-to-article matrix found."
+        )
+
         for fam, grp in by_family.items():
             bases = grp.get("base_set", [])
             grates = grp.get("grate", [])
@@ -2757,6 +2764,23 @@ def run_update(
         ef_opts = by_family.get("easyflow", {}).get("grate", []) + by_family.get("easyflow", {}).get("accessory", [])
         aco_debug["reference_v2_cross_family_rejected_count"] += len(by_family.get("easyflowplus", {}).get("base_set", [])) * len(ef_opts)
         aco_debug["reference_v2_cross_family_rejected_count"] += len(by_family.get("easyflow", {}).get("base_set", [])) * len(efp_opts)
+
+        # Normalize only ACO grate compatibility BOM metadata contract.
+        for rr in bom_rows:
+            if str(rr.get("manufacturer") or "").strip().lower() != "aco":
+                continue
+            if str(rr.get("option_type") or "").strip().lower() != "compatible_grate":
+                continue
+            if str(rr.get("option_role") or "").strip().lower() != "grate":
+                continue
+            meta = str(rr.get("option_meta") or "")
+            if (
+                "compatibility_confidence=implicit_family_level" in meta
+                and "explicit_article_matrix=false" in meta
+                and "source_limitation=grate compatibility is family-level and length/design based; no explicit article-to-article matrix found." in meta
+            ):
+                continue
+            rr["option_meta"] = grate_meta_required
 
         # reference v2 force-path: if easyflow family still has no emitted BOM rows,
         # use easyflow complete-system product(s) as BOM parents for easyflow option components.
@@ -4073,6 +4097,31 @@ def run_update(
             if component_id and component_id in universe_ids:
                 filtered_bom_rows.append(rr)
         bom_rows = filtered_bom_rows
+
+        # Final boundary normalization for ACO grate compatibility metadata.
+        # This runs after all BOM production/filter passes to cover late-added rows.
+        grate_meta_required = (
+            "compatibility_confidence=implicit_family_level; "
+            "explicit_article_matrix=false; "
+            "source_limitation=grate compatibility is family-level and length/design based; "
+            "no explicit article-to-article matrix found."
+        )
+        for rr in bom_rows:
+            if str(rr.get("manufacturer") or "").strip().lower() != "aco":
+                continue
+            if str(rr.get("option_type") or "").strip().lower() != "compatible_grate":
+                continue
+            if str(rr.get("option_role") or "").strip().lower() != "grate":
+                continue
+            meta = str(rr.get("option_meta") or "")
+            if (
+                "compatibility_confidence=" in meta
+                or "explicit_article_matrix=" in meta
+                or "source_limitation=" in meta
+            ):
+                continue
+            if meta.strip().endswith(":compatible_grate:grate"):
+                rr["option_meta"] = grate_meta_required
     bom_options_df = pd.DataFrame(bom_rows)
 
     # Final safety guard: Comparison must be a subset of benchmark-eligible Products only.
