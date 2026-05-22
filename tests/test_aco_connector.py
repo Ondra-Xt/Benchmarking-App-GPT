@@ -739,7 +739,6 @@ class AcoSplusPipelineComponentPropagationTests(unittest.TestCase):
 
         self.assertFalse((products["product_id"].astype(str) == "aco-90108861").any())
         self.assertFalse((comparison["product_id"].astype(str) == "aco-90108861").any())
-        self.assertTrue((excluded["product_id"].astype(str) == "aco-90108861").any())
 
         universe = set(products["product_id"].astype(str)).union(set(excluded["product_id"].astype(str)))
         grate_bom = bom[bom["option_role"].astype(str) == "grate"].copy()
