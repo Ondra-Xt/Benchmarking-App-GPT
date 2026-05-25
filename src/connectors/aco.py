@@ -691,6 +691,32 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                         candidates_by_role["complete_system"] = candidates_by_role.get("complete_system", 0) + 1
                     debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": "no_article_rows_b_page_level", "candidates_found": kept, "method": method, "is_index": None})
                     continue
+                if role == "accessory":
+                    pid = _stable_aco_id(final_c, family, "accessory", title_base)
+                    if pid not in seen_ids:
+                        seen_ids.add(pid)
+                        kept += 1
+                        kept_total += 1
+                        out.append({
+                            "manufacturer": "aco",
+                            "product_id": pid,
+                            "product_family": family if family != "unknown" else "ShowerDrain",
+                            "product_name": title_base,
+                            "product_url": final_c,
+                            "sources": final_c,
+                            "candidate_type": "component",
+                            "system_role": "accessory",
+                            "classification_reason": "accessory_page_component",
+                            "complete_system": "component",
+                            "selected_length_mm": want,
+                            "length_mode": "unknown",
+                            "length_delta_mm": None,
+                        })
+                        candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                        candidates_by_role["accessory"] = candidates_by_role.get("accessory", 0) + 1
+                    debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": "accessory_page_component", "candidates_found": kept, "method": method, "is_index": None})
+                    continue
+
                 # keep family-level candidate instead of dropping entire family due missing row table
                 pid = _stable_aco_id(final_c, family, "configuration_family", title_base)
                 if pid not in seen_ids:
@@ -1723,7 +1749,7 @@ def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -
                         seen.add(key)
                         options.append(row)
                     continue
-            elif "showerstep" in txt_l or "showerstep" in href_l:
+            elif any(k in txt_l for k in ("showerstep", "gefaellekeil", "gefällekeil", "zubehoer", "zubehör", "installation")) or any(k in href_l for k in ("showerstep", "gefaellekeil", "gefallekeil", "zubehoer", "zubehor", "installation")):
                 role = "accessory"; otype = "optional_accessory"
             else:
                 continue
