@@ -18,39 +18,89 @@ HEADERS = {
 }
 
 BASE = "https://www.aco-haustechnik.de"
+BASE_CZ = "https://www.aco.cz"
 DUSCHRINNEN_SCOPE = "/produkte/badentwaesserung/duschrinnen/"
+BADENTWAESSERUNG_SCOPE = "/produkte/badentwaesserung/"
+REIHENDUSCH_SCOPE = "/produkte/badentwaesserung/reihenduschrinnen/"
+BADABLAEUFE_SCOPE = "/produkte/badentwaesserung/badablaeufe/"
+CZ_SCOPE = "/produkty/odvodneni-koupelen/"
 SEED_PAGES = [
+    f"{BASE}{BADENTWAESSERUNG_SCOPE}",
     f"{BASE}{DUSCHRINNEN_SCOPE}",
+    f"{BASE}{REIHENDUSCH_SCOPE}",
+    f"{BASE}{BADABLAEUFE_SCOPE}",
     f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-b/",
+    f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-cplus/",
     f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-c/",
     f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-eplus/",
     f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-mplus/",
     f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-splus/",
+    f"{BASE}{REIHENDUSCH_SCOPE}aco-showerdrain-public-80/",
+    f"{BASE}{REIHENDUSCH_SCOPE}aco-showerdrain-public-110/",
+    f"{BASE}{REIHENDUSCH_SCOPE}aco-showerdrain-public-x/",
+    f"{BASE}{BADABLAEUFE_SCOPE}aco-easyflow-plus/",
+    f"{BASE}{BADABLAEUFE_SCOPE}aco-easyflow/",
+    f"{BASE}{BADABLAEUFE_SCOPE}aco-showerpoint/",
+    f"{BASE}{BADABLAEUFE_SCOPE}aco-renovierungsablauf-passino/",
+    f"{BASE}{BADABLAEUFE_SCOPE}aco-bodenablauf-passavant/",
     f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-c/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm-200-mm/",
     f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-eplus/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm/",
+    f"{BASE_CZ}{CZ_SCOPE}",
 ]
 
 ARTICLE_RE = re.compile(r"\b(?:\d{4}\.?\d{2}\.?\d{2}|\d{8})\b")
 L1_RE = re.compile(r"\b(\d{3,4})\s*mm\b", re.IGNORECASE)
 FLOW_LPS_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*l\s*/\s*s\b", re.IGNORECASE)
+FLOW_AT_RE = re.compile(r"(10|20)\s*mm[^\d]{0,40}(\d+(?:[.,]\d+)?)\s*l\s*/\s*s", re.IGNORECASE)
+FLOW_AT_REV_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*l\s*/\s*s[^\d]{0,12}(10|20)\s*mm", re.IGNORECASE)
+FLOW_AT_AUFSTAU_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*l\s*/\s*s[^\d]{0,80}(?:bei\s*ws\s*\d{2}\s*(?:mit\s*)?|bei\s*|mit\s*)(10|20)\s*mm\s*aufstau", re.IGNORECASE)
+WS_FLOW_BLOCK_RE = re.compile(
+    r"sperrwasserh(?:oe|ö)he[^\d]{0,20}(\d{2,3})\s*mm(?:(?!sperrwasserh(?:oe|ö)he).){0,260}",
+    re.IGNORECASE | re.DOTALL,
+)
+WATER_SEAL_RE = re.compile(r"(?:geruchverschluss|sperrwasserh(?:oe|ö)he)[^\d]{0,20}(\d{2,3})\s*mm", re.IGNORECASE)
+WATER_SEAL_REV_RE = re.compile(r"(\d{2,3})\s*mm[^\d]{0,24}sperrwasserh(?:oe|ö)he", re.IGNORECASE)
 HEIGHT_OE_RE = re.compile(
     r"einbauh(?:ö|oe)he[^.]{0,80}oberkante\s+estrich[^\d]{0,20}(\d{2,3})\s*[-–]\s*(\d{2,3})\s*mm",
     re.IGNORECASE,
 )
 HEIGHT_RE = re.compile(r"einbauh(?:ö|oe)he[^\d]{0,25}(\d{2,3})\s*[-–]\s*(\d{2,3})\s*mm", re.IGNORECASE)
+HEIGHT_RANGE_GENERIC_RE = re.compile(r"(\d{2,3})\s*[-–]\s*(\d{2,3})\s*mm", re.IGNORECASE)
 DN_RE = re.compile(r"\bDN\s*(\d{2})\b", re.IGNORECASE)
 EN1253_RE = re.compile(r"\b(?:DIN\s*)?EN\s*1253(?:-1)?\b", re.IGNORECASE)
 DN_CONTEXT_RE = re.compile(r"ablaufstutzen|ablauf|anschluss|stutzen|\bdn\b", re.IGNORECASE)
 FLOW_REJECT_RE = re.compile(r"reduziert|reduzieren|reduziert\s+die\s+abflussleistung", re.IGNORECASE)
 ABFLUSS_PREF_RE = re.compile(r"abflusswert|ablaufleistung", re.IGNORECASE)
 CATEGORY_PATHS_EXACT = {
+    BADENTWAESSERUNG_SCOPE.rstrip("/"),
     DUSCHRINNEN_SCOPE.rstrip("/"),
-    f"{DUSCHRINNEN_SCOPE}aco-showerdrain-b".rstrip("/"),
-    f"{DUSCHRINNEN_SCOPE}aco-showerdrain-c".rstrip("/"),
-    f"{DUSCHRINNEN_SCOPE}aco-showerdrain-eplus".rstrip("/"),
-    f"{DUSCHRINNEN_SCOPE}aco-showerdrain-mplus".rstrip("/"),
-    f"{DUSCHRINNEN_SCOPE}aco-showerdrain-splus".rstrip("/"),
+    REIHENDUSCH_SCOPE.rstrip("/"),
+    BADABLAEUFE_SCOPE.rstrip("/"),
 }
+ALLOWED_DOMAINS = {"aco-haustechnik.de", "www.aco-haustechnik.de", "aco.cz", "www.aco.cz"}
+ALLOWED_PREFIXES = [BADENTWAESSERUNG_SCOPE, CZ_SCOPE]
+
+FAMILY_PATTERNS: List[Tuple[str, str]] = [
+    ("showerdrain_public_x", r"public[-\s]?x|w[aä]rmetauscher"),
+    ("showerdrain_public_110", r"public[-\s]?110"),
+    ("showerdrain_public_80", r"public[-\s]?80"),
+    ("showerdrain_splus", r"showerdrain[-\s]?s\+|showerdrain-splus"),
+    ("showerdrain_cplus", r"showerdrain[-\s]?c\+|showerdrain-cplus"),
+    ("showerdrain_c", r"showerdrain[-\s]?c"),
+    ("showerdrain_b", r"showerdrain[-\s]?b"),
+    ("showerdrain_eplus", r"showerdrain[-\s]?e\+|showerdrain-eplus"),
+    ("showerdrain_mplus", r"showerdrain[-\s]?m\+|showerdrain-mplus"),
+    ("easyflowplus", r"easyflow\+|easyflow-plus"),
+    ("easyflow", r"\beasyflow\b"),
+    ("showerpoint", r"showerpoint"),
+    ("mg", r"vpusti\s*mg|koupelnov[ée]\s*vpusti"),
+    ("passino", r"passino"),
+    ("passavant", r"passavant"),
+]
+
+SPLUS_PROFILE_ARTICLES = {"9010.51.01", "9010.51.02", "9010.51.03", "9010.51.04", "9010.51.41", "9010.51.42", "9010.51.43", "9010.51.44"}
+SPLUS_DRAIN_ARTICLES = {"9010.51.20", "9010.51.21"}
+SPLUS_AMBIGUOUS_ARTICLES = {"9010.51.27", "9010.51.28", "9010.51.29", "9010.51.30", "9010.81.23"}
 
 
 def _safe_get_text(url: str, timeout: int = 35) -> Tuple[Optional[int], str, str, str]:
@@ -95,6 +145,41 @@ def _extract_title(html: str, fallback_url: str) -> str:
 def _digits_only(article_no: str) -> str:
     return re.sub(r"\D", "", article_no or "")
 
+def _normalize_id_token(s: str) -> str:
+    txt = (s or "").lower()
+    repl = {
+        "ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss",
+        "č": "c", "ř": "r", "š": "s", "ž": "z", "ý": "y", "á": "a", "í": "i", "é": "e", "ů": "u", "ú": "u", "ň": "n", "ť": "t", "ď": "d",
+    }
+    for k, v in repl.items():
+        txt = txt.replace(k, v)
+    txt = re.sub(r"[^a-z0-9]+", "-", txt)
+    txt = re.sub(r"-{2,}", "-", txt).strip("-")
+    return txt
+
+def _slug_from_url(url: str) -> str:
+    p = urlparse(url)
+    parts = [x for x in (p.path or "").split("/") if x]
+    for seg in reversed(parts):
+        seg_n = _normalize_id_token(seg)
+        if seg_n and seg_n not in {"produkte", "produkty", "badentwaesserung", "badablaeufe", "duschrinnen", "reihenduschrinnen", "odvodneni-koupelen", "zubehoer"}:
+            return seg_n
+    return ""
+
+def _stable_aco_id(final_url: str, family: str, role: str, title: str, article_digits: str = "") -> str:
+    if article_digits:
+        return f"aco-{article_digits}"
+    fam = _normalize_id_token(family if family and family != "unknown" else "showerdrain")
+    role_n = _normalize_id_token(role or "product")
+    slug = _slug_from_url(final_url)
+    if not slug:
+        slug = _normalize_id_token(title)[:48]
+    generic = {"designrost", "design-rost", "design-roste", "aufsatzstuecke", "aufsatzstueck", "komplettablauf", "komplettablaeufe", "einzelablauf", "rinnenkoerper"}
+    if slug in generic:
+        name_token = _normalize_id_token(title).split("-")
+        name_token = "-".join([t for t in name_token if t][:3]) or "item"
+        return f"aco-{fam}-{role_n}-{slug}-{name_token}"
+    return f"aco-{fam}-{slug}"
 
 def _nominal_length_from_l1(l1_mm: int) -> int:
     return (l1_mm + 15) if (l1_mm % 100 == 85) else l1_mm
@@ -226,10 +311,105 @@ def _abs(href: str, base: str) -> str:
 def _in_scope(url: str) -> bool:
     try:
         p = urlparse(url)
-        return p.netloc.endswith("aco-haustechnik.de") and (p.path or "").startswith(DUSCHRINNEN_SCOPE)
+        host = (p.netloc or "").lower()
+        if host not in ALLOWED_DOMAINS:
+            return False
+        path = (p.path or "").lower()
+        return any(path.startswith(pref) for pref in ALLOWED_PREFIXES)
     except Exception:
         return False
 
+
+def _detect_family(url: str, title: str = "") -> str:
+    txt = f"{url} {title}".lower()
+    for fam, pat in FAMILY_PATTERNS:
+        if re.search(pat, txt, re.IGNORECASE):
+            return fam
+    return "unknown"
+
+
+def _classify_role(url: str, title: str, html: str, family: str) -> Tuple[str, str]:
+    txt = f"{url} {title}".lower()
+    if any(k in txt for k in ("designrost", "rost", "abdeckung", "grate")):
+        return "grate", "grate_or_cover_tokens"
+    if any(k in txt for k in ("rinnenkoerper", "rinnenkörper", "ablaufkoerper", "ablaufkörper", "einzelablauf")):
+        return "drain_body", "drain_body_tokens"
+    if any(k in txt for k in ("komplettablauf", "public", "showerpoint", "bodenablauf passavant", "renovierungsablauf")):
+        return "complete_system", "complete_system_tokens"
+    if any(k in txt for k in ("aufsatz", "zubehoer", "zubehör", "keil", "showerstep", "adapter", "rahmen")):
+        return "accessory", "accessory_tokens"
+    if family != "unknown":
+        return "configuration_family", "family_detected"
+    return "accessory", "fallback_accessory"
+
+def _infer_mplus_role(url: str, title: str) -> str:
+    txt = f"{url} {title}".lower()
+    if any(k in txt for k in ("rinnenkoerper", "rinnenkörper", "einbauhoehe", "einbauhöhe")):
+        return "profile_channel"
+    if any(k in txt for k in ("ablaufkoerper", "ablaufkörper")):
+        return "drain_body"
+    if any(k in txt for k in ("design-roste", "design-rost", "designrost", "rost")):
+        return "grate"
+    return "component"
+
+def _infer_eplus_role(url: str, title: str) -> str:
+    txt = f"{url} {title}".lower()
+    if any(k in txt for k in ("design-roste", "design-rost", "designrost", "rost")):
+        return "grate"
+    if any(k in txt for k in ("ablaufkoerper", "ablaufkörper")):
+        return "drain_body"
+    if any(k in txt for k in ("rinnenkoerper", "rinnenkörper", "einbauhoehe", "einbauhöhe")):
+        return "drain_unit"
+    if any(k in txt for k in ("brandschutz",)):
+        return "drain_unit"
+    return "component"
+
+def _infer_cplus_variant(url: str, title: str) -> Optional[Dict[str, str]]:
+    txt = f"{url} {title}".lower()
+    if "rinnenkoerper-standard-h92" in txt or "rinnenkörper-standard-h92" in txt:
+        return {"variant": "standard_h92", "slug": "aco-showerdrain-cplus-standard-h92", "name_suffix": "Standard H92"}
+    if "rinnenkoerper-low-h69" in txt or "rinnenkörper-low-h69" in txt:
+        return {"variant": "low_h69", "slug": "aco-showerdrain-cplus-low-h69", "name_suffix": "Low H69"}
+    return None
+
+def _cplus_variant_sources() -> List[Dict[str, str]]:
+    return [
+        {
+            "product_id": "aco-showerdrain-cplus-standard-h92",
+            "name_suffix": "Standard H92",
+            "url": f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-c/rinnenkoerper-einbauhoehe-oberkante-estrich-80-128-mm-200-mm/",
+        },
+        {
+            "product_id": "aco-showerdrain-cplus-low-h69",
+            "name_suffix": "Low H69",
+            "url": f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-c/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm-200-mm/",
+        },
+    ]
+
+def _infer_b_role(url: str, title: str) -> str:
+    txt = f"{url} {title}".lower()
+    if any(k in txt for k in ("haarsieb", "schmutzfang", "zubehoer", "zubehör", "accessory")):
+        return "accessory"
+    if "showerdrain-b" in txt or "showerdrain b" in txt:
+        return "complete_system"
+    return "component"
+
+def _resolve_b_concrete_product_url(family_url: str, family_html: str) -> str:
+    try:
+        soup = BeautifulSoup(family_html or "", "lxml")
+        preferred = ""
+        for a in soup.select("a[href]"):
+            href = _abs(a.get("href") or "", family_url)
+            if not _in_scope(href):
+                continue
+            href_c = _canonicalize_url(href)
+            if "/aco-showerdrain-b/aco-showerdrain-b/" in href_c:
+                return href_c
+            if "/aco-showerdrain-b/" in href_c and href_c.rstrip("/") != family_url.rstrip("/"):
+                preferred = preferred or href_c
+        return preferred or family_url
+    except Exception:
+        return family_url
 
 def _is_accessory_page(url: str, title: str = "") -> bool:
     txt = f"{url} {title}".lower()
@@ -287,6 +467,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     max_len = want + tol
 
     out: List[Dict[str, Any]] = []
+    splus_params_cache: Dict[str, Dict[str, Any]] = {}
     debug: List[Dict[str, Any]] = []
 
     queue: List[str] = list(SEED_PAGES)
@@ -294,6 +475,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     detail_pages = set()
     canonical_seen = set()
     dropped_fragments = 0
+    dropped_out_of_scope_count = 0
 
     # Crawl category/list pages in scope to discover more ranges and detail pages
     while queue and len(seen_pages) < 250:
@@ -318,6 +500,7 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         for a in soup.select("a[href]"):
             cand = _abs(a.get("href") or "", final)
             if not _in_scope(cand):
+                dropped_out_of_scope_count += 1
                 continue
             cand_c = _canonicalize_url(cand)
             if cand_c != cand:
@@ -346,8 +529,38 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
     emitted_rows = 0
     dropped_missing_product_id = 0
     dropped_missing_url = 0
+    total_urls_seen = 0
+    dropped_overview_page_count = 0
+    urls_by_scope: Dict[str, int] = {}
+    candidates_by_family: Dict[str, int] = {}
+    candidates_by_role: Dict[str, int] = {}
+    accepted_system_family_count = 0
+    accepted_article_variant_count = 0
+    expected_families = [
+        "showerdrain_splus", "showerdrain_cplus", "showerdrain_c", "showerdrain_b",
+        "showerdrain_eplus", "showerdrain_mplus", "showerdrain_public_80",
+        "showerdrain_public_110", "showerdrain_public_x", "easyflowplus", "easyflow",
+        "showerpoint", "mg", "passino", "passavant",
+    ]
+    sample_accepted_aco_candidates: List[str] = []
 
     for page in sorted(detail_pages):
+        total_urls_seen += 1
+        pp = urlparse(page)
+        ppath = (pp.path or "").lower()
+        if ppath.startswith(DUSCHRINNEN_SCOPE):
+            urls_by_scope["duschrinnen"] = urls_by_scope.get("duschrinnen", 0) + 1
+        elif ppath.startswith(REIHENDUSCH_SCOPE):
+            urls_by_scope["reihenduschrinnen"] = urls_by_scope.get("reihenduschrinnen", 0) + 1
+        elif ppath.startswith(BADABLAEUFE_SCOPE):
+            urls_by_scope["badablaeufe"] = urls_by_scope.get("badablaeufe", 0) + 1
+        elif ppath.startswith(BADENTWAESSERUNG_SCOPE):
+            urls_by_scope["badentwaesserung"] = urls_by_scope.get("badentwaesserung", 0) + 1
+        elif ppath.startswith(CZ_SCOPE):
+            urls_by_scope["cz_odvodneni_koupelen"] = urls_by_scope.get("cz_odvodneni_koupelen", 0) + 1
+        else:
+            urls_by_scope["other"] = urls_by_scope.get("other", 0) + 1
+
         # reject category/landing pages from candidates
         if _is_category_page(page):
             dropped_category_pages += 1
@@ -361,24 +574,174 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
 
         final_c = _canonicalize_url(final)
         title_base = _extract_title(html, final_c)
+        family = _detect_family(final_c, title_base)
+        role, role_reason = _classify_role(final_c, title_base, html, family)
 
         # route candidate type
-        if _is_accessory_page(final_c, title_base):
+        if family == "showerdrain_b" and _infer_b_role(final_c, title_base) == "complete_system":
+            cand_type = "drain"
+        elif _is_accessory_page(final_c, title_base):
             cand_type = "component"
         elif _looks_like_detail_drain_page(final_c, title_base, html):
             cand_type = "drain"
+        elif family != "unknown":
+            cand_type = "component"
         else:
+            dropped_overview_page_count += 1
             debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": "dropped_overview_page", "candidates_found": 0, "method": "detail", "is_index": None})
             continue
 
         pairs = _extract_pairs_from_table(html)
         method = "table" if pairs else "detail_only"
+        cplus_variant = _infer_cplus_variant(final_c, title_base)
 
         kept = 0
         if cand_type == "drain":
+            if family in {"showerdrain_c", "showerdrain_cplus"} and cplus_variant:
+                pid = cplus_variant["slug"]
+                if pid not in seen_ids:
+                    seen_ids.add(pid)
+                    kept += 1
+                    kept_total += 1
+                    row = {
+                        "manufacturer": "aco",
+                        "product_id": pid,
+                        "product_family": "showerdrain_cplus",
+                        "product_name": f"ACO ShowerDrain C+ {cplus_variant['name_suffix']}",
+                        "product_url": final_c,
+                        "sources": final_c,
+                        "candidate_type": "drain",
+                        "system_role": "integrated_channel_drain",
+                        "classification_reason": f"cplus_integrated_channel_drain_{cplus_variant['variant']}",
+                        "complete_system": "partial",
+                        "selected_length_mm": want,
+                        "length_mode": "unknown",
+                        "length_delta_mm": None,
+                        "assembled_from_bom": "false",
+                    }
+                    p = extract_parameters(final_c) or {}
+                    for k in ("flow_rate_10mm_lps", "flow_rate_20mm_lps", "flow_rate_lps", "flow_rate_unit", "flow_rate_status", "water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn", "din_en_1253_cert"):
+                        if p.get(k) not in (None, ""):
+                            row[k] = p.get(k)
+                    out.append(row)
+                    candidates_by_family["showerdrain_cplus"] = candidates_by_family.get("showerdrain_cplus", 0) + 1
+                    candidates_by_role["integrated_channel_drain"] = candidates_by_role.get("integrated_channel_drain", 0) + 1
+                debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": "cplus_page_level_variant", "candidates_found": kept, "method": method, "is_index": None})
+                continue
             # row-based product variants only; no page-level drain fallback rows
             if not pairs:
-                debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": "no_article_rows", "candidates_found": 0, "method": method, "is_index": None})
+                if family == "showerdrain_eplus":
+                    pid = _stable_aco_id(final_c, family, "drain_unit", title_base)
+                    if pid not in seen_ids:
+                        seen_ids.add(pid)
+                        kept += 1
+                        kept_total += 1
+                        row = {
+                            "manufacturer": "aco",
+                            "product_id": pid,
+                            "product_family": family,
+                            "product_name": title_base,
+                            "product_url": final_c,
+                            "sources": final_c,
+                            "candidate_type": "drain",
+                            "system_role": "drain_unit",
+                            "classification_reason": "eplus_page_level_integrated_channel_drain",
+                            "complete_system": "yes",
+                            "selected_length_mm": want,
+                            "length_mode": "unknown",
+                            "length_delta_mm": None,
+                        }
+                        p = extract_parameters(final_c) or {}
+                        for k in ("flow_rate_10mm_lps", "flow_rate_20mm_lps", "flow_rate_lps", "flow_rate_unit", "flow_rate_status", "water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn", "din_en_1253_cert"):
+                            if p.get(k) not in (None, ""):
+                                row[k] = p.get(k)
+                        out.append(row)
+                        candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                        candidates_by_role["drain_unit"] = candidates_by_role.get("drain_unit", 0) + 1
+                    debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": "no_article_rows_eplus_page_level", "candidates_found": kept, "method": method, "is_index": None})
+                    continue
+                if family == "showerdrain_b":
+                    concrete_url = _resolve_b_concrete_product_url(final_c, html)
+                    pid = _stable_aco_id(final_c, family, "complete_system", title_base)
+                    if pid not in seen_ids:
+                        seen_ids.add(pid)
+                        kept += 1
+                        kept_total += 1
+                        row = {
+                            "manufacturer": "aco",
+                            "product_id": pid,
+                            "product_family": family,
+                            "product_name": title_base,
+                            "product_url": concrete_url,
+                            "sources": final_c,
+                            "candidate_type": "drain",
+                            "system_role": "complete_system",
+                            "classification_reason": "b_all_in_one_complete_system",
+                            "complete_system": "yes",
+                            "selected_length_mm": want,
+                            "length_mode": "unknown",
+                            "length_delta_mm": None,
+                        }
+                        p = extract_parameters(concrete_url) or {}
+                        for k in ("flow_rate_10mm_lps", "flow_rate_20mm_lps", "flow_rate_lps", "flow_rate_unit", "flow_rate_status", "water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn"):
+                            if p.get(k) not in (None, ""):
+                                row[k] = p.get(k)
+                        out.append(row)
+                        candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                        candidates_by_role["complete_system"] = candidates_by_role.get("complete_system", 0) + 1
+                    debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": "no_article_rows_b_page_level", "candidates_found": kept, "method": method, "is_index": None})
+                    continue
+                if role == "accessory":
+                    pid = _stable_aco_id(final_c, family, "accessory", title_base)
+                    if pid not in seen_ids:
+                        seen_ids.add(pid)
+                        kept += 1
+                        kept_total += 1
+                        out.append({
+                            "manufacturer": "aco",
+                            "product_id": pid,
+                            "product_family": family if family != "unknown" else "ShowerDrain",
+                            "product_name": title_base,
+                            "product_url": final_c,
+                            "sources": final_c,
+                            "candidate_type": "component",
+                            "system_role": "accessory",
+                            "classification_reason": "accessory_page_component",
+                            "complete_system": "component",
+                            "selected_length_mm": want,
+                            "length_mode": "unknown",
+                            "length_delta_mm": None,
+                        })
+                        candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                        candidates_by_role["accessory"] = candidates_by_role.get("accessory", 0) + 1
+                    debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": "accessory_page_component", "candidates_found": kept, "method": method, "is_index": None})
+                    continue
+
+                # keep family-level candidate instead of dropping entire family due missing row table
+                pid = _stable_aco_id(final_c, family, "configuration_family", title_base)
+                if pid not in seen_ids:
+                    seen_ids.add(pid)
+                    kept += 1
+                    kept_total += 1
+                    out.append({
+                        "manufacturer": "aco",
+                        "product_id": pid,
+                        "product_family": family if family != "unknown" else "ShowerDrain",
+                        "product_name": title_base,
+                        "product_url": final_c,
+                        "sources": final_c,
+                        "candidate_type": "component",
+                        "system_role": "configuration_family",
+                        "classification_reason": "no_article_rows_keep_family",
+                        "complete_system": "component",
+                        "selected_length_mm": want,
+                        "length_mode": "unknown",
+                        "length_delta_mm": None,
+                    })
+                    accepted_system_family_count += 1
+                    candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                    candidates_by_role["configuration_family"] = candidates_by_role.get("configuration_family", 0) + 1
+                debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": "no_article_rows", "candidates_found": kept, "method": method, "is_index": None})
                 continue
 
             accepted_product_pages += 1
@@ -431,13 +794,138 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                         })
 
             for l1_mm, article_no, article_digits in pairs:
+                if family == "showerdrain_mplus":
+                    role_m = _infer_mplus_role(final_c, title_base)
+                    if role_m in {"profile_channel", "grate"}:
+                        pid = _stable_aco_id(final_c, family, role_m, title_base, article_digits)
+                        if pid in seen_ids:
+                            continue
+                        seen_ids.add(pid)
+                        out.append({
+                            "manufacturer": "aco",
+                            "product_id": pid,
+                            "product_family": family,
+                            "product_name": f"{title_base} (Artikel-Nr. {article_no})",
+                            "product_url": f"{final_c}#article-{article_digits}",
+                            "sources": final_c,
+                            "candidate_type": "component",
+                            "system_role": role_m,
+                            "classification_reason": "mplus_article_component",
+                            "complete_system": "component",
+                            "article_no": article_no,
+                            "row_length_raw_mm": l1_mm,
+                            "row_length_nominal_mm": _nominal_length_from_l1(l1_mm),
+                        })
+                        candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                        candidates_by_role[role_m] = candidates_by_role.get(role_m, 0) + 1
+                        continue
+                if family == "showerdrain_splus":
+                    art_norm = article_no if "." in article_no else f"{article_digits[:4]}.{article_digits[4:6]}.{article_digits[6:8]}"
+                    if art_norm in SPLUS_AMBIGUOUS_ARTICLES:
+                        continue
+                    role_splus = "profile_channel" if art_norm in SPLUS_PROFILE_ARTICLES else ("drain_body" if art_norm in SPLUS_DRAIN_ARTICLES else "component")
+                    pid = _stable_aco_id(final_c, family, role_splus, title_base, article_digits)
+                    if pid in seen_ids:
+                        continue
+                    seen_ids.add(pid)
+                    row = {
+                        "manufacturer": "aco",
+                        "product_id": pid,
+                        "product_family": family,
+                        "product_name": f"{title_base} (Artikel-Nr. {art_norm})",
+                        "product_url": f"{final_c}#article-{article_digits}",
+                        "sources": final_c,
+                        "candidate_type": "component",
+                        "system_role": role_splus,
+                        "classification_reason": "splus_article_component",
+                        "complete_system": "component",
+                        "article_no": art_norm,
+                        "row_length_raw_mm": l1_mm,
+                        "row_length_nominal_mm": _nominal_length_from_l1(l1_mm),
+                    }
+                    if role_splus == "drain_body":
+                        purl = row["product_url"]
+                        params = splus_params_cache.get(purl)
+                        if params is None:
+                            params = extract_parameters(purl) or {}
+                            splus_params_cache[purl] = params
+                        for k in (
+                            "flow_rate_10mm_lps",
+                            "flow_rate_20mm_lps",
+                            "flow_rate_lps",
+                            "flow_rate_unit",
+                            "flow_rate_status",
+                            "water_seal_mm",
+                            "height_adj_min_mm",
+                            "height_adj_max_mm",
+                            "outlet_dn",
+                        ):
+                            v = params.get(k)
+                            if v not in (None, ""):
+                                row[k] = v
+                    out.append(row)
+                    candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                    candidates_by_role[role_splus] = candidates_by_role.get(role_splus, 0) + 1
+                    continue
+                if family == "showerdrain_eplus":
+                    role_eplus = _infer_eplus_role(final_c, title_base)
+                    if role_eplus == "grate":
+                        pid = _stable_aco_id(final_c, family, "grate", title_base, article_digits)
+                        if pid in seen_ids:
+                            continue
+                        seen_ids.add(pid)
+                        out.append({
+                            "manufacturer": "aco",
+                            "product_id": pid,
+                            "product_family": family,
+                            "product_name": f"{title_base} (Artikel-Nr. {article_no})",
+                            "product_url": f"{final_c}#article-{article_digits}",
+                            "sources": final_c,
+                            "candidate_type": "component",
+                            "system_role": "grate",
+                            "classification_reason": "eplus_grate_article_component",
+                            "complete_system": "component",
+                            "article_no": article_no,
+                            "row_length_raw_mm": l1_mm,
+                            "row_length_nominal_mm": _nominal_length_from_l1(l1_mm),
+                        })
+                        candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                        candidates_by_role["grate"] = candidates_by_role.get("grate", 0) + 1
+                        continue
+                    pid = _stable_aco_id(final_c, family, "drain_unit", title_base, article_digits)
+                    if pid in seen_ids:
+                        continue
+                    seen_ids.add(pid)
+                    row = {
+                        "manufacturer": "aco",
+                        "product_id": pid,
+                        "product_family": family,
+                        "product_name": f"{title_base} (Artikel-Nr. {article_no})",
+                        "product_url": f"{final_c}#article-{article_digits}",
+                        "sources": final_c,
+                        "candidate_type": "drain",
+                        "system_role": "drain_unit",
+                        "classification_reason": "eplus_integrated_channel_drain",
+                        "complete_system": "yes",
+                        "article_no": article_no,
+                        "row_length_raw_mm": l1_mm,
+                        "row_length_nominal_mm": _nominal_length_from_l1(l1_mm),
+                    }
+                    p = extract_parameters(row["product_url"]) or {}
+                    for k in ("flow_rate_10mm_lps", "flow_rate_20mm_lps", "flow_rate_lps", "flow_rate_unit", "flow_rate_status", "water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn", "din_en_1253_cert"):
+                        if p.get(k) not in (None, ""):
+                            row[k] = p.get(k)
+                    out.append(row)
+                    candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                    candidates_by_role["drain_unit"] = candidates_by_role.get("drain_unit", 0) + 1
+                    continue
                 nominal_length_mm = _nominal_length_from_l1(l1_mm)
                 # row must have concrete length
                 if nominal_length_mm is None:
                     continue
                 if not (min_len <= nominal_length_mm <= max_len):
                     continue
-                pid = f"aco-{article_digits}" if article_digits else f"aco-{abs(hash(final_c + article_no))}"
+                pid = _stable_aco_id(final_c, family, "drain_unit", title_base, article_digits)
                 if pid in seen_ids:
                     continue
                 seen_ids.add(pid)
@@ -446,11 +934,13 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                 out.append({
                     "manufacturer": "aco",
                     "product_id": pid,
-                    "product_family": "ShowerDrain",
+                    "product_family": family if family != "unknown" else "ShowerDrain",
                     "product_name": f"{title_base} {nominal_length_mm} mm (Artikel-Nr. {article_no})",
-                    "product_url": final_c,
+                    "product_url": f"{final_c}#article-{article_digits}",
                     "sources": final_c,
                     "candidate_type": "drain",
+                    "system_role": "drain_unit",
+                    "classification_reason": "article_row_variant",
                     "complete_system": "yes",
                     "selected_length_mm": want,
                     "length_mode": "L1_nominal_heuristic",
@@ -459,10 +949,105 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                     "row_length_raw_mm": l1_mm,
                     "row_length_nominal_mm": nominal_length_mm,
                 })
+                accepted_article_variant_count += 1
+                candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                candidates_by_role["drain_unit"] = candidates_by_role.get("drain_unit", 0) + 1
+                if len(sample_accepted_aco_candidates) < 20:
+                    sample_accepted_aco_candidates.append(f"{pid}|{family}|drain_unit")
                 product_urls.append(final_c)
                 emitted_rows += 1
         elif cand_type == "component":
-            pid = f"aco-comp-{abs(hash(final_c))}"
+            if family == "showerdrain_mplus":
+                role = _infer_mplus_role(final_c, title_base)
+            if family == "showerdrain_eplus":
+                role = _infer_eplus_role(final_c, title_base)
+            if family == "showerdrain_mplus" and pairs:
+                for l1_mm, article_no, article_digits in pairs:
+                    role_m = _infer_mplus_role(final_c, title_base)
+                    pid = _stable_aco_id(final_c, family, role_m, title_base, article_digits)
+                    if pid in seen_ids:
+                        continue
+                    seen_ids.add(pid)
+                    kept += 1
+                    kept_total += 1
+                    row = {
+                        "manufacturer": "aco",
+                        "product_id": pid,
+                        "product_family": family,
+                        "product_name": f"{title_base} (Artikel-Nr. {article_no})",
+                        "product_url": f"{final_c}#article-{article_digits}",
+                        "sources": final_c,
+                        "candidate_type": "component",
+                        "system_role": role_m,
+                        "classification_reason": "mplus_article_component",
+                        "complete_system": "component",
+                        "article_no": article_no,
+                        "row_length_raw_mm": l1_mm,
+                        "row_length_nominal_mm": _nominal_length_from_l1(l1_mm),
+                    }
+                    if role_m == "drain_body":
+                        p = extract_parameters(row["product_url"]) or {}
+                        for k in ("flow_rate_lps", "flow_rate_20mm_lps", "water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn", "flow_rate_unit", "flow_rate_status"):
+                            if p.get(k) not in (None, ""):
+                                row[k] = p.get(k)
+                    out.append(row)
+                    candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                    candidates_by_role[role_m] = candidates_by_role.get(role_m, 0) + 1
+                debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": err, "candidates_found": kept, "method": "table", "is_index": None})
+                continue
+            if family == "showerdrain_splus" and pairs:
+                for l1_mm, article_no, article_digits in pairs:
+                    art_norm = article_no if "." in article_no else f"{article_digits[:4]}.{article_digits[4:6]}.{article_digits[6:8]}"
+                    if art_norm in SPLUS_AMBIGUOUS_ARTICLES:
+                        continue
+                    role_splus = "profile_channel" if art_norm in SPLUS_PROFILE_ARTICLES else ("drain_body" if art_norm in SPLUS_DRAIN_ARTICLES else "component")
+                    pid = _stable_aco_id(final_c, family, role_splus, title_base, article_digits)
+                    if pid in seen_ids:
+                        continue
+                    seen_ids.add(pid)
+                    kept += 1
+                    kept_total += 1
+                    row = {
+                        "manufacturer": "aco",
+                        "product_id": pid,
+                        "product_family": family,
+                        "product_name": f"{title_base} (Artikel-Nr. {art_norm})",
+                        "product_url": f"{final_c}#article-{article_digits}",
+                        "sources": final_c,
+                        "candidate_type": "component",
+                        "system_role": role_splus,
+                        "classification_reason": "splus_article_component",
+                        "complete_system": "component",
+                        "article_no": art_norm,
+                        "row_length_raw_mm": l1_mm,
+                        "row_length_nominal_mm": _nominal_length_from_l1(l1_mm),
+                    }
+                    if role_splus == "drain_body":
+                        purl = row["product_url"]
+                        params = splus_params_cache.get(purl)
+                        if params is None:
+                            params = extract_parameters(purl) or {}
+                            splus_params_cache[purl] = params
+                        for k in (
+                            "flow_rate_10mm_lps",
+                            "flow_rate_20mm_lps",
+                            "flow_rate_lps",
+                            "flow_rate_unit",
+                            "flow_rate_status",
+                            "water_seal_mm",
+                            "height_adj_min_mm",
+                            "height_adj_max_mm",
+                            "outlet_dn",
+                        ):
+                            v = params.get(k)
+                            if v not in (None, ""):
+                                row[k] = v
+                    out.append(row)
+                    candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                    candidates_by_role[role_splus] = candidates_by_role.get(role_splus, 0) + 1
+                debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": err, "candidates_found": kept, "method": "table", "is_index": None})
+                continue
+            pid = _stable_aco_id(final_c, family, role, title_base)
             if pid not in seen_ids:
                 seen_ids.add(pid)
                 kept += 1
@@ -470,22 +1055,61 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                 out.append({
                     "manufacturer": "aco",
                     "product_id": pid,
-                    "product_family": "ShowerDrain",
+                    "product_family": family if family != "unknown" else "ShowerDrain",
                     "product_name": title_base,
                     "product_url": final_c,
                     "sources": final_c,
                     "candidate_type": "component",
+                    "system_role": role,
+                    "classification_reason": role_reason,
                     "complete_system": "component",
                     "selected_length_mm": want,
                     "length_mode": "unknown",
                     "length_delta_mm": None,
                 })
+                candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                candidates_by_role[role] = candidates_by_role.get(role, 0) + 1
+                if role == "configuration_family":
+                    accepted_system_family_count += 1
+                if len(sample_accepted_aco_candidates) < 20:
+                    sample_accepted_aco_candidates.append(f"{pid}|{family}|{role}")
                 component_urls.append(final_c)
                 emitted_rows += 1
 
         debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": err, "candidates_found": kept, "method": method, "is_index": None})
 
     # final safety guard: never emit invalid product rows
+    cplus_in_scope = any(str(r.get("product_family") or "").lower() == "showerdrain_cplus" for r in out) or any("aco-showerdrain-cplus" in str(u).lower() for u in detail_pages)
+    if cplus_in_scope:
+        existing_ids = {str(r.get("product_id") or "") for r in out}
+        for src in _cplus_variant_sources():
+            pid = src["product_id"]
+            if pid in existing_ids:
+                continue
+            purl = src["url"]
+            p = extract_parameters(purl) or {}
+            out.append({
+                "manufacturer": "aco",
+                "product_id": pid,
+                "product_family": "showerdrain_cplus",
+                "product_name": f"ACO ShowerDrain C+ {src['name_suffix']}",
+                "product_url": purl,
+                "sources": purl,
+                "candidate_type": "drain",
+                "system_role": "integrated_channel_drain",
+                "classification_reason": "cplus_post_discovery_enrichment",
+                "complete_system": "partial",
+                "assembled_from_bom": "false",
+                "flow_rate_10mm_lps": p.get("flow_rate_10mm_lps"),
+                "flow_rate_20mm_lps": p.get("flow_rate_20mm_lps"),
+                "flow_rate_lps": p.get("flow_rate_lps"),
+                "water_seal_mm": p.get("water_seal_mm"),
+                "outlet_dn": p.get("outlet_dn"),
+                "height_adj_min_mm": p.get("height_adj_min_mm"),
+                "height_adj_max_mm": p.get("height_adj_max_mm"),
+            })
+            existing_ids.add(pid)
+
     safe_out: List[Dict[str, Any]] = []
     for r in out:
         pid = str(r.get("product_id") or "").strip()
@@ -524,6 +1148,17 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         "sample_product_urls": json.dumps(product_urls[:10], ensure_ascii=False),
         "sample_components_urls": json.dumps(component_urls[:10], ensure_ascii=False),
         "total_urls": len(detail_pages),
+        "total_urls_seen": total_urls_seen,
+        "urls_by_scope": json.dumps(urls_by_scope, ensure_ascii=False),
+        "candidates_by_family": json.dumps(candidates_by_family, ensure_ascii=False),
+        "candidates_by_role": json.dumps(candidates_by_role, ensure_ascii=False),
+        "dropped_out_of_scope_count": dropped_out_of_scope_count,
+        "dropped_overview_page_count": dropped_overview_page_count,
+        "accepted_system_family_count": accepted_system_family_count,
+        "accepted_article_variant_count": accepted_article_variant_count,
+        "expected_family_coverage": json.dumps({f: (candidates_by_family.get(f, 0) > 0) for f in expected_families}, ensure_ascii=False),
+        "sample_missing_expected_families": json.dumps([f for f in expected_families if candidates_by_family.get(f, 0) <= 0][:10], ensure_ascii=False),
+        "sample_accepted_aco_candidates": json.dumps(sample_accepted_aco_candidates[:10], ensure_ascii=False),
         "after_canonicalize": len(canonical_seen),
         "dropped_fragments": dropped_fragments,
         "dropped_category_pages": dropped_category_pages,
@@ -579,6 +1214,8 @@ def _is_valid_flow_context(flat: str, start: int, end: int) -> bool:
 def extract_parameters(product_url: str) -> Dict[str, Any]:
     res: Dict[str, Any] = {
         "flow_rate_lps": None,
+        "flow_rate_10mm_lps": None,
+        "flow_rate_20mm_lps": None,
         "flow_rate_raw_text": None,
         "flow_rate_unit": None,
         "flow_rate_status": None,
@@ -589,6 +1226,7 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
         "din_18534_compliance": None,
         "height_adj_min_mm": None,
         "height_adj_max_mm": None,
+        "water_seal_mm": None,
         "outlet_dn": None,
         "outlet_dn_default": None,
         "outlet_dn_options_json": None,
@@ -597,13 +1235,245 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
         "evidence": [],
     }
 
-    src = (product_url or "").split("#", 1)[0].strip()
+    src_full = (product_url or "").strip()
+    src = src_full.split("#", 1)[0].strip()
+    article_token = ""
+    if "#" in src_full:
+        frag = src_full.split("#", 1)[1]
+        mfrag = re.search(r"(\d{6,10})", frag)
+        if mfrag:
+            article_token = mfrag.group(1)
     st, final, html, err = _safe_get_text(src, timeout=35)
     res["evidence"].append(("HTML fetch", f"status={st} err={err}".strip(), final))
     if st != 200 or not html:
         return res
 
     flat = _main_flat_text_from_html(html)
+    title = _extract_title(html, final)
+    family = _detect_family(final, title)
+
+    article_row_matched = False
+    article_row_explicit_flow = False
+    ws_flow_map: Dict[int, Dict[str, float]] = {}
+    # article-row specific extraction if article token is available from discovery URL anchor
+    if article_token:
+        soup = BeautifulSoup(html or "", "lxml")
+        for table in soup.select("table"):
+            rows = table.select("tr")
+            if not rows:
+                continue
+            header_cells = [(_clean_text(c.get_text(" ", strip=True)).lower()) for c in rows[0].select("th,td")]
+            idx_10 = next((i for i, h in enumerate(header_cells) if "10" in h and "mm" in h and ("abfluss" in h or "ablauf" in h)), None)
+            idx_20 = next((i for i, h in enumerate(header_cells) if "20" in h and "mm" in h and ("abfluss" in h or "ablauf" in h)), None)
+            idx_ws = next((i for i, h in enumerate(header_cells) if "geruch" in h or "sperrwasser" in h), None)
+            for tr in rows[1:]:
+                cells = tr.select("th,td")
+                row_text = _clean_text(tr.get_text(" ", strip=True))
+                if article_token not in _digits_only(row_text):
+                    continue
+                article_row_matched = True
+                def _parse_flow_from_cell(ix):
+                    if ix is None or ix >= len(cells):
+                        return None
+                    cm = FLOW_LPS_RE.search(_clean_text(cells[ix].get_text(" ", strip=True)))
+                    if not cm:
+                        return None
+                    try:
+                        fv = float(cm.group(1).replace(",", "."))
+                        return fv if 0.10 <= fv <= 3.0 else None
+                    except Exception:
+                        return None
+                f10 = _parse_flow_from_cell(idx_10)
+                f20 = _parse_flow_from_cell(idx_20)
+                if f10 is not None:
+                    res["flow_rate_10mm_lps"] = f10
+                if f20 is not None:
+                    res["flow_rate_20mm_lps"] = f20
+                row_has_hydraulic = (f10 is not None) or (f20 is not None)
+                article_row_explicit_flow = article_row_explicit_flow or (f10 is not None) or (f20 is not None)
+                if idx_ws is not None and idx_ws < len(cells):
+                    wsm = re.search(r"(\d{2,3})\s*mm", _clean_text(cells[idx_ws].get_text(" ", strip=True)), re.IGNORECASE)
+                    if wsm:
+                        try:
+                            ws = int(wsm.group(1))
+                            if 20 <= ws <= 100:
+                                res["water_seal_mm"] = ws
+                                row_has_hydraulic = True
+                        except Exception:
+                            pass
+                if res.get("water_seal_mm") in (None, ""):
+                    wsm_row = WATER_SEAL_RE.search(row_text)
+                    if wsm_row:
+                        try:
+                            ws = int(wsm_row.group(1))
+                            if 20 <= ws <= 100:
+                                res["water_seal_mm"] = ws
+                                row_has_hydraulic = True
+                        except Exception:
+                            pass
+                hr = HEIGHT_RANGE_GENERIC_RE.search(row_text)
+                if hr:
+                    try:
+                        h1 = int(hr.group(1)); h2 = int(hr.group(2))
+                        lo, hi = (h1, h2) if h1 <= h2 else (h2, h1)
+                        if 20 <= lo <= 300 and 20 <= hi <= 300:
+                            res["height_adj_min_mm"] = lo
+                            res["height_adj_max_mm"] = hi
+                    except Exception:
+                        pass
+                flows = []
+                for m in FLOW_LPS_RE.finditer(row_text):
+                    try:
+                        fv = float(m.group(1).replace(",", "."))
+                    except Exception:
+                        continue
+                    if 0.10 <= fv <= 3.0:
+                        flows.append(fv)
+                if flows:
+                    res["flow_rate_lps"] = max(flows)
+                    res["flow_rate_unit"] = "l/s"
+                    res["flow_rate_status"] = "ok"
+                    article_row_explicit_flow = True
+                res["evidence"].append(("Article row", row_text[:280], final))
+                for mv, mm in FLOW_AT_REV_RE.findall(row_text):
+                    try:
+                        fv = float(str(mv).replace(",", "."))
+                    except Exception:
+                        continue
+                    if not (0.10 <= fv <= 3.0):
+                        continue
+                    if mm == "10" and res.get("flow_rate_10mm_lps") in (None, ""):
+                        res["flow_rate_10mm_lps"] = fv
+                    if mm == "20" and res.get("flow_rate_20mm_lps") in (None, ""):
+                        res["flow_rate_20mm_lps"] = fv
+                for mm, mv in FLOW_AT_RE.findall(row_text):
+                    try:
+                        fv = float(str(mv).replace(",", "."))
+                    except Exception:
+                        continue
+                    if not (0.10 <= fv <= 3.0):
+                        continue
+                    if mm == "10" and res.get("flow_rate_10mm_lps") in (None, ""):
+                        res["flow_rate_10mm_lps"] = fv
+                    if mm == "20" and res.get("flow_rate_20mm_lps") in (None, ""):
+                        res["flow_rate_20mm_lps"] = fv
+                for mv, mm in FLOW_AT_AUFSTAU_RE.findall(row_text):
+                    try:
+                        fv = float(str(mv).replace(",", "."))
+                    except Exception:
+                        continue
+                    if not (0.10 <= fv <= 3.0):
+                        continue
+                    if mm == "10" and res.get("flow_rate_10mm_lps") in (None, ""):
+                        res["flow_rate_10mm_lps"] = fv
+                    if mm == "20" and res.get("flow_rate_20mm_lps") in (None, ""):
+                        res["flow_rate_20mm_lps"] = fv
+                if not row_has_hydraulic:
+                    res["evidence"].append(("Article row hydraulics", "article row contains dimensions/price style data but no explicit 10mm/20mm flow or water seal field", final))
+                break
+
+    # S+ fixture-style fallback: page-level flow blocks keyed by water seal (WS)
+    for bm in WS_FLOW_BLOCK_RE.finditer(flat):
+        try:
+            ws = int(bm.group(1))
+        except Exception:
+            continue
+        if not (20 <= ws <= 100):
+            continue
+        block = bm.group(0)
+        flows_by_head: Dict[str, float] = {}
+        for mv, mm in FLOW_AT_REV_RE.findall(block):
+            try:
+                fv = float(str(mv).replace(",", "."))
+            except Exception:
+                continue
+            if 0.10 <= fv <= 3.0 and mm in {"10", "20"} and mm not in flows_by_head:
+                flows_by_head[mm] = fv
+        for mm, mv in FLOW_AT_RE.findall(block):
+            try:
+                fv = float(str(mv).replace(",", "."))
+            except Exception:
+                continue
+            if 0.10 <= fv <= 3.0 and mm in {"10", "20"} and mm not in flows_by_head:
+                flows_by_head[mm] = fv
+        if flows_by_head:
+            ws_flow_map[ws] = flows_by_head
+
+    ws_key = res.get("water_seal_mm")
+    if isinstance(ws_key, int) and ws_key in ws_flow_map:
+        pair = ws_flow_map[ws_key]
+        if res.get("flow_rate_10mm_lps") in (None, "") and "10" in pair:
+            res["flow_rate_10mm_lps"] = pair["10"]
+        if res.get("flow_rate_20mm_lps") in (None, "") and "20" in pair:
+            res["flow_rate_20mm_lps"] = pair["20"]
+
+    wsm_page = WATER_SEAL_RE.search(flat)
+    if wsm_page and res.get("water_seal_mm") in (None, ""):
+        try:
+            ws = int(wsm_page.group(1))
+            if 20 <= ws <= 100:
+                res["water_seal_mm"] = ws
+                res["evidence"].append(("Sperrwasserhöhe (mm)", _snippet(flat, wsm_page.start(), wsm_page.end()), final))
+        except Exception:
+            pass
+    if res.get("water_seal_mm") in (None, ""):
+        wsm_rev = WATER_SEAL_REV_RE.search(flat)
+        if wsm_rev:
+            try:
+                ws = int(wsm_rev.group(1))
+                if 20 <= ws <= 100:
+                    res["water_seal_mm"] = ws
+                    res["evidence"].append(("Sperrwasserhöhe (mm, reversed phrase)", _snippet(flat, wsm_rev.start(), wsm_rev.end()), final))
+            except Exception:
+                pass
+
+    if res.get("flow_rate_10mm_lps") in (None, "") or res.get("flow_rate_20mm_lps") in (None, ""):
+        for mv, mm in FLOW_AT_AUFSTAU_RE.findall(flat):
+            try:
+                fv = float(str(mv).replace(",", "."))
+            except Exception:
+                continue
+            if not (0.10 <= fv <= 3.0):
+                continue
+            if mm == "10" and res.get("flow_rate_10mm_lps") in (None, ""):
+                res["flow_rate_10mm_lps"] = fv
+            elif mm == "20" and res.get("flow_rate_20mm_lps") in (None, ""):
+                res["flow_rate_20mm_lps"] = fv
+
+    if family == "showerdrain_b":
+        # B is complete-system; prefer explicit 10/20mm Aufstau phrasing when present.
+        for mv, mm in FLOW_AT_AUFSTAU_RE.findall(flat):
+            try:
+                fv = float(str(mv).replace(",", "."))
+            except Exception:
+                continue
+            if not (0.10 <= fv <= 3.0):
+                continue
+            if mm == "10":
+                res["flow_rate_10mm_lps"] = fv
+            elif mm == "20":
+                res["flow_rate_20mm_lps"] = fv
+        # Some pages expose both 25 and 30 mm values across contexts; keep explicit B row value 30 when available.
+        ws_vals: List[int] = []
+        for wm in WATER_SEAL_RE.finditer(flat):
+            try:
+                ws = int(wm.group(1))
+            except Exception:
+                continue
+            if 20 <= ws <= 100:
+                ws_vals.append(ws)
+        for wm in WATER_SEAL_REV_RE.finditer(flat):
+            try:
+                ws = int(wm.group(1))
+            except Exception:
+                continue
+            if 20 <= ws <= 100:
+                ws_vals.append(ws)
+        if ws_vals:
+            chosen = 30 if 30 in ws_vals else ws_vals[0]
+            res["water_seal_mm"] = chosen
+            if len(set(ws_vals)) > 1:
+                res["evidence"].append(("B water-seal ambiguity", f"multiple water-seal values found {sorted(set(ws_vals))}; selected {chosen} for B complete-system context", final))
 
     # height (prefer Oberkante Estrich phrase)
     hm = HEIGHT_OE_RE.search(flat) or HEIGHT_RE.search(flat)
@@ -648,12 +1518,31 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
             lps_values.append(v)
             res["evidence"].append(("Flow rate option (Abflusswert l/s)", _snippet(flat, m.start(), m.end()), final))
 
+    if article_token and article_row_matched and not article_row_explicit_flow:
+        res["evidence"].append(("Flow attribution limited", "article row has no explicit 10mm/20mm hydraulic columns; flow may come from generic page-level statement", final))
+
     if lps_values:
         opts = sorted(set(lps_values))
         res["flow_rate_lps_options"] = json.dumps(opts, ensure_ascii=False)
         res["flow_rate_lps"] = max(opts)
         res["flow_rate_unit"] = "l/s"
         res["flow_rate_status"] = "ok"
+
+    if res.get("flow_rate_10mm_lps") not in (None, "") or res.get("flow_rate_20mm_lps") not in (None, ""):
+        # Prefer explicit 10/20 mm hydraulic values over generic marketing-level max statements.
+        vals = [v for v in (res.get("flow_rate_10mm_lps"), res.get("flow_rate_20mm_lps")) if isinstance(v, (int, float))]
+        if vals:
+            res["flow_rate_lps"] = max(vals)
+            res["flow_rate_unit"] = "l/s"
+            res["flow_rate_status"] = "ok"
+    elif not lps_values:
+        # fallback for S+ drain-body rows where flows are explicitly tied to 10/20 mm
+        # but not prefixed by generic "Abflusswert/Ablaufleistung" labels.
+        vals = [v for v in (res.get("flow_rate_10mm_lps"), res.get("flow_rate_20mm_lps")) if isinstance(v, (int, float))]
+        if vals:
+            res["flow_rate_lps"] = max(vals)
+            res["flow_rate_unit"] = "l/s"
+            res["flow_rate_status"] = "ok"
 
     enm = EN1253_RE.search(flat)
     if enm:
@@ -663,5 +1552,302 @@ def extract_parameters(product_url: str) -> Dict[str, Any]:
     return res
 
 
+
+
+def _grate_component_options_from_page(page_url: str, family: str, label: str, option_meta: str) -> List[Dict[str, Any]]:
+    st, final, html, _err = _safe_get_text(page_url, timeout=35)
+    if st != 200 or not html:
+        return []
+    pairs = _extract_pairs_from_table(html)
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for l1_mm, article_no, article_digits in pairs:
+        if len(article_digits) < 6:
+            continue
+        cid = _stable_aco_id(final, family, "grate", label, article_digits)
+        if not cid or cid in seen:
+            continue
+        seen.add(cid)
+        out.append({
+            "component_id": cid,
+            "option_type": "compatible_grate",
+            "option_role": "grate",
+            "option_family": family,
+            "parent_family": family,
+            "source_url": f"{final}#article-{article_digits}",
+            "option_label": f"{label} (Artikel-Nr. {article_no})"[:140],
+            "option_meta": option_meta,
+        })
+    return out
+
 def get_bom_options(product_url: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-    return []
+    src = (product_url or "").split("#", 1)[0].strip()
+    st, final, html, err = _safe_get_text(src, timeout=35)
+    if st != 200 or not html:
+        return []
+
+    soup = BeautifulSoup(html or "", "lxml")
+    title = _extract_title(html, final)
+    family = _detect_family(final, title)
+    if family not in {"showerdrain_splus", "showerdrain_mplus", "showerdrain_eplus", "showerdrain_b", "showerdrain_c", "showerdrain_cplus"}:
+        return []
+
+    if family == "showerdrain_mplus":
+        parent_role = _infer_mplus_role(final, title)
+        main = soup.select_one("main") or soup
+        for sel in ("header", "nav", "footer"):
+            for n in main.select(sel):
+                n.decompose()
+        options: List[Dict[str, Any]] = []
+        seen = set()
+        for a in main.select("a[href]"):
+            href = _abs(a.get("href") or "", final)
+            if not _in_scope(href):
+                continue
+            txt = _clean_text(a.get_text(" ", strip=True))
+            if not txt or "hauptnavigation" in txt.lower():
+                continue
+            role = ""
+            if any(k in txt.lower() for k in ("ablaufkoerper", "ablaufkörper")) or "ablaufkoerper" in href:
+                role = "drain_body"; otype = "compatible_drain_body"
+            elif any(k in txt.lower() for k in ("design-roste", "design-rost", "designrost", "rost")):
+                role = "grate"; otype = "compatible_grate"
+            elif any(k in txt.lower() for k in ("showerstep", "zubehoer", "zubehör", "zubehörteile", "accessory")):
+                role = "accessory"; otype = "optional_accessory"
+            else:
+                continue
+            if parent_role == "drain_body" and role == "drain_body":
+                continue
+            cid = _stable_aco_id(href, family, role, txt)
+            key = (cid, otype)
+            if key in seen:
+                continue
+            seen.add(key)
+            options.append({
+                "component_id": cid,
+                "option_type": otype,
+                "option_role": role,
+                "option_family": family,
+                "parent_family": family,
+                "source_url": href,
+                "option_label": txt[:140],
+                "option_meta": "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; source_limitation=M+ compatibility is official family-level compatibility; no explicit article-to-article matrix found.",
+            })
+        return options
+    if family == "showerdrain_b":
+        options: List[Dict[str, Any]] = []
+        seen = set()
+        main = soup.select_one("main") or soup
+        for sel in ("header", "nav", "footer"):
+            for n in main.select(sel):
+                n.decompose()
+        for a in main.select("a[href]"):
+            href = _abs(a.get("href") or "", final)
+            if not _in_scope(href):
+                continue
+            txt = _clean_text(a.get_text(" ", strip=True))
+            if not txt or "hauptnavigation" in txt.lower():
+                continue
+            if _infer_b_role(href, txt) != "accessory":
+                continue
+            cid = _stable_aco_id(href, family, "accessory", txt)
+            parent_id = _stable_aco_id(final, family, "complete_system", title)
+            if not cid or cid == parent_id:
+                continue
+            key = (cid, "optional_accessory")
+            if key in seen:
+                continue
+            seen.add(key)
+            options.append({
+                "component_id": cid,
+                "option_type": "optional_accessory",
+                "option_role": "accessory",
+                "option_family": family,
+                "parent_family": family,
+                "source_url": href,
+                "option_label": txt[:140],
+                "option_meta": "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; source_limitation=B is an all-in-one product; compatibility only applies to optional accessories, no explicit article-to-article matrix found.",
+            })
+        return options
+    if family == "showerdrain_eplus":
+        options: List[Dict[str, Any]] = []
+        seen = set()
+        main = soup.select_one("main") or soup
+        for sel in ("header", "nav", "footer"):
+            for n in main.select(sel):
+                n.decompose()
+        for a in main.select("a[href]"):
+            href = _abs(a.get("href") or "", final)
+            if not _in_scope(href):
+                continue
+            txt = _clean_text(a.get_text(" ", strip=True))
+            if not txt or "hauptnavigation" in txt.lower():
+                continue
+            role = _infer_eplus_role(href, txt)
+            if role == "grate":
+                option_meta = "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; source_limitation=E+ compatibility is official family-level compatibility; no explicit article-to-article matrix found."
+                grate_rows = _grate_component_options_from_page(href, family, txt, option_meta)
+                if grate_rows:
+                    for row in grate_rows:
+                        key = (row["component_id"], row["option_type"])
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        options.append(row)
+                    continue
+                otype = "compatible_grate"
+            elif role == "drain_body" and "brandschutz" in f"{href} {txt}".lower():
+                otype = "related_body_component"
+            else:
+                continue
+            cid = _stable_aco_id(href, family, role, txt)
+            parent_id = _stable_aco_id(final, family, _infer_eplus_role(final, title), title)
+            if not cid or cid == parent_id:
+                continue
+            key = (cid, otype)
+            if key in seen:
+                continue
+            seen.add(key)
+            options.append({
+                "component_id": cid,
+                "option_type": otype,
+                "option_role": role,
+                "option_family": family,
+                "parent_family": family,
+                "source_url": href,
+                "option_label": txt[:140],
+                "option_meta": "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; source_limitation=E+ compatibility is official family-level compatibility; no explicit article-to-article matrix found.",
+            })
+        return options
+    if family in {"showerdrain_c", "showerdrain_cplus"}:
+        options: List[Dict[str, Any]] = []
+        seen = set()
+        main = soup.select_one("main") or soup
+        for sel in ("header", "nav", "footer"):
+            for n in main.select(sel):
+                n.decompose()
+        for a in main.select("a[href]"):
+            href = _abs(a.get("href") or "", final)
+            if not _in_scope(href):
+                continue
+            txt = _clean_text(a.get_text(" ", strip=True))
+            txt_l = txt.lower()
+            href_l = href.lower()
+            if not txt or "hauptnavigation" in txt_l:
+                continue
+            role = ""
+            otype = ""
+            if any(k in txt_l for k in ("design-roste", "design-rost", "designrost", "rost", "abdeckung")) or "design-rost" in href_l:
+                role = "grate"; otype = "compatible_grate"
+                option_meta = "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; source_limitation=grate compatibility is family-level and length/design based; no explicit article-to-article matrix found."
+                grate_rows = _grate_component_options_from_page(href, "showerdrain_cplus", txt, option_meta)
+                if grate_rows:
+                    for row in grate_rows:
+                        key = (row["component_id"], row["option_type"])
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        options.append(row)
+                    continue
+            elif any(k in txt_l for k in ("showerstep", "gefaellekeil", "gefällekeil", "zubehoer", "zubehör", "installation")) or any(k in href_l for k in ("showerstep", "gefaellekeil", "gefallekeil", "zubehoer", "zubehor", "installation")):
+                role = "accessory"; otype = "optional_accessory"
+            else:
+                continue
+            cid = _stable_aco_id(href, "showerdrain_cplus", role, txt)
+            if not cid:
+                continue
+            key = (cid, otype)
+            if key in seen:
+                continue
+            seen.add(key)
+            options.append({
+                "component_id": cid,
+                "option_type": otype,
+                "option_role": role,
+                "option_family": "showerdrain_cplus",
+                "parent_family": "showerdrain_cplus",
+                "source_url": href,
+                "option_label": txt[:140],
+                "option_meta": "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; source_limitation=grate compatibility is family-level and length/design based; no explicit article-to-article matrix found.",
+            })
+        return options
+
+    options: List[Dict[str, Any]] = []
+    seen = set()
+    compatibility_sections = soup.find_all(string=re.compile(r"kompatibel|geeignet\s+f[üu]r|passend\s+zu|zubeh[öo]r|ablaufk[öo]rper", re.IGNORECASE))
+
+    parent_id = _stable_aco_id(final, family, "configuration_family", title)
+    nav_noise_re = re.compile(r"hauptnavigation|skip|direkt\s+zur|cookie|datenschutz|impressum|suche|login|konto|warenkorb|men[üu]|footer|header", re.IGNORECASE)
+
+    main = soup.select_one("main") or soup
+    for sel in ("header", "nav", "footer"):
+        for n in main.select(sel):
+            n.decompose()
+
+    candidate_anchors = []
+    for s in compatibility_sections:
+        p = getattr(s, "parent", None)
+        if p is None:
+            continue
+        context_nodes = [p]
+        if getattr(p, "parent", None) is not None:
+            context_nodes.append(p.parent)
+        for node in context_nodes:
+            for a in node.select("a[href]"):
+                candidate_anchors.append((a, _clean_text(node.get_text(" ", strip=True))))
+
+    for a, ctx_text in candidate_anchors:
+        href = _abs(a.get("href") or "", final)
+        if not _in_scope(href):
+            continue
+        link_txt = _clean_text(a.get_text(" ", strip=True))
+        if not link_txt or nav_noise_re.search(link_txt):
+            continue
+        if nav_noise_re.search(ctx_text or ""):
+            continue
+        if not re.search(r"kompatibel|geeignet\s+f[üu]r|passend\s+zu|zubeh[öo]r|ablaufk[öo]rper", ctx_text or "", re.IGNORECASE):
+            continue
+        role, _reason = _classify_role(href, link_txt, "", family)
+        if role not in {"drain_body", "grate", "accessory"}:
+            continue
+        comp_id = _stable_aco_id(href, family, role, link_txt)
+        if comp_id == parent_id:
+            continue
+        key = (comp_id, role)
+        if key in seen:
+            continue
+        seen.add(key)
+        option_type = "compatible_drain_body" if role == "drain_body" else ("compatible_grate" if role == "grate" else "optional_accessory")
+        options.append({
+            "component_id": comp_id,
+            "option_type": option_type,
+            "option_role": role,
+            "option_family": family,
+            "parent_family": family,
+            "source_url": href,
+            "option_label": link_txt[:140],
+            "option_meta": "official_splus_compatibility_section",
+        })
+    # cautious implicit family-level compatibility hints for verified S+ profile->drain article sets
+    if not options:
+        art_match = re.search(r"(\d{4}\.\d{2}\.\d{2}|\d{8})", product_url or "")
+        art_norm = ""
+        if art_match:
+            raw = art_match.group(1)
+            digits = _digits_only(raw)
+            art_norm = raw if "." in raw else f"{digits[:4]}.{digits[4:6]}.{digits[6:8]}"
+        if art_norm in SPLUS_PROFILE_ARTICLES:
+            for da in sorted(SPLUS_DRAIN_ARTICLES):
+                dd = _digits_only(da)
+                comp_id = f"aco-{dd}"
+                options.append({
+                    "component_id": comp_id,
+                    "option_type": "compatible_drain_body",
+                    "option_role": "drain_body",
+                    "option_family": family,
+                    "parent_family": family,
+                    "source_url": final,
+                    "option_label": f"Ablaufkörper {da}",
+                    "option_meta": "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; Compatibility is implicit_family_level based on official ACO S+ modular system/profile+drain wording; no literal profile article -> drain article matrix found.",
+                })
+    return options

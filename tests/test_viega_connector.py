@@ -11,7 +11,7 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         # positive keep
         ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Duschrinne-4983-10.html", "Advantix-Duschrinne 4983.10", "complete_drain"),
         ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Bodenablaeufe/Advantix-Bodenablauf-1234-10.html", "Advantix-Bodenablauf 1234.10", "base_set"),
-        ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Ablauf-6963-1.html", "Tempoplex-Ablauf 6963.1", "complete_drain"),
+        ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Ablauf-6963-1.html", "Tempoplex-Ablauf 6963.1", "base_set"),
         ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Domoplex/Domoplex-Ablauf-1111-11.html", "Domoplex-Ablauf 1111.11", "complete_drain"),
         ("https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Rost-4933-61.html", "Advantix-Rost 4933.61", "cover"),
         # negative reject
@@ -73,6 +73,49 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         self.assertEqual(params["sealing_fleece_preassembled"], "yes")
         self.assertEqual(params["colours_count"], 1)
 
+    def test_parse_article_table_accepts_spaced_article_numbers_for_cover_rows(self):
+        html = """
+        <html><body><main>
+        <table>
+          <tr><th>Ausführung</th><th>Artikel</th></tr>
+          <tr><td>Kunststoff verchromt</td><td>649 982</td></tr>
+          <tr><td>Kunststoff schwarz matt</td><td>806 132</td></tr>
+        </table>
+        </main></body></html>
+        """
+        rows = viega._parse_article_table(html)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0].get("article_no"), "649 982")
+        self.assertEqual(rows[1].get("article_no"), "806 132")
+
+    def test_get_bom_options_exposes_cover_article_rows(self):
+        opts = viega.get_bom_options(
+            "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Abdeckhaube-6964-0.html",
+            params={
+                "article_rows_json": '[{"article_no":"649 982","variant_label":"Kunststoff verchromt","_row_text":"Kunststoff verchromt 649 982"}]'
+            },
+        )
+        self.assertEqual(len(opts), 1)
+        self.assertEqual(opts[0]["option_group"], "cover_variant")
+        self.assertEqual(opts[0]["option_sku"], "649982")
+
+    def test_get_bom_options_normalizes_reference_rows_and_filters_malformed_garbage(self):
+        opts = viega.get_bom_options(
+            "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Abdeckhaube-6964-0.html",
+            params={
+                "article_rows_json": json.dumps(
+                    [
+                        {"article_no": "775 070 1) siehe auch 775 087 775 094", "variant_label": "Kunststoff Sonderfarbe", "_row_text": "Kunststoff Sonderfarbe 775 070 1) siehe auch 775 087 775 094"},
+                        {"article_no": "775 087 1) siehe auch 775 070 775 094", "variant_label": "Kunststoff Metallfarbe", "_row_text": "Kunststoff Metallfarbe 775 087 1) siehe auch 775 070 775 094"},
+                        {"article_no": "775 094 1) siehe auch 775 070 775 087", "variant_label": "vergoldet", "_row_text": "vergoldet 775 094 1) siehe auch 775 070 775 087"},
+                        {"article_no": "649 982 806 132", "variant_label": "BAD CONCAT", "_row_text": "X " * 200},
+                        {"article_no": "775 087 1) siehe auch 775 070 775 094", "variant_label": "Kunststoff Metallfarbe", "_row_text": "Kunststoff Metallfarbe 775 087 1) siehe auch 775 070 775 094"},
+                    ]
+                )
+            },
+        )
+        self.assertEqual({o["option_sku"] for o in opts}, {"775070", "775087", "775094"})
+
     def test_4982_10_base_body_is_component_candidate(self):
         self.assertEqual(
             viega._classify_candidate(
@@ -81,6 +124,13 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
                 "Grundkörper mit L und Artikel",
             ),
             "component",
+        )
+
+    def test_tempoplex_cover_one_digit_suffix_is_treated_as_detail_url(self):
+        self.assertTrue(
+            viega._is_detail_url(
+                "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Abdeckhaube-6964-0.html"
+            )
         )
 
     def test_4981_90_vertical_outlet_hint(self):
@@ -101,16 +151,26 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         self.assertEqual(params["flow_rate_lps"], 0.7)
         self.assertEqual(params["outlet_dn_default"], "DN50")
 
-    def test_tempoplex_is_classified_as_drain_taxonomy(self):
+    def test_tempoplex_is_classified_as_base_set_taxonomy(self):
         cand_type, drain_category, system_role, complete_system = viega._derive_taxonomy(
             "https://www.viega.de/de/produkte/Katalog/Badewannen-und-Duschwannenablaeufe/Tempoplex/Tempoplex-Ablauf-6963-1.html",
             "Tempoplex-Ablauf 6963.1",
             "Tempoplex Duschwannenablauf",
         )
-        self.assertEqual(cand_type, "drain")
+        self.assertEqual(cand_type, "component")
         self.assertEqual(drain_category, "shower_tray_drain")
-        self.assertEqual(system_role, "complete_drain")
-        self.assertEqual(complete_system, "yes")
+        self.assertEqual(system_role, "base_set")
+        self.assertEqual(complete_system, "component")
+
+    def test_known_domoplex_6928_21_is_demoted_to_base_set(self):
+        cand_type, _cat, role, complete_system = viega._derive_taxonomy(
+            "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Domoplex/Domoplex-Ablauf-6928-21.html",
+            "Domoplex-Ablauf 6928.21",
+            "Ablauf",
+        )
+        self.assertEqual(role, "base_set")
+        self.assertEqual(cand_type, "component")
+        self.assertEqual(complete_system, "component")
 
     def test_taxonomy_examples_for_floor_cover_accessory(self):
         c1 = viega._derive_taxonomy(
@@ -170,15 +230,16 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
             rows, _dbg = viega.discover_candidates(1200, 100)
 
         urls = {r["product_url"] for r in rows}
-        self.assertIn(tempoplex_url, urls)
+        self.assertTrue(any("tempoplex-ablauf-6963-1.html" in u.lower() for u in urls))
         self.assertTrue(any("advantix-duschrinne-4983-10.html" in u.lower() for u in urls))
         by_url = {r["product_url"]: r for r in rows}
-        self.assertEqual(by_url[tempoplex_url]["drain_category"], "shower_tray_drain")
+        temp_row = next(r for r in rows if "tempoplex-ablauf-6963-1.html" in r["product_url"].lower())
+        self.assertEqual(temp_row["drain_category"], "shower_tray_drain")
         adv_row = next(r for r in rows if "advantix-duschrinne-4983-10.html" in r["product_url"].lower())
         self.assertEqual(adv_row["drain_category"], "line_channel")
-        self.assertIn("discovery_seed_family", by_url[tempoplex_url])
-        self.assertFalse(by_url[tempoplex_url]["was_synthetic_url"])
-        self.assertEqual(by_url[tempoplex_url]["normalized_detail_url"], tempoplex_url)
+        self.assertIn("discovery_seed_family", temp_row)
+        self.assertFalse(temp_row["was_synthetic_url"])
+        self.assertIn("tempoplex-ablauf-6963-1.html", temp_row["normalized_detail_url"].lower())
         summary = _dbg[-1]
         self.assertIn("canonical_seed_urls", summary)
         self.assertIn("discovered_category_links", summary)
@@ -270,7 +331,7 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
             "Duschwannengarnituren",
         )
         self.assertEqual(tempoplex[1], "shower_tray_drain")
-        self.assertEqual(tempoplex[2], "complete_drain")
+        self.assertEqual(tempoplex[2], "base_set")
 
         floor = viega._derive_taxonomy(
             "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Bodenablaeufe/Advantix-Bodenablauf-1234-10.html",
@@ -369,8 +430,24 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         noisy_flat = "Ersatzteil Wartung Technische Daten EN 1253 Ablaufleistung 0,8 l/s DN 50"
         for url, title, family in cases:
             role, reason, _pos, _neg = viega._classify_entity_type_with_reason(url, title, noisy_flat, family)
-            self.assertIn(reason, {"golden_url_override_line_drain", "golden_url_override_floor_drain", "golden_url_override_base_set", "golden_url_override_shower_tray_drain"})
+            self.assertIn(reason, {"golden_url_override_line_drain", "golden_url_override_floor_drain", "golden_url_override_base_set", "golden_url_override_shower_tray_base_set", "tray_known_incomplete_base_model"})
             self.assertNotEqual(role, "accessory")
+
+    def test_varioplex_not_auto_demoted_without_incomplete_signal(self):
+        fam = viega._classify_family(
+            "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Varioplex/Varioplex-Ablauf-7777-11.html",
+            "Varioplex-Ablauf 7777.11",
+            "",
+            "",
+        )
+        role, reason, _pos, _neg = viega._classify_entity_type_with_reason(
+            "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Varioplex/Varioplex-Ablauf-7777-11.html",
+            "Varioplex-Ablauf 7777.11",
+            "Technische Daten Ablaufleistung",
+            fam,
+        )
+        self.assertEqual(role, "complete_drain")
+        self.assertNotEqual(reason, "tray_known_incomplete_base_model")
 
     def test_good_drain_pages_ignore_accessory_words_in_surrounding_flat_text(self):
         noisy_flat = "Empfohlenes Zubehör: Verstellfußset, Stopfen, Montageset"
@@ -452,6 +529,31 @@ class ViegaExtractionRegressionTests(unittest.TestCase):
         self.assertIn(base, urls)
         self.assertNotIn(cover, urls)
         self.assertEqual(dbg[-1]["accepted_cover_count"], 0)
+
+    def test_tray_family_keeps_cover_for_pairing(self):
+        base = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Ablauf-6963-1.html"
+        cover = "https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Ablaeufe-fuer-Bade--und-Duschwannen/Tempoplex/Tempoplex-Abdeckhaube-6964-0.html"
+
+        def fake_get(url, timeout=35):
+            if url == base:
+                return 200, url, "<html><body><main><h1>Tempoplex-Ablauf 6963.1</h1><p>Funktionseinheit ohne Abdeckhaube</p></main></body></html>", ""
+            if url == cover:
+                return 200, url, "<html><body><main><h1>Tempoplex-Abdeckhaube 6964.0</h1></main></body></html>", ""
+            return 200, url, "<html><body>seed</body></html>", ""
+
+        crawl_map = {
+            u: {"raw_discovered_href": u, "normalized_detail_url": u, "href_source_page": "seed", "was_synthetic_url": False}
+            for u in [base, cover]
+        }
+        with patch.object(viega, "_safe_get_text", side_effect=fake_get), patch.object(
+            viega, "_crawl_category_pages", return_value=crawl_map
+        ), patch.object(viega, "DETAIL_SEEDS", []):
+            rows, dbg = viega.discover_candidates(1200, 100)
+
+        urls = {r["product_url"] for r in rows}
+        self.assertIn(base, urls)
+        self.assertIn(cover, urls)
+        self.assertGreaterEqual(dbg[-1]["accepted_cover_count"], 1)
 
 
 if __name__ == "__main__":

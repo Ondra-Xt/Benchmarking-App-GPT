@@ -30,8 +30,8 @@ run_windows.bat
 or manually:
 
 ```bash
-.venv\Scripts\activate
-streamlit run app.py
+.\.venv\Scripts\activate
+python -m streamlit run app.py
 ```
 
 ---
@@ -73,6 +73,15 @@ Skript navíc vypisuje `WARN` pro podezřelé hodnoty výšek (`height_adj_*`) v
 
 Pokud v `Products` nebo `Components` chybí `height_adj_min_mm` nebo `height_adj_max_mm`, validátor vypíše seznam dotčených řádků (manufacturer, product_id, candidate_type, product_url).
 
+
+
+## Quick test
+
+Run the automated test suite:
+
+```bash
+pytest
+```
 
 ## Scoring note
 
