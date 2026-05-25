@@ -525,6 +525,22 @@ def export_excel(
         components_df = df[is_component].copy()
         products_df = df[~is_component].copy()
 
+    # If components are intentionally excluded from Products (e.g., ACO component-only rows),
+    # materialize them into Components from Excluded when no explicit Components were provided.
+    if components_df.empty and not excluded_df.empty:
+        ex = excluded_df.copy()
+        cand = ex.get("candidate_type", pd.Series([""] * len(ex), index=ex.index)).astype(str).str.lower()
+        role = ex.get("system_role", pd.Series([""] * len(ex), index=ex.index)).astype(str).str.lower()
+        why = ex.get("why_not_product_reason", pd.Series([""] * len(ex), index=ex.index)).astype(str).str.lower()
+        status = ex.get("current_status", pd.Series([""] * len(ex), index=ex.index)).astype(str).str.lower()
+        is_component = (
+            cand.isin(["component", "base_set"])
+            | role.isin(["grate", "accessory", "optional_accessory"])
+            | why.isin({"cover_only_component", "accessory_only", "component_not_final_product", "configuration_family_not_final_product", "incomplete_assembly"})
+            | status.str.contains("component", na=False)
+        )
+        components_df = ex[is_component].copy()
+
     def write_df(sheet_name: str, df: pd.DataFrame) -> None:
         # Přepiš sheet, aby v template nezůstávaly staré/hybridní hodnoty.
         if sheet_name in wb.sheetnames:
