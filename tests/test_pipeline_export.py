@@ -189,6 +189,33 @@ class PipelineExportTests(unittest.TestCase):
             merged_row = cov[cov["product_id"] == "kaldewei-assembled-flowline-zero__flowdrain-horizontal-regular"].iloc[0]
             self.assertEqual(bool(merged_row["in_comparison"]), True)
 
+    def test_export_materializes_components_from_excluded_when_products_have_none(self):
+        with tempfile.TemporaryDirectory() as td:
+            template = Path(td) / "template.xlsx"
+            out = Path(td) / "out.xlsx"
+            self._make_template(template)
+            products = pd.DataFrame([{"manufacturer": "aco", "product_id": "aco-drain-1", "candidate_type": "drain", "system_role": "drain_unit"}])
+            comparison = products.copy()
+            excluded = pd.DataFrame([
+                {"manufacturer": "aco", "product_id": "aco-comp-grate", "candidate_type": "component", "system_role": "grate", "why_not_product_reason": "cover_only_component"},
+                {"manufacturer": "aco", "product_id": "aco-comp-accessory", "candidate_type": "component", "system_role": "accessory", "why_not_product_reason": "accessory_only"},
+            ])
+            bom = pd.DataFrame([
+                {"manufacturer": "aco", "product_id": "aco-drain-1", "component_id": "aco-comp-grate", "option_type": "compatible_grate", "option_role": "grate", "option_meta": "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; source_limitation=grate compatibility is family-level and length/design based; no explicit article-to-article matrix found."},
+                {"manufacturer": "aco", "product_id": "aco-drain-1", "component_id": "aco-comp-accessory", "option_type": "optional_accessory", "option_role": "accessory", "option_meta": "x"},
+            ])
+            export_excel(template, out, default_config(), products_df=products, comparison_df=comparison, excluded_df=excluded, bom_options_df=bom)
+            comp_rows = self._sheet_rows(out, "Components")
+            self.assertGreater(len(comp_rows), 1)
+            comp = pd.DataFrame(comp_rows[1:], columns=comp_rows[0])
+            self.assertTrue((comp["manufacturer"].astype(str).str.lower() == "aco").any())
+            self.assertTrue(comp["candidate_type"].astype(str).str.lower().isin(["component", "base_set"]).any())
+            self.assertTrue(comp["system_role"].astype(str).str.lower().isin(["grate", "accessory", "optional_accessory"]).any())
+            prod = pd.DataFrame(self._sheet_rows(out, "Products")[1:], columns=self._sheet_rows(out, "Products")[0])
+            cmp = pd.DataFrame(self._sheet_rows(out, "Comparison")[1:], columns=self._sheet_rows(out, "Comparison")[0])
+            self.assertFalse(prod["system_role"].astype(str).str.lower().isin(["grate", "accessory", "optional_accessory"]).any())
+            self.assertFalse(cmp["system_role"].astype(str).str.lower().isin(["grate", "accessory", "optional_accessory"]).any())
+
     def test_run_update_excludes_complete_system_no_and_normalizes_manufacturer(self):
         registry = pd.DataFrame(
             [
@@ -470,8 +497,9 @@ class PipelineExportTests(unittest.TestCase):
         aco_bom = bom[bom["manufacturer"] == "aco"]
         self.assertFalse(aco_bom.empty)
         self.assertTrue({"component_id", "option_type", "option_family", "option_role", "parent_family", "source_url", "option_meta"}.issubset(set(aco_bom.columns)))
-        # ensure options are concise and cleaned
-        self.assertTrue((aco_bom["option_meta"].astype(str).str.len() < 180).all())
+        # ensure options are concise and cleaned (grate contract string is intentionally longer)
+        short_meta = aco_bom[~((aco_bom["option_type"].astype(str) == "compatible_grate") & (aco_bom["option_role"].astype(str) == "grate"))]
+        self.assertTrue((short_meta["option_meta"].astype(str).str.len() < 180).all())
         self.assertTrue((aco_bom["option_label"].astype(str).str.len() < 150).all())
         self.assertTrue((aco_bom["option_label"].astype(str).str.contains("wishlist|warenkorb|menge", case=False, regex=True) == False).all())
         # spot-check at least one showerdrain base->grate and one accessory option
