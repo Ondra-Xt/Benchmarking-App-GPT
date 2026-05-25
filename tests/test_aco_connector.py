@@ -305,6 +305,22 @@ class AcoConnectorDiscoveryTests(unittest.TestCase):
         self.assertFalse(any(o.get("component_id") == o.get("product_id") for o in opts))
         self.assertFalse(any(str(o.get("option_label") or "") == "Direkt zur Hauptnavigation springen" for o in opts))
 
+
+    def test_cplus_bom_optional_accessories_include_showerstep_and_gefaellekeil(self):
+        html = """<html><body><main>
+            <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-cplus/'>Direkt zur Hauptnavigation springen</a>
+            <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/showerstep/'>ShowerStep</a>
+            <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/gefaellekeil/'>Gefällekeil</a>
+        </main></body></html>"""
+        url = "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-cplus/"
+        with patch("src.connectors.aco._safe_get_text", return_value=(200, url, html, "")):
+            opts = aco.get_bom_options(url)
+        acc = [o for o in opts if o.get("option_type") == "optional_accessory"]
+        self.assertEqual(len(acc), 2)
+        self.assertTrue(all(o.get("option_role") == "accessory" for o in acc))
+        self.assertTrue(all("compatibility_confidence=implicit_family_level" in str(o.get("option_meta") or "") for o in acc))
+        self.assertFalse(any(str(o.get("option_label") or "") == "Direkt zur Hauptnavigation springen" for o in opts))
+
     def test_mplus_drain_parent_does_not_emit_drain_to_drain_links(self):
         html = """<html><body><main>
             <a href='/produkte/badentwaesserung/duschrinnen/aco-showerdrain-mplus/ablaufkoerper-zur-duschrinne-aco-showerdrain-mplus/'>Ablaufkörper</a>
