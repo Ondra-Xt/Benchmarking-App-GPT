@@ -4087,6 +4087,11 @@ def run_update(
                 sort=False,
             )
     if bom_rows:
+        # Keep existing C+ family guard but add a final ACO-wide integrity guard:
+        # every ACO BOM row must reference an existing ACO parent row and an existing
+        # ACO component row in the final registry universe (Products + Excluded).
+        # This removes stale legacy links (notably older M+ aliases) without changing
+        # product/comparison universes.
         universe_ids = {str(r.get("product_id") or "") for r in products_rows if str(r.get("manufacturer") or "").lower() == "aco"}
         filtered_bom_rows = []
         for rr in bom_rows:
@@ -4097,6 +4102,22 @@ def run_update(
             if component_id and component_id in universe_ids:
                 filtered_bom_rows.append(rr)
         bom_rows = filtered_bom_rows
+
+        final_aco_rows = [r for r in (products_rows + excluded_rows) if str(r.get("manufacturer") or "").lower() == "aco"]
+        final_aco_ids = {str(r.get("product_id") or "") for r in final_aco_rows}
+        final_aco_component_ids = {
+            str(r.get("product_id") or "")
+            for r in final_aco_rows
+            if str(r.get("candidate_type") or "").lower() == "component"
+        }
+        bom_rows = [
+            rr for rr in bom_rows
+            if str(rr.get("manufacturer") or "").lower() != "aco"
+            or (
+                str(rr.get("product_id") or "") in final_aco_ids
+                and str(rr.get("component_id") or "") in final_aco_component_ids
+            )
+        ]
 
         # Final boundary normalization for ACO grate compatibility metadata.
         # This runs after all BOM production/filter passes to cover late-added rows.
