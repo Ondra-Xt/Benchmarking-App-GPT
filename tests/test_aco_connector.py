@@ -755,6 +755,16 @@ class AcoSplusPipelineComponentPropagationTests(unittest.TestCase):
 
         self.assertFalse((products["product_id"].astype(str) == "aco-90108861").any())
         self.assertFalse((comparison["product_id"].astype(str) == "aco-90108861").any())
+        a901088 = excluded[excluded["product_id"].astype(str).str.startswith("aco-901088")].copy()
+        self.assertGreater(len(a901088), 0)
+        self.assertTrue((a901088["candidate_type"].astype(str) == "component").all())
+        self.assertTrue((a901088["system_role"].astype(str) == "grate").all())
+        self.assertTrue((a901088["product_family"].astype(str) == "showerdrain_c_article_grate").all())
+        self.assertTrue((a901088["promote_to_product"].astype(str).str.lower() == "no").all())
+        self.assertTrue((a901088["why_not_product_reason"].astype(str) == "cover_only_component").all())
+        row_61 = excluded[excluded["product_id"].astype(str) == "aco-90108861"]
+        self.assertEqual(len(row_61), 1)
+        self.assertIn("#article-90108861", str(row_61.iloc[0]["product_url"]))
 
         universe = set(products["product_id"].astype(str)).union(set(excluded["product_id"].astype(str)))
         grate_bom = bom[bom["option_role"].astype(str) == "grate"].copy()
@@ -767,6 +777,7 @@ class AcoSplusPipelineComponentPropagationTests(unittest.TestCase):
         self.assertTrue(meta.str.contains("explicit_article_matrix=false", regex=False).all())
         self.assertTrue(meta.str.contains("source_limitation=", regex=False).all())
         self.assertTrue(meta.str.contains("no explicit article-to-article matrix found", regex=False).all())
+        self.assertEqual(len(bom), 221)
 
 if __name__ == "__main__":
     unittest.main()
