@@ -755,6 +755,17 @@ class AcoSplusPipelineComponentPropagationTests(unittest.TestCase):
 
         self.assertFalse((products["product_id"].astype(str) == "aco-90108861").any())
         self.assertFalse((comparison["product_id"].astype(str) == "aco-90108861").any())
+        article_grates = excluded[
+            (excluded["manufacturer"].astype(str).str.lower() == "aco")
+            & (excluded["candidate_type"].astype(str).str.lower() == "component")
+            & (excluded["system_role"].astype(str).str.lower() == "grate")
+            & (excluded["product_id"].astype(str).str.match(r"^aco-\d{8}$", na=False))
+        ].copy()
+        self.assertGreater(len(article_grates), 0)
+        self.assertTrue(article_grates["why_not_product_reason"].astype(str).isin(["cover_only_component", "component_not_final_product"]).all())
+        self.assertTrue(article_grates["product_url"].astype(str).str.contains("#article-", regex=False).all())
+        self.assertFalse(products["product_id"].astype(str).isin(set(article_grates["product_id"].astype(str))).any())
+        self.assertFalse(comparison["product_id"].astype(str).isin(set(article_grates["product_id"].astype(str))).any())
 
         universe = set(products["product_id"].astype(str)).union(set(excluded["product_id"].astype(str)))
         grate_bom = bom[bom["option_role"].astype(str) == "grate"].copy()
