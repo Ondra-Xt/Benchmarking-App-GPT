@@ -28,6 +28,9 @@ def _base_dataframes():
         }]),
     }
 
+def _result_for(results, name):
+    return next(r for r in results if r.name == name)
+
 
 def _write_xlsx(path: Path, sheets: dict):
     with pd.ExcelWriter(path, engine="openpyxl") as writer:
@@ -94,3 +97,90 @@ def test_missing_cplus_row_fails(tmp_path):
     passed, results = mod.validate_xlsx(str(path))
     assert not passed
     assert any(r.name == "cplus_presence:Products" and not r.passed for r in results)
+
+
+def test_compatible_grate_metadata_all_required_snippets_pass(tmp_path):
+    mod = _load_validator_module()
+    _patch_small_expectations(mod, {"Products": 2, "Comparison": 2, "Scoring_Field_Coverage": 2, "Candidates_All": 2, "Components": 1, "BOM_Options": 1})
+    data = _base_dataframes()
+    path = tmp_path / "meta_ok.xlsx"
+    _write_xlsx(path, data)
+    passed, results = mod.validate_xlsx(str(path))
+    assert passed
+    assert _result_for(results, "compatible_grate_metadata").passed
+
+
+def test_compatible_grate_metadata_family_specific_source_limitation_passes(tmp_path):
+    mod = _load_validator_module()
+    _patch_small_expectations(mod, {"Products": 2, "Comparison": 2, "Scoring_Field_Coverage": 2, "Candidates_All": 2, "Components": 1, "BOM_Options": 1})
+    data = _base_dataframes()
+    data["BOM_Options"].loc[0, "option_meta"] = (
+        "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; "
+        "source_limitation=E+ family compatibility inferred from dimensional grouping; "
+        "no explicit article-to-article matrix found"
+    )
+    path = tmp_path / "meta_family_ok.xlsx"
+    _write_xlsx(path, data)
+    passed, results = mod.validate_xlsx(str(path))
+    assert passed
+    assert _result_for(results, "compatible_grate_metadata").passed
+
+
+def test_compatible_grate_metadata_missing_compatibility_confidence_fails(tmp_path):
+    mod = _load_validator_module()
+    _patch_small_expectations(mod, {"Products": 2, "Comparison": 2, "Scoring_Field_Coverage": 2, "Candidates_All": 2, "Components": 1, "BOM_Options": 1})
+    data = _base_dataframes()
+    data["BOM_Options"].loc[0, "option_meta"] = (
+        "explicit_article_matrix=false; source_limitation=family level only; "
+        "no explicit article-to-article matrix found"
+    )
+    path = tmp_path / "meta_missing_conf.xlsx"
+    _write_xlsx(path, data)
+    passed, results = mod.validate_xlsx(str(path))
+    assert not passed
+    assert not _result_for(results, "compatible_grate_metadata").passed
+
+
+def test_compatible_grate_metadata_missing_explicit_article_matrix_fails(tmp_path):
+    mod = _load_validator_module()
+    _patch_small_expectations(mod, {"Products": 2, "Comparison": 2, "Scoring_Field_Coverage": 2, "Candidates_All": 2, "Components": 1, "BOM_Options": 1})
+    data = _base_dataframes()
+    data["BOM_Options"].loc[0, "option_meta"] = (
+        "compatibility_confidence=implicit_family_level; source_limitation=family level only; "
+        "no explicit article-to-article matrix found"
+    )
+    path = tmp_path / "meta_missing_explicit_matrix.xlsx"
+    _write_xlsx(path, data)
+    passed, results = mod.validate_xlsx(str(path))
+    assert not passed
+    assert not _result_for(results, "compatible_grate_metadata").passed
+
+
+def test_compatible_grate_metadata_missing_source_limitation_fails(tmp_path):
+    mod = _load_validator_module()
+    _patch_small_expectations(mod, {"Products": 2, "Comparison": 2, "Scoring_Field_Coverage": 2, "Candidates_All": 2, "Components": 1, "BOM_Options": 1})
+    data = _base_dataframes()
+    data["BOM_Options"].loc[0, "option_meta"] = (
+        "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; "
+        "no explicit article-to-article matrix found"
+    )
+    path = tmp_path / "meta_missing_source_limitation.xlsx"
+    _write_xlsx(path, data)
+    passed, results = mod.validate_xlsx(str(path))
+    assert not passed
+    assert not _result_for(results, "compatible_grate_metadata").passed
+
+
+def test_compatible_grate_metadata_missing_no_explicit_matrix_sentence_fails(tmp_path):
+    mod = _load_validator_module()
+    _patch_small_expectations(mod, {"Products": 2, "Comparison": 2, "Scoring_Field_Coverage": 2, "Candidates_All": 2, "Components": 1, "BOM_Options": 1})
+    data = _base_dataframes()
+    data["BOM_Options"].loc[0, "option_meta"] = (
+        "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; "
+        "source_limitation=family level only"
+    )
+    path = tmp_path / "meta_missing_sentence.xlsx"
+    _write_xlsx(path, data)
+    passed, results = mod.validate_xlsx(str(path))
+    assert not passed
+    assert not _result_for(results, "compatible_grate_metadata").passed

@@ -1,7 +1,7 @@
 import argparse
 import sys
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import List, Tuple
 
 import pandas as pd
 
@@ -54,12 +54,12 @@ CPLUS_EXPECTED = {
         "height_adj_max_mm": 128,
     },
 }
-COMPATIBLE_GRATE_META_REQUIRED = {
-    "compatibility_confidence": "implicit_family_level",
-    "explicit_article_matrix": "false",
-    "source_limitation": "",
-}
-COMPATIBLE_GRATE_META_REQUIRED_SNIPPET = "no explicit article-to-article matrix found"
+COMPATIBLE_GRATE_META_REQUIRED_SNIPPETS = [
+    "compatibility_confidence=implicit_family_level",
+    "explicit_article_matrix=false",
+    "source_limitation=",
+    "no explicit article-to-article matrix found",
+]
 
 
 @dataclass
@@ -75,16 +75,9 @@ def _norm_series(df: pd.DataFrame, col: str) -> pd.Series:
     return df[col].fillna("").astype(str).str.strip()
 
 
-def _parse_option_meta(meta: str) -> Dict[str, str]:
-    parsed: Dict[str, str] = {}
-    for part in str(meta or "").split(";"):
-        piece = part.strip()
-        if not piece:
-            continue
-        if "=" in piece:
-            k, v = piece.split("=", 1)
-            parsed[k.strip()] = v.strip()
-    return parsed
+def _compatible_grate_meta_valid(meta: str) -> bool:
+    text = str(meta or "").lower()
+    return all(snippet in text for snippet in COMPATIBLE_GRATE_META_REQUIRED_SNIPPETS)
 
 
 def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
@@ -153,12 +146,7 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
     compat = bom[option_types == "compatible_grate"].copy()
     bad_meta = 0
     for _, row in compat.iterrows():
-        meta = _parse_option_meta(row.get("option_meta", ""))
-        for k, v in COMPATIBLE_GRATE_META_REQUIRED.items():
-            if meta.get(k, None) != v:
-                bad_meta += 1
-                break
-        if COMPATIBLE_GRATE_META_REQUIRED_SNIPPET not in str(row.get("option_meta", "")).lower():
+        if not _compatible_grate_meta_valid(row.get("option_meta", "")):
             bad_meta += 1
     results.append(CheckResult("compatible_grate_metadata", bad_meta == 0, f"actual={bad_meta} expected=0"))
 
