@@ -961,6 +961,39 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                 role = _infer_mplus_role(final_c, title_base)
             if family == "showerdrain_eplus":
                 role = _infer_eplus_role(final_c, title_base)
+            if family == "showerdrain_c" and role == "grate" and pairs:
+                for l1_mm, article_no, article_digits in pairs:
+                    if not article_digits.startswith("901088"):
+                        continue
+                    pid = _stable_aco_id(final_c, family, "grate", title_base, article_digits)
+                    if pid in seen_ids:
+                        continue
+                    seen_ids.add(pid)
+                    kept += 1
+                    kept_total += 1
+                    out.append({
+                        "manufacturer": "aco",
+                        "product_id": pid,
+                        # Keep these as discovery/component-only rows and outside regular
+                        # family-level compatibility expansion paths.
+                        "product_family": "showerdrain_c_article_grate",
+                        "product_name": f"{title_base} (Artikel-Nr. {article_no})",
+                        "product_url": f"{final_c}#article-{article_digits}",
+                        "sources": final_c,
+                        "candidate_type": "component",
+                        "system_role": "grate",
+                        "classification_reason": "article_grate_component",
+                        "complete_system": "component",
+                        "promote_to_product": "no",
+                        "why_not_product_reason": "cover_only_component",
+                        "article_no": article_no,
+                        "row_length_raw_mm": l1_mm,
+                        "row_length_nominal_mm": _nominal_length_from_l1(l1_mm),
+                    })
+                    candidates_by_family[family] = candidates_by_family.get(family, 0) + 1
+                    candidates_by_role["grate"] = candidates_by_role.get("grate", 0) + 1
+                debug.append({"site": "aco", "seed_url": page, "status_code": st, "final_url": final_c, "error": err, "candidates_found": kept, "method": "table", "is_index": None})
+                continue
             if family == "showerdrain_mplus" and pairs:
                 for l1_mm, article_no, article_digits in pairs:
                     role_m = _infer_mplus_role(final_c, title_base)
