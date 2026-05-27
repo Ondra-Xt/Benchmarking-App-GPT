@@ -4044,6 +4044,7 @@ def run_update(
     excluded_df = pd.DataFrame(excluded_rows)
     evidence_df = pd.DataFrame(evidence_rows)
     aco_registry_enrichment: pd.DataFrame | None = None
+    aco_registry_enrichment_by_pid: pd.DataFrame | None = None
     if not registry_df.empty and {"manufacturer", "product_id"}.issubset(registry_df.columns):
         enrichment_cols = [
             "manufacturer",
@@ -4060,6 +4061,9 @@ def run_update(
             registry_df["manufacturer"].astype(str).str.lower().eq("aco"),
             enrichment_have,
         ].drop_duplicates(subset=["manufacturer", "product_id"], keep="first")
+        aco_registry_enrichment_by_pid = aco_registry_enrichment.drop(
+            columns=["manufacturer"], errors="ignore"
+        ).drop_duplicates(subset=["product_id"], keep="first")
     # ACO Stage-1 guardrail: keep component-only rows out of final Products while
     # preserving them in the candidate/component universe (Excluded).
     if not products_df.empty and "manufacturer" in products_df.columns:
@@ -4099,6 +4103,32 @@ def run_update(
                         "product_url",
                     ):
                         rc = f"{c}__registry"
+                        if rc in move_to_excluded.columns:
+                            if c not in move_to_excluded.columns:
+                                move_to_excluded[c] = move_to_excluded[rc]
+                            else:
+                                move_to_excluded[c] = move_to_excluded[c].where(
+                                    move_to_excluded[c].notna() & move_to_excluded[c].astype(str).str.strip().ne(""),
+                                    move_to_excluded[rc],
+                                )
+                            move_to_excluded = move_to_excluded.drop(columns=[rc])
+                if aco_registry_enrichment_by_pid is not None and not aco_registry_enrichment_by_pid.empty:
+                    move_to_excluded = move_to_excluded.merge(
+                        aco_registry_enrichment_by_pid,
+                        on=["product_id"],
+                        how="left",
+                        suffixes=("", "__registry_pid"),
+                    )
+                    for c in (
+                        "candidate_type",
+                        "system_role",
+                        "product_family",
+                        "promote_to_product",
+                        "classification_reason",
+                        "product_url",
+                        "manufacturer",
+                    ):
+                        rc = f"{c}__registry_pid"
                         if rc in move_to_excluded.columns:
                             if c not in move_to_excluded.columns:
                                 move_to_excluded[c] = move_to_excluded[rc]
