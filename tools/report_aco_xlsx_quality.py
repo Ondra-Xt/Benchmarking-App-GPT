@@ -1,22 +1,22 @@
 import argparse
 import sys
 from pathlib import Path
-from typing import Iterable, List
+from typing import List
 
 import pandas as pd
 
 from tools.validate_latest_xlsx_export import DEFAULT_PATTERNS, pick_xlsx_file
 
 REQUIRED_SHEETS = ["Products", "Comparison", "Components", "BOM_Options", "Scoring_Field_Coverage"]
-TARGET_FAMILIES = [
-    "ShowerDrain S+",
-    "ShowerDrain C",
-    "ShowerDrain M+",
-    "ShowerDrain E+",
-    "ShowerDrain B",
-    "ShowerDrain C+",
-    "Easyflow",
-    "Easyflow+",
+TARGET_FAMILY_PREFIXES = [
+    ("ShowerDrain S+", "aco-assembled-showerdrain-splus"),
+    ("ShowerDrain C", "aco-assembled-showerdrain-c"),
+    ("ShowerDrain M+", "aco-assembled-showerdrain-mplus"),
+    ("ShowerDrain E+", "aco-assembled-showerdrain-eplus"),
+    ("ShowerDrain B", "aco-assembled-showerdrain-b"),
+    ("ShowerDrain C+", "aco-assembled-showerdrain-cplus"),
+    ("Easyflow", "aco-assembled-easyflow-"),
+    ("Easyflow+", "aco-assembled-easyflowplus-"),
 ]
 
 
@@ -42,21 +42,6 @@ def _group_counts(df: pd.DataFrame, col: str) -> list[str]:
     vals = _norm_series(df, col).replace("", "<missing>")
     counts = vals.value_counts().sort_index()
     return [f"  - {col}={idx}: {int(val)}" for idx, val in counts.items()]
-
-
-def _detect_family_count(df: pd.DataFrame, family: str) -> int:
-    keys = ["family", "name", "product_id", "assembled_from_bom"]
-    cols = [c for c in keys if c in df.columns]
-    if not cols:
-        return 0
-    needle = family.lower().replace(" ", "").replace("+", "plus")
-    raw_needle = family.lower()
-    hit = pd.Series([False] * len(df), index=df.index)
-    for col in cols:
-        s = _norm_series(df, col).str.lower()
-        normalized = s.str.replace(" ", "", regex=False).str.replace("+", "plus", regex=False)
-        hit = hit | normalized.str.contains(needle, regex=False) | s.str.contains(raw_needle, regex=False)
-    return int(hit.sum())
 
 
 def _load_required_sheets(xlsx_path: Path) -> dict[str, pd.DataFrame]:
@@ -122,7 +107,10 @@ def generate_report(xlsx_path: Path) -> tuple[int, str]:
         likely_products = likely_products | _norm_series(aco_components, "system_role").str.contains("drain_unit|product", case=False, regex=True)
     if "product_id" in aco_components.columns:
         likely_products = likely_products | _norm_series(aco_components, "product_id").str.contains("showerdrain|easyflow", case=False, regex=True)
-    lines.append(f"  - component_rows_looking_like_products: {int(likely_products.sum())}")
+    heuristic_count = int(likely_products.sum())
+    lines.append(f"  - heuristic_product_like_component_rows: {heuristic_count} (non-failing heuristic)")
+    if heuristic_count > 0:
+        warnings.append("Heuristic only: some component rows look product-like; review if unexpected.")
 
     lines.append("4. ACO BOM_Options summary")
     lines.append(f"  - aco_rows: {len(aco_bom)}")
@@ -134,15 +122,19 @@ def generate_report(xlsx_path: Path) -> tuple[int, str]:
     left = _norm_series(aco_bom, "product_id")
     right = _norm_series(aco_bom, "component_id")
     self_refs = (left != "") & (right != "") & (left == right)
-    grate_to_grate = _norm_series(aco_bom, "option_type").str.lower().eq("compatible_grate") & right.str.contains("grate", case=False, regex=False)
+    component_roles = _norm_series(components, "system_role").str.lower()
+    component_ids = _norm_series(components, "product_id")
+    grate_ids = set(component_ids[component_roles.eq("grate")])
+    grate_to_grate = _norm_series(aco_bom, "option_type").str.lower().eq("compatible_grate") & right.isin(grate_ids) & left.isin(grate_ids)
     missing_target = left.eq("") | right.eq("")
     lines.append(f"  - self_reference_rows: {int(self_refs.sum())}")
     lines.append(f"  - grate_to_grate_links: {int(grate_to_grate.sum())}")
     lines.append(f"  - rows_missing_target_or_component: {int(missing_target.sum())}")
 
     lines.append("5. ACO assembled product families")
-    for family in TARGET_FAMILIES:
-        lines.append(f"  - {family}: {_detect_family_count(aco_products, family)}")
+    assembled_product_ids = _norm_series(aco_products, "product_id").str.lower()
+    for family, prefix in TARGET_FAMILY_PREFIXES:
+        lines.append(f"  - {family}: {int(assembled_product_ids.str.startswith(prefix).sum())}")
 
     lines.append("6. ACO Scoring_Field_Coverage completeness")
     aco_coverage = coverage[_aco_mask(coverage)]
