@@ -169,10 +169,10 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
     return all_passed, results
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate ACO benchmark XLSX export baseline.")
     parser.add_argument("xlsx_path", help="Path to benchmark export XLSX")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     passed, results = validate_xlsx(args.xlsx_path)
 
