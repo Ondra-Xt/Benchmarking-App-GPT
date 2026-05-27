@@ -44,6 +44,12 @@ def _patch_small_expectations(mod, counts):
     mod.EXPECTED_ASSEMBLED_PREFIX_COUNTS = {k: 0 for k in mod.EXPECTED_ASSEMBLED_PREFIX_COUNTS}
 
 
+def test_default_baseline_counts_updated():
+    mod = _load_validator_module()
+    assert mod.EXPECTED_SHEET_COUNTS["Candidates_All"] == 118
+    assert mod.EXPECTED_SHEET_COUNTS["Components"] == 100
+
+
 def test_pass_workbook_exits_0(tmp_path):
     mod = _load_validator_module()
     _patch_small_expectations(mod, {"Products": 2, "Comparison": 2, "Scoring_Field_Coverage": 2, "Candidates_All": 2, "Components": 1, "BOM_Options": 1})
