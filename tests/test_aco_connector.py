@@ -756,7 +756,7 @@ class AcoSplusPipelineComponentPropagationTests(unittest.TestCase):
         self.assertFalse((products["product_id"].astype(str) == "aco-90108861").any())
         self.assertFalse((comparison["product_id"].astype(str) == "aco-90108861").any())
         a901088 = excluded[excluded["product_id"].astype(str).str.startswith("aco-901088")].copy()
-        self.assertGreater(len(a901088), 0)
+        self.assertEqual(len(a901088), 15)
         self.assertTrue((a901088["candidate_type"].astype(str) == "component").all())
         self.assertTrue((a901088["system_role"].astype(str) == "grate").all())
         self.assertTrue((a901088["product_family"].astype(str) == "showerdrain_c_article_grate").all())
