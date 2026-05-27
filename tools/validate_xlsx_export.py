@@ -11,8 +11,8 @@ EXPECTED_SHEET_COUNTS = {
     "Products": 46,
     "Comparison": 46,
     "Scoring_Field_Coverage": 46,
-    "Candidates_All": 103,
-    "Components": 85,
+    "Candidates_All": 118,
+    "Components": 100,
     "BOM_Options": 221,
 }
 COMPONENTS_MIN_ROWS = 1

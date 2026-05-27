@@ -48,6 +48,10 @@ SEED_PAGES = [
     f"{BASE_CZ}{CZ_SCOPE}",
 ]
 
+SHOWERDRAIN_C_ARTICLE_GRATE_URL = (
+    f"{BASE}{DUSCHRINNEN_SCOPE}aco-showerdrain-c/design-roste-aus-geschliffenem-edelstahl/"
+)
+
 ARTICLE_RE = re.compile(r"\b(?:\d{4}\.?\d{2}\.?\d{2}|\d{8})\b")
 L1_RE = re.compile(r"\b(\d{3,4})\s*mm\b", re.IGNORECASE)
 FLOW_LPS_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*l\s*/\s*s\b", re.IGNORECASE)
@@ -1107,6 +1111,44 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
                 "outlet_dn": p.get("outlet_dn"),
                 "height_adj_min_mm": p.get("height_adj_min_mm"),
                 "height_adj_max_mm": p.get("height_adj_max_mm"),
+            })
+            existing_ids.add(pid)
+
+    # Narrow post-pass: keep ShowerDrain C article-backed grate rows as component-only candidates.
+    existing_ids = {str(r.get("product_id") or "") for r in out}
+    st, final, html, _err = _safe_get_text(SHOWERDRAIN_C_ARTICLE_GRATE_URL, timeout=35)
+    if st == 200 and html:
+        final_c = _canonicalize_url(final or SHOWERDRAIN_C_ARTICLE_GRATE_URL)
+        title_base = _extract_title(html, final_c)
+        for row in _extract_article_row_diagnostics_from_table(html):
+            article_digits = str(row.get("article_digits") or "").strip()
+            if not (article_digits.startswith("901088") and len(article_digits) >= 8):
+                continue
+            pid = f"aco-{article_digits}"
+            if pid in existing_ids:
+                continue
+            article_no = str(row.get("article_no") or "").strip()
+            variant_label = str(row.get("variant_label") or "").strip()
+            if variant_label:
+                pname = f"{variant_label} (Artikel-Nr. {article_no or article_digits})"
+            else:
+                pname = f"{title_base} (Artikel-Nr. {article_no or article_digits})"
+            out.append({
+                "manufacturer": "aco",
+                "product_id": pid,
+                "product_family": "showerdrain_c_article_grate",
+                "product_name": pname,
+                "product_url": f"{final_c}#article-{article_digits}",
+                "source_url": final_c,
+                "sources": final_c,
+                "candidate_type": "component",
+                "system_role": "grate",
+                "classification_reason": "article_backed_grate_component_only",
+                "promote_to_product": "no",
+                "why_not_product_reason": "cover_only_component",
+                "complete_system": "no",
+                "assembled_from_bom": "false",
+                "article_no": article_no or article_digits,
             })
             existing_ids.add(pid)
 
