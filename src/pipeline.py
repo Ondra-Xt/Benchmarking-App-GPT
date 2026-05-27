@@ -4043,6 +4043,27 @@ def run_update(
                     products_df = products_df.drop(columns=[cc])
     excluded_df = pd.DataFrame(excluded_rows)
     evidence_df = pd.DataFrame(evidence_rows)
+    aco_registry_enrichment: pd.DataFrame | None = None
+    aco_registry_enrichment_by_pid: pd.DataFrame | None = None
+    if not registry_df.empty and {"manufacturer", "product_id"}.issubset(registry_df.columns):
+        enrichment_cols = [
+            "manufacturer",
+            "product_id",
+            "candidate_type",
+            "system_role",
+            "product_family",
+            "promote_to_product",
+            "classification_reason",
+            "product_url",
+        ]
+        enrichment_have = [c for c in enrichment_cols if c in registry_df.columns]
+        aco_registry_enrichment = registry_df.loc[
+            registry_df["manufacturer"].astype(str).str.lower().eq("aco"),
+            enrichment_have,
+        ].drop_duplicates(subset=["manufacturer", "product_id"], keep="first")
+        aco_registry_enrichment_by_pid = aco_registry_enrichment.drop(
+            columns=["manufacturer"], errors="ignore"
+        ).drop_duplicates(subset=["product_id"], keep="first")
     # ACO Stage-1 guardrail: keep component-only rows out of final Products while
     # preserving them in the candidate/component universe (Excluded).
     if not products_df.empty and "manufacturer" in products_df.columns:
@@ -4064,6 +4085,59 @@ def run_update(
             keep_aco_in_products = ~is_component_only
             move_to_excluded = aco_rows_df.loc[~keep_aco_in_products].copy()
             if not move_to_excluded.empty:
+                # Preserve registry metadata for component-only rows crossing the
+                # Products/Excluded boundary (notably article-backed grate rows).
+                if aco_registry_enrichment is not None and not aco_registry_enrichment.empty:
+                    move_to_excluded = move_to_excluded.merge(
+                        aco_registry_enrichment,
+                        on=["manufacturer", "product_id"],
+                        how="left",
+                        suffixes=("", "__registry"),
+                    )
+                    for c in (
+                        "candidate_type",
+                        "system_role",
+                        "product_family",
+                        "promote_to_product",
+                        "classification_reason",
+                        "product_url",
+                    ):
+                        rc = f"{c}__registry"
+                        if rc in move_to_excluded.columns:
+                            if c not in move_to_excluded.columns:
+                                move_to_excluded[c] = move_to_excluded[rc]
+                            else:
+                                move_to_excluded[c] = move_to_excluded[c].where(
+                                    move_to_excluded[c].notna() & move_to_excluded[c].astype(str).str.strip().ne(""),
+                                    move_to_excluded[rc],
+                                )
+                            move_to_excluded = move_to_excluded.drop(columns=[rc])
+                if aco_registry_enrichment_by_pid is not None and not aco_registry_enrichment_by_pid.empty:
+                    move_to_excluded = move_to_excluded.merge(
+                        aco_registry_enrichment_by_pid,
+                        on=["product_id"],
+                        how="left",
+                        suffixes=("", "__registry_pid"),
+                    )
+                    for c in (
+                        "candidate_type",
+                        "system_role",
+                        "product_family",
+                        "promote_to_product",
+                        "classification_reason",
+                        "product_url",
+                        "manufacturer",
+                    ):
+                        rc = f"{c}__registry_pid"
+                        if rc in move_to_excluded.columns:
+                            if c not in move_to_excluded.columns:
+                                move_to_excluded[c] = move_to_excluded[rc]
+                            else:
+                                move_to_excluded[c] = move_to_excluded[c].where(
+                                    move_to_excluded[c].notna() & move_to_excluded[c].astype(str).str.strip().ne(""),
+                                    move_to_excluded[rc],
+                                )
+                            move_to_excluded = move_to_excluded.drop(columns=[rc])
                 if "current_status" not in move_to_excluded.columns:
                     move_to_excluded["current_status"] = ""
                 if "promote_to_product" not in move_to_excluded.columns:
@@ -4075,7 +4149,12 @@ def run_update(
                     "why_not_product_reason",
                 ] = "component_not_final_product"
                 # Ensure known cover-only semantics remain explicit.
-                move_to_excluded.loc[aco_why_not.reindex(move_to_excluded.index).eq("cover_only_component"), "why_not_product_reason"] = "cover_only_component"
+                cover_only_mask = aco_why_not.reindex(move_to_excluded.index).eq("cover_only_component")
+                preserve_explicit = move_to_excluded.get(
+                    "why_not_product_reason",
+                    pd.Series(index=move_to_excluded.index, dtype=object),
+                ).astype(str).str.strip().isin({"configuration_family_not_final_product", "accessory_only", "incomplete_assembly"})
+                move_to_excluded.loc[cover_only_mask & ~preserve_explicit, "why_not_product_reason"] = "cover_only_component"
                 excluded_df = pd.concat([excluded_df, move_to_excluded], ignore_index=True, sort=False)
 
             products_df = pd.concat(
@@ -4146,6 +4225,64 @@ def run_update(
     bom_options_df = pd.DataFrame(bom_rows)
 
     # Final safety guard: Comparison must be a subset of benchmark-eligible Products only.
+    # Final defensive ACO metadata backfill at return boundary.
+    # This runs after all product/excluded/bom shaping so sparse late-stage
+    # Excluded rows (notably 901088 grate components) cannot lose registry metadata.
+    if (
+        not excluded_df.empty
+        and not registry_df.empty
+        and "product_id" in excluded_df.columns
+        and "product_id" in registry_df.columns
+    ):
+        aco_registry_cols = [
+            "product_id",
+            "candidate_type",
+            "system_role",
+            "product_family",
+            "promote_to_product",
+            "why_not_product_reason",
+            "classification_reason",
+            "product_url",
+            "source_url",
+            "sources",
+            "manufacturer",
+        ]
+        aco_registry_have = [c for c in aco_registry_cols if c in registry_df.columns]
+        if "product_id" in aco_registry_have:
+            aco_registry_by_pid = registry_df.loc[
+                registry_df.get("product_id", pd.Series(dtype=object)).astype(str).str.startswith("aco-901088"),
+                aco_registry_have,
+            ].drop_duplicates(subset=["product_id"], keep="first")
+            if not aco_registry_by_pid.empty:
+                excluded_df = excluded_df.merge(
+                    aco_registry_by_pid,
+                    on="product_id",
+                    how="left",
+                    suffixes=("", "__registry_final"),
+                )
+                for c in (
+                    "candidate_type",
+                    "system_role",
+                    "product_family",
+                    "promote_to_product",
+                    "why_not_product_reason",
+                    "classification_reason",
+                    "product_url",
+                    "source_url",
+                    "sources",
+                    "manufacturer",
+                ):
+                    rc = f"{c}__registry_final"
+                    if rc in excluded_df.columns:
+                        if c not in excluded_df.columns:
+                            excluded_df[c] = excluded_df[rc]
+                        else:
+                            excluded_df[c] = excluded_df[c].where(
+                                excluded_df[c].notna() & excluded_df[c].astype(str).str.strip().ne(""),
+                                excluded_df[rc],
+                            )
+                        excluded_df = excluded_df.drop(columns=[rc])
+
     if not comparison_df.empty and not products_df.empty and "product_id" in comparison_df.columns and "product_id" in products_df.columns:
         allowed_product_ids = set(products_df["product_id"].astype(str))
         comparison_df = comparison_df[comparison_df["product_id"].astype(str).isin(allowed_product_ids)].copy()
