@@ -6,7 +6,7 @@ import pandas as pd
 from src import pipeline
 from src.config import default_config
 from src.connectors import aco
-from tools.diagnose_aco_assembly_readiness import FAMILIES, compute_readiness
+from tools.diagnose_aco_assembly_readiness import compute_readiness
 
 ASSEMBLED_PREFIX = "aco-assembled-"
 TECH_FIELDS = (
@@ -26,10 +26,14 @@ def _norm(df: pd.DataFrame, col: str) -> pd.Series:
 
 def _assembled_family(product_id: str) -> str:
     base = product_id[len(ASSEMBLED_PREFIX):]
-    for family in FAMILIES:
-        family_token = f"{family}-"
-        if base.startswith(family_token):
-            return family
+    if base.startswith("showerdrain-splus-"):
+        return "showerdrain_splus"
+    if base.startswith("showerdrain-c-"):
+        return "showerdrain_c"
+    if base.startswith("easyflowplus-"):
+        return "easyflowplus"
+    if base.startswith("easyflow-"):
+        return "easyflow"
     return base.split("-", 1)[0] if "-" in base else base
 
 
