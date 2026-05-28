@@ -33,6 +33,13 @@ class CPlusDiagnostic:
     self_reference_rows: int
     grate_to_grate_links: int
     missing_base_scoring_fields: dict[str, list[str]]
+    base_field_values: dict[str, dict[str, str]]
+    missing_expected_base_columns: list[str]
+    cplus_bom_for_base: list[dict[str, str]]
+    cplus_bom_family_rows: list[dict[str, str]]
+    cplus_bom_candidate_component_ids: list[str]
+    candidate_component_status: dict[str, bool]
+    candidate_component_rows: list[dict[str, str]]
     products_count: int
     comparison_count: int
     coverage_count: int
@@ -62,7 +69,9 @@ def compute_cplus_diagnostic(products: pd.DataFrame, comparison: pd.DataFrame, e
     bom_option_family = _norm(bom, "option_family").str.lower()
     bom_component_ids = _norm(bom, "component_id")
     bom_product_ids = _norm(bom, "product_id")
-    bom_grate = bom[(bom_option_type == "compatible_grate") & ((bom_parent_family == "showerdrain_cplus") | (bom_option_family == "showerdrain_cplus"))].copy()
+    cplus_family_mask = (bom_parent_family == "showerdrain_cplus") | (bom_option_family == "showerdrain_cplus")
+    base_bom_mask = bom_product_ids.isin(PROTECTED_CPLUS_BASE_IDS)
+    bom_grate = bom[(bom_option_type == "compatible_grate") & cplus_family_mask].copy()
 
     components_universe = set(_norm(excluded, "product_id").tolist())
     valid_grate_ids = sorted({cid for cid in bom_component_ids[bom_grate.index].tolist() if cid and cid in components_universe})
@@ -88,17 +97,28 @@ def compute_cplus_diagnostic(products: pd.DataFrame, comparison: pd.DataFrame, e
     }
     grate_to_grate_links = int(((bom_option_type == "compatible_grate") & bom_product_ids.isin(grate_ids_global) & bom_component_ids.isin(grate_ids_global)).sum())
 
-    coverage_subset = coverage[_norm(coverage, "product_id").isin(PROTECTED_CPLUS_BASE_IDS)].copy()
+    base_field_values: dict[str, dict[str, str]] = {}
+    missing_expected_base_columns = [field for field in REQUIRED_SCORING_FIELDS if field not in products.columns]
     missing_base_scoring_fields: dict[str, list[str]] = {}
-    for _, row in coverage_subset.iterrows():
+    for _, row in bases.iterrows():
         pid = str(row.get("product_id") or "")
         missing = []
+        observed: dict[str, str] = {}
         for field in REQUIRED_SCORING_FIELDS:
             value = row.get(field, "")
+            value_str = "" if pd.isna(value) else str(value)
+            observed[field] = value_str
             if pd.isna(value) or str(value).strip() == "":
                 missing.append(field)
+        base_field_values[pid] = observed
         if missing:
             missing_base_scoring_fields[pid] = missing
+
+    cplus_bom_for_base = bom[base_bom_mask].fillna("").astype(str).to_dict("records")
+    cplus_bom_family_rows = bom[cplus_family_mask].fillna("").astype(str).to_dict("records")
+    cplus_bom_candidate_component_ids = sorted({cid for cid in bom_component_ids[base_bom_mask | cplus_family_mask].tolist() if cid})
+    candidate_component_status = {cid: cid in components_universe for cid in cplus_bom_candidate_component_ids}
+    candidate_component_rows = excluded[_norm(excluded, "product_id").isin(cplus_bom_candidate_component_ids)].fillna("").astype(str).to_dict("records")
 
     return CPlusDiagnostic(
         proposed_ids=sorted(proposed_ids),
@@ -110,6 +130,13 @@ def compute_cplus_diagnostic(products: pd.DataFrame, comparison: pd.DataFrame, e
         self_reference_rows=self_reference_rows,
         grate_to_grate_links=grate_to_grate_links,
         missing_base_scoring_fields=missing_base_scoring_fields,
+        base_field_values=base_field_values,
+        missing_expected_base_columns=missing_expected_base_columns,
+        cplus_bom_for_base=cplus_bom_for_base,
+        cplus_bom_family_rows=cplus_bom_family_rows,
+        cplus_bom_candidate_component_ids=cplus_bom_candidate_component_ids,
+        candidate_component_status=candidate_component_status,
+        candidate_component_rows=candidate_component_rows,
         products_count=len(products),
         comparison_count=len(comparison),
         coverage_count=len(coverage),
@@ -149,6 +176,33 @@ def _print_report(diag: CPlusDiagnostic) -> None:
     print(f"- missing base fields needed for scoring: {len(diag.missing_base_scoring_fields)}")
     for pid, fields in diag.missing_base_scoring_fields.items():
         print(f"  - {pid}: {', '.join(fields)}")
+    print("\nC+ base field values from final Products DataFrame:")
+    for pid in sorted(diag.base_field_values):
+        print(f"- {pid}")
+        for field in REQUIRED_SCORING_FIELDS:
+            print(f"  - {field}: {diag.base_field_values[pid].get(field, '')}")
+    if diag.missing_expected_base_columns:
+        print("Expected scoring columns missing from final Products DataFrame:")
+        print(f"- {', '.join(diag.missing_expected_base_columns)}")
+        print("Available columns for C+ base rows in Products:")
+        print(f"- {', '.join(sorted(diag.base_field_values[next(iter(diag.base_field_values))].keys()))}" if diag.base_field_values else "- (no C+ base rows)")
+
+    print("\nC+ grate matching diagnostics:")
+    print("BOM_Options rows where product_id is a protected C+ base ID:")
+    for row in diag.cplus_bom_for_base:
+        print(f"- {row}")
+    print("BOM_Options rows where parent_family or option_family includes showerdrain_cplus:")
+    for row in diag.cplus_bom_family_rows:
+        print(f"- {row}")
+    print("Candidate component_id values from those BOM rows:")
+    for cid in diag.cplus_bom_candidate_component_ids:
+        print(f"- {cid}")
+    print("Candidate component existence in Components/excluded universe:")
+    for cid in diag.cplus_bom_candidate_component_ids:
+        print(f"- {cid}: {'present' if diag.candidate_component_status.get(cid, False) else 'missing'}")
+    print("Matching component rows found in Components/excluded:")
+    for row in diag.candidate_component_rows:
+        print(f"- {row}")
 
 
 def main() -> int:
