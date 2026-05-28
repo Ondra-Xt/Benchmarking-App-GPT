@@ -3133,7 +3133,7 @@ def run_update(
         for ar in assembled_rows_now:
             if str(ar.get("manufacturer") or "").lower() != "aco":
                 continue
-            if str(ar.get("parent_family") or "") != "showerdrain_c":
+            if str(ar.get("parent_family") or "") not in {"showerdrain_c", "easyflow"}:
                 continue
             ar.setdefault("flow_rate_lps", None)
             ar.setdefault("flow_rate_unit", None)
@@ -3150,6 +3150,17 @@ def run_update(
                     ar["flow_rate_status"] = ar.get("flow_rate_status") or "ok"
             base_id = str(ar.get("base_product_id") or "")
             base_row = aco_by_id.get(base_id, {})
+            if str(ar.get("parent_family") or "") == "easyflow":
+                assembled_pid = str(ar.get("product_id") or "")
+                pref = "aco-assembled-easyflow-"
+                if assembled_pid.startswith(pref) and "__" in assembled_pid:
+                    parsed_base = assembled_pid[len(pref):].split("__", 1)[0]
+                    if parsed_base:
+                        parsed_row = aco_by_id.get(parsed_base, {})
+                        def _filled_count(r: Dict[str, Any]) -> int:
+                            return sum(1 for kk in ("water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn") if r.get(kk) not in (None, ""))
+                        if _filled_count(parsed_row) > _filled_count(base_row):
+                            base_row = parsed_row
             for k in ("water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn"):
                 if ar.get(k) in (None, "") and base_row.get(k) not in (None, ""):
                     ar[k] = base_row.get(k)

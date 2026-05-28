@@ -622,6 +622,7 @@ class PipelineExportTests(unittest.TestCase):
         self.assertEqual(str(aco_ev.loc["aco_orphan_bom_references_count", "snippet"]), "0")
         self.assertEqual(str(aco_ev.loc["aco_assembled_products_left_in_components_count", "snippet"]), "0")
 
+
     def test_aco_hash_like_registry_ids_are_migrated_before_export(self):
         registry = pd.DataFrame(
             [
