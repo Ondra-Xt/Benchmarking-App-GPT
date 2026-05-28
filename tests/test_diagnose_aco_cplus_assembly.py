@@ -23,7 +23,7 @@ def test_compute_cplus_diagnostic_counts_and_ids(monkeypatch):
         {"product_id": "aco-showerdrain-cplus-low-h69", "flow_rate_lps": 0.62, "water_seal_mm": 25, "outlet_dn": "DN40", "height_adj_min_mm": 57, "height_adj_max_mm": 128},
     ])
 
-    monkeypatch.setattr(mod, "discover_cplus_sources", lambda: (["https://example.test/cplus"], ["https://example.test/design"], []))
+    monkeypatch.setattr(mod, "discover_cplus_sources", lambda: (["https://example.test/cplus"], ["https://example.test/design"], [], []))
     diag = mod.compute_cplus_diagnostic(products, comparison, excluded, bom, coverage)
 
     assert diag.base_count == 2
@@ -53,7 +53,7 @@ def test_compute_cplus_diagnostic_flags_risks(monkeypatch):
         {"product_id": "aco-showerdrain-cplus-low-h69", "flow_rate_lps": "", "water_seal_mm": 25, "outlet_dn": "DN40", "height_adj_min_mm": 57, "height_adj_max_mm": 128},
     ])
 
-    monkeypatch.setattr(mod, "discover_cplus_sources", lambda: (["https://example.test/cplus"], ["https://example.test/design"], []))
+    monkeypatch.setattr(mod, "discover_cplus_sources", lambda: (["https://example.test/cplus"], ["https://example.test/design"], [], []))
     diag = mod.compute_cplus_diagnostic(products, comparison, excluded, bom, coverage)
 
     assert diag.missing_grate_components == ["aco-showerdrain-cplus-grate-missing"]
@@ -80,7 +80,8 @@ def test_discover_cplus_sources_identifies_design_and_evidence(monkeypatch):
         return 404, url, "", "not found"
 
     monkeypatch.setattr(mod.aco, "_safe_get_text", fake_get)
-    sources, design, evidence = mod.discover_cplus_sources()
+    sources, design, evidence, notes = mod.discover_cplus_sources()
     assert any("aco-showerdrain-c+" in u or "aco-showerdrain-cplus" in u for u in sources)
     assert any("design-roste" in u for u in design)
     assert any("design-roste" in u for u in evidence)
+    assert any("implicit family-level" in n.lower() for n in notes)
