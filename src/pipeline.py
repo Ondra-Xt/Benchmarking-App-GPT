@@ -3133,7 +3133,7 @@ def run_update(
         for ar in assembled_rows_now:
             if str(ar.get("manufacturer") or "").lower() != "aco":
                 continue
-            if str(ar.get("parent_family") or "") != "showerdrain_c":
+            if str(ar.get("parent_family") or "") not in {"showerdrain_c", "easyflow"}:
                 continue
             ar.setdefault("flow_rate_lps", None)
             ar.setdefault("flow_rate_unit", None)
@@ -3150,6 +3150,17 @@ def run_update(
                     ar["flow_rate_status"] = ar.get("flow_rate_status") or "ok"
             base_id = str(ar.get("base_product_id") or "")
             base_row = aco_by_id.get(base_id, {})
+            if str(ar.get("parent_family") or "") == "easyflow":
+                assembled_pid = str(ar.get("product_id") or "")
+                pref = "aco-assembled-easyflow-"
+                if assembled_pid.startswith(pref) and "__" in assembled_pid:
+                    parsed_base = assembled_pid[len(pref):].split("__", 1)[0]
+                    if parsed_base:
+                        parsed_row = aco_by_id.get(parsed_base, {})
+                        def _filled_count(r: Dict[str, Any]) -> int:
+                            return sum(1 for kk in ("water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn") if r.get(kk) not in (None, ""))
+                        if _filled_count(parsed_row) > _filled_count(base_row):
+                            base_row = parsed_row
             for k in ("water_seal_mm", "height_adj_min_mm", "height_adj_max_mm", "outlet_dn"):
                 if ar.get(k) in (None, "") and base_row.get(k) not in (None, ""):
                     ar[k] = base_row.get(k)
@@ -3948,6 +3959,60 @@ def run_update(
             if vals:
                 opts = sorted(set(vals))
                 products_df.at[i, "flow_rate_lps_options"] = json.dumps(opts, ensure_ascii=False)
+    # Final return-boundary Easyflow partial inheritance.
+    # The earlier assembled-row normalization operates on transient row dicts and
+    # may run before the final Products DataFrame has its definitive base rows.
+    # Keep this deliberately narrow: existing Easyflow assembled rows only, parse
+    # the base id from the assembled product_id, and copy only source values that
+    # are present into empty assembled WS/DN cells.
+    if not products_df.empty and "product_id" in products_df.columns:
+        easyflow_prefix = "aco-assembled-easyflow-"
+        for col in ("water_seal_mm", "outlet_dn"):
+            if col not in products_df.columns:
+                products_df[col] = None
+
+        def _final_easyflow_empty(value: Any) -> bool:
+            if value is None:
+                return True
+            if isinstance(value, str):
+                return value.strip() == ""
+            try:
+                return bool(pd.isna(value))
+            except (TypeError, ValueError):
+                return False
+
+        def _final_easyflow_source_row(base_id: str) -> Optional[pd.Series]:
+            search_frames = [products_df]
+            if "registry_df" in locals() and isinstance(registry_df, pd.DataFrame) and not registry_df.empty:
+                search_frames.append(registry_df)
+            for src_df in search_frames:
+                if "product_id" not in src_df.columns:
+                    continue
+                matches = src_df[src_df["product_id"].fillna("").astype(str) == base_id]
+                if matches.empty:
+                    continue
+                for _src_idx, src_row in matches.iterrows():
+                    if any(not _final_easyflow_empty(src_row.get(field)) for field in ("water_seal_mm", "outlet_dn")):
+                        return src_row
+                return matches.iloc[0]
+            return None
+
+        easyflow_assembled_mask = products_df["product_id"].fillna("").astype(str).str.startswith(easyflow_prefix)
+        for idx in products_df.index[easyflow_assembled_mask]:
+            assembled_pid = str(products_df.at[idx, "product_id"] or "")
+            tail = assembled_pid[len(easyflow_prefix):]
+            if "__" not in tail:
+                continue
+            base_id = tail.split("__", 1)[0]
+            if not base_id:
+                continue
+            base_row = _final_easyflow_source_row(base_id)
+            if base_row is None:
+                continue
+            for field in ("water_seal_mm", "outlet_dn"):
+                if _final_easyflow_empty(products_df.at[idx, field]) and not _final_easyflow_empty(base_row.get(field)):
+                    products_df.loc[idx, field] = base_row.get(field)
+
     if not comparison_df.empty and not products_df.empty:
         extra_cols = [
             # Product validation / audit fields required in Comparison exports.
