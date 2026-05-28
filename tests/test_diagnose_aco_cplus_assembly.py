@@ -5,8 +5,8 @@ from tools.diagnose_aco_cplus_assembly import compute_cplus_diagnostic
 
 def test_compute_cplus_diagnostic_counts_and_ids():
     products = pd.DataFrame([
-        {"product_id": "aco-showerdrain-cplus-standard-h92"},
-        {"product_id": "aco-showerdrain-cplus-low-h69"},
+        {"product_id": "aco-showerdrain-cplus-standard-h92", "flow_rate_lps": 0.91, "water_seal_mm": 50, "outlet_dn": "DN50", "height_adj_min_mm": 80, "height_adj_max_mm": 128},
+        {"product_id": "aco-showerdrain-cplus-low-h69", "flow_rate_lps": 0.62, "water_seal_mm": 25, "outlet_dn": "DN40", "height_adj_min_mm": 57, "height_adj_max_mm": 128},
         {"product_id": "x"},
     ])
     comparison = pd.DataFrame([{"product_id": "x"}])
@@ -31,12 +31,13 @@ def test_compute_cplus_diagnostic_counts_and_ids():
     assert diag.missing_grate_components == []
     assert diag.duplicate_ids == []
     assert diag.missing_base_scoring_fields == {}
+    assert diag.base_field_values["aco-showerdrain-cplus-standard-h92"]["flow_rate_lps"] == "0.91"
 
 
 def test_compute_cplus_diagnostic_flags_risks():
     products = pd.DataFrame([
-        {"product_id": "aco-showerdrain-cplus-standard-h92"},
-        {"product_id": "aco-showerdrain-cplus-low-h69"},
+        {"product_id": "aco-showerdrain-cplus-standard-h92", "flow_rate_lps": 0.91, "water_seal_mm": 50, "outlet_dn": "DN50", "height_adj_min_mm": 80, "height_adj_max_mm": 128},
+        {"product_id": "aco-showerdrain-cplus-low-h69", "flow_rate_lps": "", "water_seal_mm": 25, "outlet_dn": "DN40", "height_adj_min_mm": 57, "height_adj_max_mm": 128},
         {"product_id": "aco-assembled-showerdrain-cplus-standard-h92__showerdrain-cplus-grate-a"},
     ])
     comparison = pd.DataFrame([{"product_id": "x"}])
