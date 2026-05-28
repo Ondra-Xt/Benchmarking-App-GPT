@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 import pandas as pd
+from bs4 import BeautifulSoup
 
 from src import pipeline
 from src.config import default_config
@@ -44,6 +45,10 @@ class CPlusDiagnostic:
     comparison_count: int
     coverage_count: int
     bom_count: int
+    cplus_source_urls: list[str]
+    cplus_design_urls: list[str]
+    cplus_grate_evidence_urls: list[str]
+    compatibility_mode: str
 
 
 def _norm(df: pd.DataFrame, col: str) -> pd.Series:
@@ -120,6 +125,11 @@ def compute_cplus_diagnostic(products: pd.DataFrame, comparison: pd.DataFrame, e
     candidate_component_status = {cid: cid in components_universe for cid in cplus_bom_candidate_component_ids}
     candidate_component_rows = excluded[_norm(excluded, "product_id").isin(cplus_bom_candidate_component_ids)].fillna("").astype(str).to_dict("records")
 
+    cplus_source_urls, cplus_design_urls, cplus_grate_evidence_urls = discover_cplus_sources()
+    compatibility_mode = "absent"
+    if cplus_grate_evidence_urls:
+        compatibility_mode = "implicit_family_level"
+
     return CPlusDiagnostic(
         proposed_ids=sorted(proposed_ids),
         base_count=len(bases),
@@ -141,7 +151,44 @@ def compute_cplus_diagnostic(products: pd.DataFrame, comparison: pd.DataFrame, e
         comparison_count=len(comparison),
         coverage_count=len(coverage),
         bom_count=len(bom),
+        cplus_source_urls=cplus_source_urls,
+        cplus_design_urls=cplus_design_urls,
+        cplus_grate_evidence_urls=cplus_grate_evidence_urls,
+        compatibility_mode=compatibility_mode,
     )
+
+
+def discover_cplus_sources() -> tuple[list[str], list[str], list[str]]:
+    seeds = [
+        "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-cplus/",
+        "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-c/",
+    ]
+    discovered = set()
+    design_urls = set()
+    evidence_urls = set()
+    for seed in seeds:
+        discovered.add(seed)
+        st, final, html, _err = aco._safe_get_text(seed, timeout=35)
+        if st != 200 or not html:
+            continue
+        discovered.add(final)
+        soup = BeautifulSoup(html, "lxml")
+        for a_tag in soup.select("a[href]"):
+            href = aco._abs(a_tag.get("href") or "", final)
+            txt = (a_tag.get_text(" ", strip=True) or "").lower()
+            if not href:
+                continue
+            if "design-rost" in href.lower() or any(k in txt for k in ("design-rost", "design-roste", "rost", "abdeckung")):
+                design_urls.add(href)
+        for u in list(design_urls):
+            st_d, final_d, html_d, _err_d = aco._safe_get_text(u, timeout=35)
+            if st_d != 200 or not html_d:
+                continue
+            discovered.add(final_d)
+            page_l = html_d.lower()
+            if "aco showerdrain c" in page_l and ("c+" in page_l or "cplus" in page_l):
+                evidence_urls.add(final_d)
+    return sorted(discovered), sorted(design_urls), sorted(evidence_urls)
 
 
 def _print_report(diag: CPlusDiagnostic) -> None:
@@ -203,6 +250,17 @@ def _print_report(diag: CPlusDiagnostic) -> None:
     print("Matching component rows found in Components/excluded:")
     for row in diag.candidate_component_rows:
         print(f"- {row}")
+    print("\nC+ source investigation:")
+    print(f"- compatibility mode: {diag.compatibility_mode}")
+    print("Source pages discovered:")
+    for url in diag.cplus_source_urls:
+        print(f"- {url}")
+    print("Design grate / cover pages discovered:")
+    for url in diag.cplus_design_urls:
+        print(f"- {url}")
+    print("Pages with C+ and ShowerDrain C grate compatibility text evidence:")
+    for url in diag.cplus_grate_evidence_urls:
+        print(f"- {url}")
 
 
 def main() -> int:
