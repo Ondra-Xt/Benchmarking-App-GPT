@@ -29,6 +29,8 @@ class EasyflowRowDiagnostic:
     base_fields: dict[str, str]
     component_source: str
     component_fields: dict[str, str]
+    base_fuzzy_candidates: list[str]
+    component_fuzzy_candidates: list[str]
     verdict: str
 
 
@@ -55,39 +57,56 @@ def _is_missing(value: str) -> bool:
 def parse_assembled_id(product_id: str) -> tuple[str, str, bool]:
     if not product_id.startswith(EASYFLOW_ASSEMBLED_PREFIX):
         return "", "", False
-    tail = product_id[len("aco-assembled-"):]
+    tail = product_id[len(EASYFLOW_ASSEMBLED_PREFIX):]
     if "__" not in tail:
         return "", "", False
-    base_slug, comp_slug = tail.split("__", 1)
-    if not base_slug or not comp_slug:
+    base_id, component_id = tail.split("__", 1)
+    if not base_id or not component_id:
         return "", "", False
-    return f"aco-{base_slug}", f"aco-{comp_slug}", True
+    return base_id, component_id, True
 
 
 def _locate_row(product_id: str, products: pd.DataFrame, comparison: pd.DataFrame, excluded: pd.DataFrame, registry: pd.DataFrame) -> tuple[str, pd.Series | None]:
-    for name, df in (("Products", products), ("Comparison", comparison), ("Components", excluded), ("Candidates_All", registry)):
+    for name, df in (("Products", products), ("Comparison", comparison), ("Candidates_All", registry), ("Components", excluded)):
         match = df[_norm(df, "product_id") == product_id]
         if not match.empty:
             return name, match.iloc[0]
     return "missing", None
 
 
+def _all_product_ids(products: pd.DataFrame, comparison: pd.DataFrame, excluded: pd.DataFrame, registry: pd.DataFrame) -> list[str]:
+    values: set[str] = set()
+    for df in (products, comparison, registry, excluded):
+        values.update(pid for pid in _norm(df, "product_id").tolist() if pid)
+    return sorted(values)
+
+
+def _fuzzy_candidates(all_ids: list[str], needle: str) -> list[str]:
+    if not needle:
+        return []
+    return [pid for pid in all_ids if needle in pid or pid in needle]
+
+
 def diagnose_easyflow_rows(products: pd.DataFrame, comparison: pd.DataFrame, excluded: pd.DataFrame, registry: pd.DataFrame) -> list[EasyflowRowDiagnostic]:
     assembled = products[_norm(products, "product_id").str.startswith(EASYFLOW_ASSEMBLED_PREFIX)].copy()
     reports: list[EasyflowRowDiagnostic] = []
+    universe_ids = _all_product_ids(products, comparison, excluded, registry)
     for _, row in assembled.iterrows():
         assembled_id = str(row.get("product_id") or "")
         base_id, component_id, parse_ok = parse_assembled_id(assembled_id)
         assembled_fields = _get_fields(row)
 
         if not parse_ok:
-            reports.append(EasyflowRowDiagnostic(assembled_id, "", "", False, assembled_fields, "missing", _get_fields(None), "missing", _get_fields(None), "assembled product_id parsing failed"))
+            reports.append(EasyflowRowDiagnostic(assembled_id, "", "", False, assembled_fields, "missing", _get_fields(None), "missing", _get_fields(None), [], [], "assembled product_id parsing failed"))
             continue
 
         base_source, base_row = _locate_row(base_id, products, comparison, excluded, registry)
         component_source, component_row = _locate_row(component_id, products, comparison, excluded, registry)
         base_fields = _get_fields(base_row)
         component_fields = _get_fields(component_row)
+
+        base_fuzzy = _fuzzy_candidates(universe_ids, base_id) if base_row is None else []
+        component_fuzzy = _fuzzy_candidates(universe_ids, component_id) if component_row is None else []
 
         if base_row is None:
             verdict = "base_id does not exist in final universe"
@@ -100,7 +119,7 @@ def diagnose_easyflow_rows(products: pd.DataFrame, comparison: pd.DataFrame, exc
         else:
             verdict = "no missing-field inheritance issue detected"
 
-        reports.append(EasyflowRowDiagnostic(assembled_id, base_id, component_id, True, assembled_fields, base_source, base_fields, component_source, component_fields, verdict))
+        reports.append(EasyflowRowDiagnostic(assembled_id, base_id, component_id, True, assembled_fields, base_source, base_fields, component_source, component_fields, base_fuzzy, component_fuzzy, verdict))
     return reports
 
 
@@ -125,6 +144,14 @@ def print_report(reports: list[EasyflowRowDiagnostic], counts: dict[str, int]) -
         print("- component fields:")
         for f in TECH_FIELDS:
             print(f"  - {f}: {rep.component_fields[f]}")
+        if rep.base_fuzzy_candidates:
+            print("- base fuzzy candidates:")
+            for pid in rep.base_fuzzy_candidates:
+                print(f"  - {pid}")
+        if rep.component_fuzzy_candidates:
+            print("- component fuzzy candidates:")
+            for pid in rep.component_fuzzy_candidates:
+                print(f"  - {pid}")
         print(f"- verdict: {rep.verdict}")
 
 
