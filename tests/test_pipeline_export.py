@@ -622,6 +622,68 @@ class PipelineExportTests(unittest.TestCase):
         self.assertEqual(str(aco_ev.loc["aco_orphan_bom_references_count", "snippet"]), "0")
         self.assertEqual(str(aco_ev.loc["aco_assembled_products_left_in_components_count", "snippet"]), "0")
 
+    def test_easyflow_assembled_rows_inherit_ws_dn_on_returned_products(self):
+        class _FakeEasyflowPartialConnector:
+            @staticmethod
+            def extract_parameters(url):
+                if "komplettablaeufe-aco-easyflow-dn-50" in str(url or "").lower():
+                    return {"water_seal_mm": 50.0, "outlet_dn": "DN50", "evidence": []}
+                return {"evidence": []}
+
+            @staticmethod
+            def get_bom_options(url, params=None):
+                return []
+
+        registry = pd.DataFrame(
+            [
+                {
+                    "manufacturer": "aco",
+                    "product_id": "aco-easyflow-komplettablaeufe-aco-easyflow-dn-50",
+                    "product_name": "ACO Easyflow Komplettabläufe ACO Easyflow DN 50",
+                    "product_url": "https://example.test/aco-easyflow-komplettablaeufe-aco-easyflow-dn-50",
+                    "candidate_type": "component",
+                    "complete_system": "component",
+                    "system_role": "configuration_family",
+                    "product_family": "easyflow",
+                },
+                {
+                    "manufacturer": "aco",
+                    "product_id": "aco-easyflow-design-roste",
+                    "product_name": "ACO Easyflow Design-Roste",
+                    "product_url": "https://example.test/aco-easyflow-design-roste",
+                    "candidate_type": "component",
+                    "complete_system": "component",
+                    "system_role": "grate",
+                    "product_family": "easyflow",
+                },
+                {
+                    "manufacturer": "aco",
+                    "product_id": "aco-easyflow-design-roste-square",
+                    "product_name": "ACO Easyflow Design-Roste square",
+                    "product_url": "https://example.test/aco-easyflow-design-roste-square",
+                    "candidate_type": "component",
+                    "complete_system": "component",
+                    "system_role": "grate",
+                    "product_family": "easyflow",
+                },
+            ]
+        )
+
+        with patch.dict(pipeline.CONNECTORS, {"aco": _FakeEasyflowPartialConnector()}, clear=True):
+            products, _comparison, _excluded, _evidence, _bom = pipeline.run_update(registry, default_config())
+
+        easyflow_assembled = products[
+            products["product_id"].astype(str).str.startswith(
+                "aco-assembled-easyflow-aco-easyflow-komplettablaeufe-aco-easyflow-dn-50__"
+            )
+        ]
+        self.assertEqual(len(easyflow_assembled), 2)
+        self.assertTrue((easyflow_assembled["water_seal_mm"] == 50.0).all())
+        self.assertEqual(set(easyflow_assembled["outlet_dn"].astype(str)), {"DN50"})
+        self.assertTrue(easyflow_assembled["flow_rate_lps"].isna().all())
+        self.assertTrue(easyflow_assembled["height_adj_min_mm"].isna().all())
+        self.assertTrue(easyflow_assembled["height_adj_max_mm"].isna().all())
+
 
     def test_aco_hash_like_registry_ids_are_migrated_before_export(self):
         registry = pd.DataFrame(
