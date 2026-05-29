@@ -14,6 +14,7 @@ EXPECTED_SHEET_COUNTS = {
     "Candidates_All": 118,
     "Components": 100,
     "BOM_Options": 221,
+    "Final_Assemblies": 28,
 }
 COMPONENTS_MIN_ROWS = 1
 EXPECTED_BOM_OPTION_TYPE_COUNTS = {
@@ -28,6 +29,22 @@ EXPECTED_ASSEMBLED_PREFIX_COUNTS = {
     "aco-assembled-showerdrain-b": 0,
     "aco-assembled-showerdrain-cplus": 0,
 }
+EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS = {
+    "easyflow": 2,
+    "easyflowplus": 6,
+    "showerdrain_c": 4,
+    "showerdrain_splus": 16,
+}
+FINAL_ASSEMBLIES_PREFIX = "aco-assembled-"
+FINAL_ASSEMBLIES_EASYFLOW_EXPECTED = {
+    "water_seal_mm": 50,
+    "outlet_dn": "DN50",
+}
+FINAL_ASSEMBLIES_EASYFLOW_EMPTY_FIELDS = [
+    "flow_rate_lps",
+    "height_adj_min_mm",
+    "height_adj_max_mm",
+]
 FORBIDDEN_SYSTEM_ROLES = {"grate", "accessory", "optional_accessory"}
 REQUIRED_SHEETS = [
     "Products",
@@ -36,6 +53,7 @@ REQUIRED_SHEETS = [
     "Candidates_All",
     "Components",
     "BOM_Options",
+    "Final_Assemblies",
 ]
 OPTIONAL_SHEETS = ["Evidence"]
 CPLUS_EXPECTED = {
@@ -71,7 +89,7 @@ class CheckResult:
 
 def _norm_series(df: pd.DataFrame, col: str) -> pd.Series:
     if col not in df.columns:
-        return pd.Series(dtype=str)
+        return pd.Series([""] * len(df), index=df.index, dtype=str)
     return df[col].fillna("").astype(str).str.strip()
 
 
@@ -80,19 +98,41 @@ def _compatible_grate_meta_valid(meta: str) -> bool:
     return all(snippet in text for snippet in COMPATIBLE_GRATE_META_REQUIRED_SNIPPETS)
 
 
+def _empty_series(df: pd.DataFrame, col: str) -> pd.Series:
+    if col not in df.columns:
+        return pd.Series([False] * len(df), index=df.index)
+    return df[col].isna() | df[col].astype(str).str.strip().eq("")
+
+
+def _numeric_series_eq(df: pd.DataFrame, col: str, expected: float) -> pd.Series:
+    if col not in df.columns:
+        return pd.Series([False] * len(df), index=df.index)
+    return pd.to_numeric(df[col], errors="coerce").eq(float(expected))
+
+
+def _string_series_eq(df: pd.DataFrame, col: str, expected: str) -> pd.Series:
+    if col not in df.columns:
+        return pd.Series([False] * len(df), index=df.index)
+    return df[col].fillna("").astype(str).str.strip().eq(expected)
+
+
 def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
     results: List[CheckResult] = []
     xls = pd.ExcelFile(path, engine="openpyxl")
 
-    missing = [s for s in REQUIRED_SHEETS if s not in xls.sheet_names]
-    results.append(CheckResult("required_sheets", not missing, f"missing={missing} expected={REQUIRED_SHEETS}"))
+    required_sheets = [s for s in REQUIRED_SHEETS if s in EXPECTED_SHEET_COUNTS]
+    missing = [s for s in required_sheets if s not in xls.sheet_names]
+    results.append(CheckResult("required_sheets", not missing, f"missing={missing} expected={required_sheets}"))
+    if "Final_Assemblies" in required_sheets:
+        final_sheet_exists = "Final_Assemblies" in xls.sheet_names
+        results.append(CheckResult("final_assemblies_sheet_exists", final_sheet_exists, f"present={final_sheet_exists}"))
     if missing:
         return False, results
 
     for s in OPTIONAL_SHEETS:
         results.append(CheckResult(f"optional_sheet:{s}", True, f"present={s in xls.sheet_names}"))
 
-    sheets = {name: pd.read_excel(xls, sheet_name=name) for name in REQUIRED_SHEETS}
+    sheets = {name: pd.read_excel(xls, sheet_name=name) for name in required_sheets}
     products, comparison, coverage, components, candidates, bom = (
         sheets["Products"],
         sheets["Comparison"],
@@ -101,6 +141,7 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
         sheets["Candidates_All"],
         sheets["BOM_Options"],
     )
+    final_assemblies = sheets.get("Final_Assemblies")
 
     for name, expected in EXPECTED_SHEET_COUNTS.items():
         actual = len(sheets[name])
@@ -108,6 +149,43 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
 
     comp_ok = len(components) >= COMPONENTS_MIN_ROWS
     results.append(CheckResult("components_min_rows", comp_ok, f"actual={len(components)} expected>={COMPONENTS_MIN_ROWS}"))
+
+    if final_assemblies is not None:
+        final_ids = _norm_series(final_assemblies, "product_id").str.lower()
+        assembled_prefix_matches = int(final_ids.str.startswith(FINAL_ASSEMBLIES_PREFIX).sum())
+        all_final_ids_assembled = assembled_prefix_matches == len(final_assemblies)
+        results.append(CheckResult(
+            "final_assemblies_product_id_prefix",
+            all_final_ids_assembled,
+            f"actual={assembled_prefix_matches} expected={len(final_assemblies)} prefix={FINAL_ASSEMBLIES_PREFIX}",
+        ))
+        non_assembled_rows = len(final_assemblies) - assembled_prefix_matches
+        results.append(CheckResult("final_assemblies_no_non_assembled_rows", non_assembled_rows == 0, f"actual={non_assembled_rows} expected=0"))
+
+        has_family_col = "assembled_family" in final_assemblies.columns
+        results.append(CheckResult("final_assemblies_assembled_family_column", has_family_col, f"present={has_family_col}"))
+        final_families = _norm_series(final_assemblies, "assembled_family").str.lower()
+        if has_family_col:
+            for family, expected in EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS.items():
+                actual = int((final_families == family).sum())
+                results.append(CheckResult(f"final_assemblies_family_count:{family}", actual == expected, f"actual={actual} expected={expected}"))
+        else:
+            for family, expected in EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS.items():
+                results.append(CheckResult(f"final_assemblies_family_count:{family}", False, f"actual=missing_column expected={expected}"))
+
+        easyflow_mask = final_families.eq("easyflow")
+        easyflow = final_assemblies[easyflow_mask]
+        for field, expected in FINAL_ASSEMBLIES_EASYFLOW_EXPECTED.items():
+            if isinstance(expected, str):
+                matching = _string_series_eq(easyflow, field, expected)
+            else:
+                matching = _numeric_series_eq(easyflow, field, expected)
+            bad = int((~matching).sum())
+            results.append(CheckResult(f"final_assemblies_easyflow_value:{field}", bad == 0, f"actual_bad={bad} expected_bad=0 expected={expected}"))
+
+        for field in FINAL_ASSEMBLIES_EASYFLOW_EMPTY_FIELDS:
+            filled = int((~_empty_series(easyflow, field)).sum())
+            results.append(CheckResult(f"final_assemblies_easyflow_empty:{field}", filled == 0, f"actual_filled={filled} expected_filled=0"))
 
     cmp_product_ids = _norm_series(comparison, "product_id").str.lower()
     for prefix, expected in EXPECTED_ASSEMBLED_PREFIX_COUNTS.items():
