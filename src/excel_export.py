@@ -47,6 +47,22 @@ LEGACY_EQUIVALENCE_KEYS = [
 
 
 ASSEMBLED_PREFIX = "aco-assembled-"
+FINAL_ASSEMBLIES_REQUIRED_TECHNICAL_FIELDS = [
+    "flow_rate_lps",
+    "water_seal_mm",
+    "outlet_dn",
+    "height_adj_min_mm",
+    "height_adj_max_mm",
+]
+EASYFLOW_AMBIGUOUS_TECHNICAL_FIELDS = {
+    "flow_rate_lps",
+    "height_adj_min_mm",
+    "height_adj_max_mm",
+}
+EASYFLOW_AMBIGUOUS_STATUS_NOTE = (
+    "WS/DN inherited from base row; flow/height ambiguous at current "
+    "article/variant granularity"
+)
 
 
 def _assembled_family(product_id: Any) -> str:
@@ -62,11 +78,43 @@ def _assembled_family(product_id: Any) -> str:
     return "unknown"
 
 
+def _missing_final_assembly_technical_fields(row: pd.Series) -> list[str]:
+    return [
+        field
+        for field in FINAL_ASSEMBLIES_REQUIRED_TECHNICAL_FIELDS
+        if not _present(row.get(field))
+    ]
+
+
+def _final_assembly_data_quality_status(missing_fields: list[str]) -> str:
+    if not missing_fields:
+        return "complete"
+    if len(missing_fields) == len(FINAL_ASSEMBLIES_REQUIRED_TECHNICAL_FIELDS):
+        return "missing"
+    return "partial"
+
+
+def _final_assembly_source_status_note(family: str, missing_fields: list[str]) -> str:
+    if not missing_fields:
+        return "complete technical data"
+    if family == "easyflow" and EASYFLOW_AMBIGUOUS_TECHNICAL_FIELDS.issubset(set(missing_fields)):
+        return EASYFLOW_AMBIGUOUS_STATUS_NOTE
+    return "partial technical data"
+
+
 def _extract_final_assemblies(products_df: pd.DataFrame) -> pd.DataFrame:
     """Return final assembled ACO products for the Final_Assemblies export sheet."""
     products_df = pd.DataFrame() if products_df is None else products_df.copy()
+    completeness_columns = [
+        "is_complete_technical_data",
+        "missing_technical_fields",
+        "data_quality_status",
+        "source_status_note",
+    ]
     if "product_id" not in products_df.columns:
-        return pd.DataFrame(columns=["assembled_family", *products_df.columns.tolist()])
+        return pd.DataFrame(
+            columns=["assembled_family", *products_df.columns.tolist(), *completeness_columns]
+        )
 
     product_ids = products_df["product_id"].fillna("").astype(str)
     final_assemblies = products_df[product_ids.str.startswith(ASSEMBLED_PREFIX)].copy()
@@ -79,6 +127,20 @@ def _extract_final_assemblies(products_df: pd.DataFrame) -> pd.DataFrame:
         if "product_id" in final_assemblies.columns:
             insert_at = final_assemblies.columns.get_loc("product_id") + 1
         final_assemblies.insert(insert_at, "assembled_family", families)
+
+    missing_by_row = final_assemblies.apply(
+        _missing_final_assembly_technical_fields,
+        axis=1,
+    )
+    statuses = missing_by_row.map(_final_assembly_data_quality_status)
+
+    final_assemblies["is_complete_technical_data"] = statuses.eq("complete")
+    final_assemblies["missing_technical_fields"] = missing_by_row.map(",".join)
+    final_assemblies["data_quality_status"] = statuses
+    final_assemblies["source_status_note"] = [
+        _final_assembly_source_status_note(family, missing_fields)
+        for family, missing_fields in zip(families, missing_by_row)
+    ]
 
     return final_assemblies
 

@@ -45,6 +45,21 @@ FINAL_ASSEMBLIES_EASYFLOW_EMPTY_FIELDS = [
     "height_adj_min_mm",
     "height_adj_max_mm",
 ]
+FINAL_ASSEMBLIES_REQUIRED_COMPLETENESS_COLUMNS = [
+    "is_complete_technical_data",
+    "missing_technical_fields",
+    "data_quality_status",
+    "source_status_note",
+]
+EXPECTED_FINAL_ASSEMBLIES_STATUS_COUNTS = {
+    "complete": 26,
+    "partial": 2,
+    "missing": 0,
+}
+FINAL_ASSEMBLIES_EASYFLOW_MISSING_FIELDS = (
+    "flow_rate_lps,height_adj_min_mm,height_adj_max_mm"
+)
+FINAL_ASSEMBLIES_EASYFLOW_NOTE_SNIPPET = "ambiguous at current article/variant granularity"
 FORBIDDEN_SYSTEM_ROLES = {"grate", "accessory", "optional_accessory"}
 REQUIRED_SHEETS = [
     "Products",
@@ -116,6 +131,14 @@ def _string_series_eq(df: pd.DataFrame, col: str, expected: str) -> pd.Series:
     return df[col].fillna("").astype(str).str.strip().eq(expected)
 
 
+def _bool_series_eq(df: pd.DataFrame, col: str, expected: bool) -> pd.Series:
+    if col not in df.columns:
+        return pd.Series([False] * len(df), index=df.index)
+    normalized = df[col].fillna("").astype(str).str.strip().str.lower()
+    expected_values = {"true", "1", "yes"} if expected else {"false", "0", "no"}
+    return normalized.isin(expected_values)
+
+
 def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
     results: List[CheckResult] = []
     xls = pd.ExcelFile(path, engine="openpyxl")
@@ -182,6 +205,78 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
                 matching = _numeric_series_eq(easyflow, field, expected)
             bad = int((~matching).sum())
             results.append(CheckResult(f"final_assemblies_easyflow_value:{field}", bad == 0, f"actual_bad={bad} expected_bad=0 expected={expected}"))
+
+        missing_columns = [
+            col for col in FINAL_ASSEMBLIES_REQUIRED_COMPLETENESS_COLUMNS
+            if col not in final_assemblies.columns
+        ]
+        results.append(CheckResult(
+            "final_assemblies_completeness_columns",
+            not missing_columns,
+            f"missing={missing_columns} expected={FINAL_ASSEMBLIES_REQUIRED_COMPLETENESS_COLUMNS}",
+        ))
+
+        statuses = _norm_series(final_assemblies, "data_quality_status").str.lower()
+        for status, expected in EXPECTED_FINAL_ASSEMBLIES_STATUS_COUNTS.items():
+            actual = int((statuses == status).sum())
+            results.append(CheckResult(
+                f"final_assemblies_status_count:{status}",
+                actual == expected,
+                f"actual={actual} expected={expected}",
+            ))
+
+        easyflow_status_bad = int((~_string_series_eq(easyflow, "data_quality_status", "partial")).sum())
+        results.append(CheckResult(
+            "final_assemblies_easyflow_status_partial",
+            easyflow_status_bad == 0,
+            f"actual_bad={easyflow_status_bad} expected_bad=0",
+        ))
+        easyflow_complete_bad = int((~_bool_series_eq(easyflow, "is_complete_technical_data", False)).sum())
+        results.append(CheckResult(
+            "final_assemblies_easyflow_is_complete_false",
+            easyflow_complete_bad == 0,
+            f"actual_bad={easyflow_complete_bad} expected_bad=0",
+        ))
+        easyflow_missing_bad = int((~_string_series_eq(
+            easyflow,
+            "missing_technical_fields",
+            FINAL_ASSEMBLIES_EASYFLOW_MISSING_FIELDS,
+        )).sum())
+        results.append(CheckResult(
+            "final_assemblies_easyflow_missing_fields",
+            easyflow_missing_bad == 0,
+            f"actual_bad={easyflow_missing_bad} expected={FINAL_ASSEMBLIES_EASYFLOW_MISSING_FIELDS}",
+        ))
+        easyflow_note_mentions = _norm_series(easyflow, "source_status_note").str.lower().str.contains(
+            FINAL_ASSEMBLIES_EASYFLOW_NOTE_SNIPPET,
+            regex=False,
+        )
+        easyflow_note_bad = int((~easyflow_note_mentions).sum())
+        results.append(CheckResult(
+            "final_assemblies_easyflow_source_note",
+            easyflow_note_bad == 0,
+            f"actual_bad={easyflow_note_bad} expected_snippet={FINAL_ASSEMBLIES_EASYFLOW_NOTE_SNIPPET}",
+        ))
+
+        complete_non_easyflow = final_assemblies[~easyflow_mask & statuses.eq("complete")]
+        complete_status_bad = int((~_string_series_eq(complete_non_easyflow, "data_quality_status", "complete")).sum())
+        complete_flag_bad = int((~_bool_series_eq(complete_non_easyflow, "is_complete_technical_data", True)).sum())
+        complete_missing_filled = int((~_empty_series(complete_non_easyflow, "missing_technical_fields")).sum())
+        results.append(CheckResult(
+            "final_assemblies_complete_non_easyflow_status",
+            complete_status_bad == 0,
+            f"actual_bad={complete_status_bad} expected_bad=0",
+        ))
+        results.append(CheckResult(
+            "final_assemblies_complete_non_easyflow_is_complete_true",
+            complete_flag_bad == 0,
+            f"actual_bad={complete_flag_bad} expected_bad=0",
+        ))
+        results.append(CheckResult(
+            "final_assemblies_complete_non_easyflow_missing_fields_empty",
+            complete_missing_filled == 0,
+            f"actual_filled={complete_missing_filled} expected_filled=0",
+        ))
 
         for field in FINAL_ASSEMBLIES_EASYFLOW_EMPTY_FIELDS:
             filled = int((~_empty_series(easyflow, field)).sum())
