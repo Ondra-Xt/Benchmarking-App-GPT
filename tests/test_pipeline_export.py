@@ -1391,6 +1391,10 @@ class PipelineExportTests(unittest.TestCase):
 
             headers = list(final_rows[0])
             self.assertIn("assembled_family", headers)
+            self.assertIn("is_complete_technical_data", headers)
+            self.assertIn("missing_technical_fields", headers)
+            self.assertIn("data_quality_status", headers)
+            self.assertIn("source_status_note", headers)
             for col in products.columns:
                 self.assertIn(col, headers)
 
@@ -1407,6 +1411,21 @@ class PipelineExportTests(unittest.TestCase):
             self.assertTrue(pd.isna(easyflow["flow_rate_lps"]))
             self.assertTrue(pd.isna(easyflow["height_adj_min_mm"]))
             self.assertTrue(pd.isna(easyflow["height_adj_max_mm"]))
+            self.assertEqual(easyflow["is_complete_technical_data"], False)
+            self.assertEqual(
+                easyflow["missing_technical_fields"],
+                "flow_rate_lps,height_adj_min_mm,height_adj_max_mm",
+            )
+            self.assertEqual(easyflow["data_quality_status"], "partial")
+            self.assertIn(
+                "ambiguous at current article/variant granularity",
+                easyflow["source_status_note"],
+            )
+
+            complete_rows = final_df[final_df["assembled_family"].isin(["easyflowplus", "showerdrain_c", "showerdrain_splus", "unknown"])]
+            self.assertTrue((complete_rows["is_complete_technical_data"] == True).all())
+            self.assertTrue((complete_rows["data_quality_status"] == "complete").all())
+            self.assertTrue((complete_rows["missing_technical_fields"].fillna("") == "").all())
 
 if __name__ == "__main__":
     unittest.main()
