@@ -1308,6 +1308,105 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue(excluded.empty)
         self.assertTrue(bom.empty)
 
+    def test_export_writes_final_assemblies_sheet_from_products_only(self):
+        with tempfile.TemporaryDirectory() as td:
+            template = Path(td) / "template.xlsx"
+            out = Path(td) / "out.xlsx"
+            self._make_template(template)
+
+            products = pd.DataFrame([
+                {
+                    "manufacturer": "aco",
+                    "product_id": "aco-assembled-easyflow-compact",
+                    "product_name": "Easyflow assembled compact",
+                    "water_seal_mm": 50.0,
+                    "outlet_dn": "DN50",
+                    "flow_rate_lps": None,
+                    "height_adj_min_mm": None,
+                    "height_adj_max_mm": None,
+                },
+                {
+                    "manufacturer": "aco",
+                    "product_id": "aco-assembled-easyflowplus-variant",
+                    "product_name": "Easyflow Plus assembled",
+                    "water_seal_mm": 50.0,
+                    "outlet_dn": "DN50",
+                    "flow_rate_lps": 0.6,
+                    "height_adj_min_mm": 65,
+                    "height_adj_max_mm": 95,
+                },
+                {
+                    "manufacturer": "aco",
+                    "product_id": "aco-assembled-showerdrain-c-variant",
+                    "product_name": "ShowerDrain C assembled",
+                    "water_seal_mm": 50.0,
+                    "outlet_dn": "DN50",
+                    "flow_rate_lps": 0.8,
+                    "height_adj_min_mm": 57,
+                    "height_adj_max_mm": 128,
+                },
+                {
+                    "manufacturer": "aco",
+                    "product_id": "aco-assembled-showerdrain-splus-variant",
+                    "product_name": "ShowerDrain S+ assembled",
+                    "water_seal_mm": 50.0,
+                    "outlet_dn": "DN50",
+                    "flow_rate_lps": 0.8,
+                    "height_adj_min_mm": 57,
+                    "height_adj_max_mm": 128,
+                },
+                {
+                    "manufacturer": "aco",
+                    "product_id": "aco-assembled-unexpected-family",
+                    "product_name": "Unexpected assembled",
+                    "water_seal_mm": 50.0,
+                    "outlet_dn": "DN50",
+                    "flow_rate_lps": 0.8,
+                    "height_adj_min_mm": 57,
+                    "height_adj_max_mm": 128,
+                },
+                {
+                    "manufacturer": "aco",
+                    "product_id": "aco-regular-product",
+                    "product_name": "Regular drain",
+                    "water_seal_mm": 50.0,
+                    "outlet_dn": "DN50",
+                    "flow_rate_lps": 0.8,
+                    "height_adj_min_mm": 57,
+                    "height_adj_max_mm": 128,
+                },
+            ])
+
+            export_excel(template, out, default_config(), products_df=products, comparison_df=products)
+
+            wb = openpyxl.load_workbook(out)
+            self.assertIn("Final_Assemblies", wb.sheetnames)
+            self.assertIn("Products", wb.sheetnames)
+            self.assertIn("Comparison", wb.sheetnames)
+
+            product_rows = self._sheet_rows(out, "Products")
+            final_rows = self._sheet_rows(out, "Final_Assemblies")
+            self.assertEqual(len(product_rows) - 1, len(products))
+            self.assertEqual(len(final_rows) - 1, 5)
+
+            headers = list(final_rows[0])
+            self.assertIn("assembled_family", headers)
+            for col in products.columns:
+                self.assertIn(col, headers)
+
+            final_df = pd.DataFrame(final_rows[1:], columns=headers)
+            self.assertEqual(
+                final_df["assembled_family"].tolist(),
+                ["easyflow", "easyflowplus", "showerdrain_c", "showerdrain_splus", "unknown"],
+            )
+            self.assertNotIn("aco-regular-product", set(final_df["product_id"]))
+
+            easyflow = final_df[final_df["assembled_family"] == "easyflow"].iloc[0]
+            self.assertEqual(easyflow["water_seal_mm"], 50.0)
+            self.assertEqual(easyflow["outlet_dn"], "DN50")
+            self.assertTrue(pd.isna(easyflow["flow_rate_lps"]))
+            self.assertTrue(pd.isna(easyflow["height_adj_min_mm"]))
+            self.assertTrue(pd.isna(easyflow["height_adj_max_mm"]))
 
 if __name__ == "__main__":
     unittest.main()

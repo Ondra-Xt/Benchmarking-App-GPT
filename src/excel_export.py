@@ -46,6 +46,43 @@ LEGACY_EQUIVALENCE_KEYS = [
 ]
 
 
+ASSEMBLED_PREFIX = "aco-assembled-"
+
+
+def _assembled_family(product_id: Any) -> str:
+    pid = str(product_id or "")
+    if pid.startswith("aco-assembled-easyflowplus-"):
+        return "easyflowplus"
+    if pid.startswith("aco-assembled-easyflow-"):
+        return "easyflow"
+    if pid.startswith("aco-assembled-showerdrain-c-"):
+        return "showerdrain_c"
+    if pid.startswith("aco-assembled-showerdrain-splus-"):
+        return "showerdrain_splus"
+    return "unknown"
+
+
+def _extract_final_assemblies(products_df: pd.DataFrame) -> pd.DataFrame:
+    """Return final assembled ACO products for the Final_Assemblies export sheet."""
+    products_df = pd.DataFrame() if products_df is None else products_df.copy()
+    if "product_id" not in products_df.columns:
+        return pd.DataFrame(columns=["assembled_family", *products_df.columns.tolist()])
+
+    product_ids = products_df["product_id"].fillna("").astype(str)
+    final_assemblies = products_df[product_ids.str.startswith(ASSEMBLED_PREFIX)].copy()
+
+    families = final_assemblies["product_id"].map(_assembled_family)
+    if "assembled_family" in final_assemblies.columns:
+        final_assemblies["assembled_family"] = families
+    else:
+        insert_at = 0
+        if "product_id" in final_assemblies.columns:
+            insert_at = final_assemblies.columns.get_loc("product_id") + 1
+        final_assemblies.insert(insert_at, "assembled_family", families)
+
+    return final_assemblies
+
+
 def _is_nan(x: Any) -> bool:
     try:
         return x != x  # NaN != NaN
@@ -474,6 +511,7 @@ def export_excel(
     Sheets:
     - Candidates_All
     - Products
+    - Final_Assemblies
     - Components
     - Comparison
     - Excluded
@@ -560,6 +598,7 @@ def export_excel(
 
     write_df("Candidates_All", registry_df)
     write_df("Products", products_df)
+    write_df("Final_Assemblies", _extract_final_assemblies(products_df))
     write_df("Components", components_df)
     write_df("Comparison", comparison_df)
     write_df("Excluded", excluded_df)
