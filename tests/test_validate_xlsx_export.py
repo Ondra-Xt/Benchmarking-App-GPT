@@ -36,6 +36,10 @@ def _base_dataframes():
                 "flow_rate_lps": None,
                 "height_adj_min_mm": None,
                 "height_adj_max_mm": None,
+                "is_complete_technical_data": False,
+                "missing_technical_fields": "flow_rate_lps,height_adj_min_mm,height_adj_max_mm",
+                "data_quality_status": "partial",
+                "source_status_note": "WS/DN inherited from base row; flow/height ambiguous at current article/variant granularity",
             },
             {
                 "manufacturer": "aco",
@@ -46,6 +50,10 @@ def _base_dataframes():
                 "flow_rate_lps": None,
                 "height_adj_min_mm": None,
                 "height_adj_max_mm": None,
+                "is_complete_technical_data": False,
+                "missing_technical_fields": "flow_rate_lps,height_adj_min_mm,height_adj_max_mm",
+                "data_quality_status": "partial",
+                "source_status_note": "WS/DN inherited from base row; flow/height ambiguous at current article/variant granularity",
             },
         ]),
     }
@@ -69,6 +77,11 @@ def _patch_small_expectations(mod, counts):
         "easyflowplus": 0,
         "showerdrain_c": 0,
         "showerdrain_splus": 0,
+    }
+    mod.EXPECTED_FINAL_ASSEMBLIES_STATUS_COUNTS = {
+        "complete": 0,
+        "partial": 2,
+        "missing": 0,
     }
 
 
@@ -230,6 +243,11 @@ def test_final_assemblies_baseline_expectations():
         "showerdrain_c": 4,
         "showerdrain_splus": 16,
     }
+    assert mod.EXPECTED_FINAL_ASSEMBLIES_STATUS_COUNTS == {
+        "complete": 26,
+        "partial": 2,
+        "missing": 0,
+    }
 
 
 def test_missing_final_assemblies_sheet_fails(tmp_path):
@@ -310,3 +328,35 @@ def test_final_assemblies_easyflow_ambiguous_fields_must_stay_empty(tmp_path):
     assert not _result_for(results, "final_assemblies_easyflow_empty:flow_rate_lps").passed
     assert not _result_for(results, "final_assemblies_easyflow_empty:height_adj_min_mm").passed
     assert not _result_for(results, "final_assemblies_easyflow_empty:height_adj_max_mm").passed
+
+
+def test_final_assemblies_requires_completeness_columns(tmp_path):
+    mod = _load_validator_module()
+    _patch_small_expectations(mod, {"Products": 2, "Comparison": 2, "Scoring_Field_Coverage": 2, "Candidates_All": 2, "Components": 1, "BOM_Options": 1, "Final_Assemblies": 2})
+    data = _base_dataframes()
+    data["Final_Assemblies"] = data["Final_Assemblies"].drop(columns=["data_quality_status"])
+    path = tmp_path / "final_missing_completeness_column.xlsx"
+    _write_xlsx(path, data)
+    passed, results = mod.validate_xlsx(str(path))
+    assert not passed
+    assert not _result_for(results, "final_assemblies_completeness_columns").passed
+
+
+def test_final_assemblies_easyflow_completeness_status_must_match(tmp_path):
+    mod = _load_validator_module()
+    _patch_small_expectations(mod, {"Products": 2, "Comparison": 2, "Scoring_Field_Coverage": 2, "Candidates_All": 2, "Components": 1, "BOM_Options": 1, "Final_Assemblies": 2})
+    data = _base_dataframes()
+    data["Final_Assemblies"].loc[0, "data_quality_status"] = "complete"
+    data["Final_Assemblies"].loc[0, "is_complete_technical_data"] = True
+    data["Final_Assemblies"].loc[0, "missing_technical_fields"] = "height_adj_min_mm,flow_rate_lps,height_adj_max_mm"
+    data["Final_Assemblies"].loc[0, "source_status_note"] = "partial technical data"
+    path = tmp_path / "final_bad_easyflow_completeness.xlsx"
+    _write_xlsx(path, data)
+    passed, results = mod.validate_xlsx(str(path))
+    assert not passed
+    assert not _result_for(results, "final_assemblies_status_count:complete").passed
+    assert not _result_for(results, "final_assemblies_status_count:partial").passed
+    assert not _result_for(results, "final_assemblies_easyflow_status_partial").passed
+    assert not _result_for(results, "final_assemblies_easyflow_is_complete_false").passed
+    assert not _result_for(results, "final_assemblies_easyflow_missing_fields").passed
+    assert not _result_for(results, "final_assemblies_easyflow_source_note").passed
