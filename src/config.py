@@ -94,6 +94,10 @@ def default_config_dict() -> Dict[str, Any]:
         # streamlit UI / penalizace unknown
         "unknown_penalty_score": 0.0,
 
+        # Experimental, disabled-by-default proposal path for promoting
+        # source-backed Article_Variants rows into product candidates.
+        "enable_article_variant_products": False,
+
         # equivalence keys (musí existovat, jinak UI může padat)
         "length_mode_match": 0.0,
         "selected_length_match": 0.0,
