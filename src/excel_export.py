@@ -64,6 +64,25 @@ EASYFLOW_AMBIGUOUS_STATUS_NOTE = (
     "article/variant granularity"
 )
 
+ARTICLE_VARIANT_COLUMNS = [
+    "manufacturer",
+    "base_product_id",
+    "article_number",
+    "variant_type",
+    "product_family",
+    "source_url",
+    "water_seal_mm",
+    "outlet_dn",
+    "flow_rate_lps",
+    "height_adj_min_mm",
+    "height_adj_max_mm",
+    "cutout_mm",
+    "side_inlet",
+    "row_text",
+    "attribution_status",
+    "why_not_promoted",
+]
+
 
 def _assembled_family(product_id: Any) -> str:
     pid = str(product_id or "")
@@ -555,6 +574,20 @@ def _scoring_field_coverage(products_df: pd.DataFrame, comparison_df: pd.DataFra
     return pd.DataFrame(out, columns=cols)
 
 
+def _extract_article_variants(registry_df: pd.DataFrame, products_df: pd.DataFrame) -> pd.DataFrame:
+    combined = " ".join(
+        str(value or "")
+        for df in (registry_df, products_df)
+        for value in (df.astype(str).to_numpy().ravel().tolist() if df is not None and not df.empty else [])
+    ).lower()
+    if "easyflow" not in combined:
+        return pd.DataFrame(columns=ARTICLE_VARIANT_COLUMNS)
+
+    from tools import report_easyflow_article_variants as article_variants
+
+    variants = article_variants.build_article_variants_dataframe(registry_df, products_df)
+    return variants.reindex(columns=ARTICLE_VARIANT_COLUMNS)
+
 def export_excel(
     template_path: str,
     out_path: str,
@@ -580,6 +613,7 @@ def export_excel(
     - Evidence
     - BOM_Options
     - Source_Checks
+    - Article_Variants
     - Final_Scoring_Weights
     - Legacy_Equivalence_Weights
     - Config
@@ -667,6 +701,7 @@ def export_excel(
     write_df("Evidence", evidence_df)
     write_df("BOM_Options", bom_options_df)
     write_df("Source_Checks", _extract_source_checks(evidence_df))
+    write_df("Article_Variants", _extract_article_variants(registry_df, products_df))
     write_df("Final_Scoring_Weights", _extract_final_scoring_weights(cfg))
     write_df("Legacy_Equivalence_Weights", _extract_legacy_equivalence_weights(cfg))
     write_df("Config", _extract_config_sheet())

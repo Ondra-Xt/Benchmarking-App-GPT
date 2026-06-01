@@ -69,8 +69,28 @@ REQUIRED_SHEETS = [
     "Components",
     "BOM_Options",
     "Final_Assemblies",
+    "Article_Variants",
 ]
 OPTIONAL_SHEETS = ["Evidence"]
+ARTICLE_VARIANTS_REQUIRED_COLUMNS = [
+    "manufacturer",
+    "base_product_id",
+    "article_number",
+    "variant_type",
+    "product_family",
+    "source_url",
+    "water_seal_mm",
+    "outlet_dn",
+    "flow_rate_lps",
+    "height_adj_min_mm",
+    "height_adj_max_mm",
+    "cutout_mm",
+    "side_inlet",
+    "row_text",
+    "attribution_status",
+    "why_not_promoted",
+]
+EASYFLOW_WS50_DN50_EXPECTED_ARTICLES = {"2500.55.00", "2500.05.00", "2500.00.00"}
 CPLUS_EXPECTED = {
     "aco-showerdrain-cplus-standard-h92": {
         "flow_rate_lps": 0.91,
@@ -144,6 +164,8 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
     xls = pd.ExcelFile(path, engine="openpyxl")
 
     required_sheets = [s for s in REQUIRED_SHEETS if s in EXPECTED_SHEET_COUNTS]
+    if "Final_Assemblies" in EXPECTED_SHEET_COUNTS and "Article_Variants" not in required_sheets:
+        required_sheets.append("Article_Variants")
     missing = [s for s in required_sheets if s not in xls.sheet_names]
     results.append(CheckResult("required_sheets", not missing, f"missing={missing} expected={required_sheets}"))
     if "Final_Assemblies" in required_sheets:
@@ -165,6 +187,7 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
         sheets["BOM_Options"],
     )
     final_assemblies = sheets.get("Final_Assemblies")
+    article_variants = sheets.get("Article_Variants", pd.DataFrame(columns=ARTICLE_VARIANTS_REQUIRED_COLUMNS))
 
     for name, expected in EXPECTED_SHEET_COUNTS.items():
         actual = len(sheets[name])
@@ -172,6 +195,33 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
 
     comp_ok = len(components) >= COMPONENTS_MIN_ROWS
     results.append(CheckResult("components_min_rows", comp_ok, f"actual={len(components)} expected>={COMPONENTS_MIN_ROWS}"))
+
+    if "Article_Variants" in required_sheets or "Article_Variants" in xls.sheet_names:
+        article_missing_columns = [col for col in ARTICLE_VARIANTS_REQUIRED_COLUMNS if col not in article_variants.columns]
+        results.append(CheckResult(
+            "article_variants_required_columns",
+            not article_missing_columns,
+            f"missing={article_missing_columns} expected={ARTICLE_VARIANTS_REQUIRED_COLUMNS}",
+        ))
+        article_source_blank = int(_norm_series(article_variants, "source_url").eq("").sum())
+        results.append(CheckResult("article_variants_source_url_non_empty", article_source_blank == 0, f"actual_blank={article_source_blank} expected=0"))
+        candidate_body = article_variants[_norm_series(article_variants, "variant_type").eq("candidate_body_variant")]
+        candidate_article_blank = int(_norm_series(candidate_body, "article_number").eq("").sum())
+        results.append(CheckResult("article_variants_candidate_article_number_non_empty", candidate_article_blank == 0, f"actual_blank={candidate_article_blank} expected=0"))
+        product_ids = set(_norm_series(products, "product_id"))
+        variant_article_ids = set(value for value in _norm_series(article_variants, "article_number") if value)
+        promoted_article_ids = sorted(variant_article_ids & product_ids)
+        results.append(CheckResult("article_variants_not_promoted_to_products", not promoted_article_ids, f"promoted={promoted_article_ids}"))
+        ws50 = pd.to_numeric(article_variants.get("water_seal_mm", pd.Series(dtype=object)), errors="coerce").eq(50)
+        dn50 = _norm_series(article_variants, "outlet_dn").str.upper().str.contains("DN50", regex=False)
+        body = _norm_series(article_variants, "variant_type").eq("candidate_body_variant")
+        found_easyflow_articles = set(_norm_series(article_variants[ws50 & dn50 & body], "article_number"))
+        missing_easyflow_articles = sorted(EASYFLOW_WS50_DN50_EXPECTED_ARTICLES - found_easyflow_articles)
+        results.append(CheckResult(
+            "article_variants_easyflow_ws50_dn50_articles",
+            not missing_easyflow_articles,
+            f"missing={missing_easyflow_articles} expected={sorted(EASYFLOW_WS50_DN50_EXPECTED_ARTICLES)}",
+        ))
 
     if final_assemblies is not None:
         final_ids = _norm_series(final_assemblies, "product_id").str.lower()

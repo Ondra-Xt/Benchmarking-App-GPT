@@ -149,6 +149,86 @@ class PipelineExportTests(unittest.TestCase):
             self.assertEqual(len(self._sheet_rows(out, "Evidence")), 2)
 
 
+    def test_export_writes_article_variants_sheet_from_normalized_easyflow_diagnostics(self):
+        with tempfile.TemporaryDirectory() as td:
+            template = Path(td) / "template.xlsx"
+            out = Path(td) / "out.xlsx"
+            self._make_template(template)
+
+            registry = pd.DataFrame([{"manufacturer": "aco", "product_id": "aco-easyflow-base", "product_name": "ACO Easyflow"}])
+            products = pd.DataFrame([{"manufacturer": "aco", "product_id": "aco-assembled-easyflow-compact", "product_name": "ACO Easyflow assembled"}])
+            variant_rows = pd.DataFrame([
+                {
+                    "manufacturer": "aco",
+                    "base_product_id": "aco-assembled-easyflow-compact",
+                    "article_number": "2500.55.00",
+                    "variant_type": "candidate_body_variant",
+                    "product_family": "easyflow",
+                    "source_url": "https://example.test/easyflow/komplettablaeufe-aco-easyflow-dn-50/",
+                    "water_seal_mm": 50,
+                    "outlet_dn": "DN50",
+                    "flow_rate_lps": 1.5,
+                    "height_adj_min_mm": 15,
+                    "height_adj_max_mm": 96,
+                    "cutout_mm": "150 x 150 mm",
+                    "side_inlet": "false",
+                    "row_text": "2500.55.00 WS50 DN50 1,5 l/s",
+                    "attribution_status": "candidate_variant",
+                    "why_not_promoted": "multiple_candidate_articles",
+                },
+                {
+                    "manufacturer": "aco",
+                    "base_product_id": "aco-assembled-easyflow-compact",
+                    "article_number": "2500.05.00",
+                    "variant_type": "candidate_body_variant",
+                    "product_family": "easyflow",
+                    "source_url": "https://example.test/easyflow/einzelablaeufe-aco-easyflow-dn-50/",
+                    "water_seal_mm": 50,
+                    "outlet_dn": "DN50",
+                    "flow_rate_lps": 1.0,
+                    "height_adj_min_mm": 7,
+                    "height_adj_max_mm": 75,
+                    "cutout_mm": "160 x 160 mm",
+                    "side_inlet": "true",
+                    "row_text": "2500.05.00 WS50 DN50 1,0 l/s",
+                    "attribution_status": "candidate_variant",
+                    "why_not_promoted": "multiple_candidate_articles",
+                },
+                {
+                    "manufacturer": "aco",
+                    "base_product_id": "aco-assembled-easyflow-compact",
+                    "article_number": "2500.00.00",
+                    "variant_type": "candidate_body_variant",
+                    "product_family": "easyflow",
+                    "source_url": "https://example.test/easyflow/einzelablaeufe-aco-easyflow-dn-50/",
+                    "water_seal_mm": 50,
+                    "outlet_dn": "DN50",
+                    "flow_rate_lps": 1.0,
+                    "height_adj_min_mm": 7,
+                    "height_adj_max_mm": 75,
+                    "cutout_mm": "160 x 160 mm",
+                    "side_inlet": "true",
+                    "row_text": "2500.00.00 WS50 DN50 1,0 l/s",
+                    "attribution_status": "candidate_variant",
+                    "why_not_promoted": "multiple_candidate_articles",
+                },
+            ])
+
+            with patch("tools.report_easyflow_article_variants.build_article_variants_dataframe", return_value=variant_rows) as helper:
+                export_excel(template, out, default_config(), registry_df=registry, products_df=products, comparison_df=products)
+
+            helper.assert_called_once()
+            rows = self._sheet_rows(out, "Article_Variants")
+            self.assertEqual(rows[0], tuple(variant_rows.columns))
+            article_df = pd.DataFrame(rows[1:], columns=rows[0])
+            self.assertEqual(len(article_df), 3)
+            self.assertEqual(set(article_df["article_number"]), {"2500.55.00", "2500.05.00", "2500.00.00"})
+            self.assertEqual(set(article_df["flow_rate_lps"]), {1.5, 1.0})
+            self.assertTrue((article_df["attribution_status"] == "candidate_variant").all())
+            self.assertTrue((article_df["why_not_promoted"] == "multiple_candidate_articles").all())
+            product_ids = {row[1] for row in self._sheet_rows(out, "Products")[1:]}
+            self.assertFalse(set(article_df["article_number"]) & product_ids)
+
     def test_export_writes_source_checks_sheet_from_evidence(self):
         with tempfile.TemporaryDirectory() as td:
             template = Path(td) / "template.xlsx"
