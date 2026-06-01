@@ -43,10 +43,12 @@ def test_normalize_candidate_classifies_body_and_extracts_normalized_fields():
     row = mod.normalize_candidate(candidate)
 
     assert row.as_dict() == {
+        "manufacturer": "aco",
         "base_product_id": mod.BASE_PRODUCT_ID,
         "article_number": "1234.56.70",
         "source_url": "https://example.test/produkte/badentwaesserung/badablaeufe/aco-easyflow/komplettablaeufe-aco-easyflow-dn-50/",
         "variant_type": "candidate_body_variant",
+        "product_family": "easyflow",
         "water_seal_mm": 50,
         "outlet_dn": "DN50",
         "flow_rate_lps": 1.5,
@@ -55,7 +57,8 @@ def test_normalize_candidate_classifies_body_and_extracts_normalized_fields():
         "cutout_mm": "150 x 150 mm",
         "side_inlet": "false",
         "row_text": "1234.56.70 Standard WS50 ohne Seitenzulauf 50 mm DN50 1,5 l/s 15-96 mm Aussparung 150 x 150 mm",
-        "attribution_status": "matches_current_ws50_dn50_base_facts",
+        "attribution_status": "candidate_variant",
+        "why_not_promoted": "pending_attribution_resolution",
     }
 
 
@@ -125,10 +128,12 @@ def test_build_variant_report_runs_discovery_pipeline_and_reports_matching_candi
 
 def test_write_variant_csv_uses_required_columns():
     row = mod.NormalizedVariantRow(
+        manufacturer="aco",
         base_product_id=mod.BASE_PRODUCT_ID,
         article_number="1234.56.70",
         source_url="https://example.test/",
         variant_type="candidate_body_variant",
+        product_family="easyflow",
         water_seal_mm=50,
         outlet_dn="DN50",
         flow_rate_lps=1.5,
@@ -137,7 +142,8 @@ def test_write_variant_csv_uses_required_columns():
         cutout_mm="150 x 150 mm",
         side_inlet="false",
         row_text="row text",
-        attribution_status="matches_current_ws50_dn50_base_facts",
+        attribution_status="candidate_variant",
+        why_not_promoted="multiple_candidate_articles",
     )
     stream = io.StringIO()
 

@@ -16,15 +16,19 @@ from tools import diagnose_easyflow_article_variants as diag
 
 BASE_PRODUCT_ID = diag.BASE_ID
 EASYFLOW_BASE_URLS = (
+    f"{aco.BASE}{aco.BADABLAEUFE_SCOPE}easyflow/komplettablaeufe-aco-easyflow-dn-50/",
+    f"{aco.BASE}{aco.BADABLAEUFE_SCOPE}easyflow/einzelablaeufe-aco-easyflow-dn-50/",
     f"{aco.BASE}{aco.BADABLAEUFE_SCOPE}aco-easyflow/komplettablaeufe-aco-easyflow-dn-50/",
     f"{aco.BASE}{aco.BADABLAEUFE_SCOPE}aco-easyflow/einzelablaeufe-aco-easyflow-dn-50/",
 )
 
 VARIANT_COLUMNS = (
+    "manufacturer",
     "base_product_id",
     "article_number",
-    "source_url",
     "variant_type",
+    "product_family",
+    "source_url",
     "water_seal_mm",
     "outlet_dn",
     "flow_rate_lps",
@@ -34,6 +38,7 @@ VARIANT_COLUMNS = (
     "side_inlet",
     "row_text",
     "attribution_status",
+    "why_not_promoted",
 )
 
 CANDIDATE_BODY_VARIANT = "candidate_body_variant"
@@ -54,10 +59,12 @@ NO_SIDE_INLET_RE = re.compile(r"ohne\s+seit(?:en)?(?:zulauf|einlauf)|without\s+s
 
 @dataclass(frozen=True)
 class NormalizedVariantRow:
+    manufacturer: str
     base_product_id: str
     article_number: str
     source_url: str
     variant_type: str
+    product_family: str
     water_seal_mm: int | None
     outlet_dn: str
     flow_rate_lps: float | None
@@ -67,6 +74,7 @@ class NormalizedVariantRow:
     side_inlet: str
     row_text: str
     attribution_status: str
+    why_not_promoted: str
 
     def as_dict(self) -> dict[str, Any]:
         return {column: getattr(self, column) for column in VARIANT_COLUMNS}
@@ -183,8 +191,20 @@ def _attribution_status_for_variant(candidate: diag.ArticleVariantCandidate, var
     if variant_type != CANDIDATE_BODY_VARIANT:
         return "excluded_not_body_variant"
     if diag.candidate_matches_base(candidate):
-        return "matches_current_ws50_dn50_base_facts"
+        return "candidate_variant"
     return "candidate_body_variant_not_current_base_match"
+
+
+def _why_not_promoted_for_variant(candidate: diag.ArticleVariantCandidate, variant_type: str) -> str:
+    if variant_type == EXCLUDED_EASYFLOWPLUS:
+        return "excluded_easyflowplus"
+    if variant_type == EXCLUDED_GRATE_VARIANT:
+        return "excluded_grate_variant"
+    if variant_type == EXCLUDED_ACCESSORY_VARIANT:
+        return "excluded_accessory_variant"
+    if diag.candidate_matches_base(candidate):
+        return "pending_attribution_resolution"
+    return "not_current_ws50_dn50_base_match"
 
 
 def normalize_candidate(candidate: diag.ArticleVariantCandidate) -> NormalizedVariantRow:
@@ -193,10 +213,12 @@ def normalize_candidate(candidate: diag.ArticleVariantCandidate) -> NormalizedVa
     combined_text = _clean_text(f"{row_text} {descriptor_text}")
     variant_type = classify_variant_row(candidate.source_url, combined_text)
     return NormalizedVariantRow(
+        manufacturer="aco",
         base_product_id=BASE_PRODUCT_ID,
         article_number=candidate.article_number,
         source_url=candidate.source_url,
         variant_type=variant_type,
+        product_family="easyflow",
         water_seal_mm=candidate.water_seal_mm,
         outlet_dn=candidate.outlet_dn,
         flow_rate_lps=candidate.flow_rate_lps,
@@ -206,6 +228,7 @@ def normalize_candidate(candidate: diag.ArticleVariantCandidate) -> NormalizedVa
         side_inlet=_extract_side_inlet(combined_text),
         row_text=row_text,
         attribution_status=_attribution_status_for_variant(candidate, variant_type),
+        why_not_promoted=_why_not_promoted_for_variant(candidate, variant_type),
     )
 
 
@@ -234,6 +257,61 @@ def fetch_normalized_variant_rows(urls: Iterable[str]) -> tuple[list[str], list[
     return inspected, rows
 
 
+
+def apply_article_variant_attribution(rows: Iterable[NormalizedVariantRow]) -> list[NormalizedVariantRow]:
+    normalized = list(rows)
+    matching = [
+        row
+        for row in normalized
+        if row.variant_type == CANDIDATE_BODY_VARIANT
+        and row.water_seal_mm == 50
+        and "DN50" in (row.outlet_dn or "").upper().split("/")
+    ]
+    if len(matching) <= 1:
+        return normalized
+    matching_keys = {(row.article_number, row.source_url, row.row_text) for row in matching}
+    updated: list[NormalizedVariantRow] = []
+    for row in normalized:
+        if (row.article_number, row.source_url, row.row_text) in matching_keys:
+            updated.append(
+                NormalizedVariantRow(
+                    manufacturer=row.manufacturer,
+                    base_product_id=row.base_product_id,
+                    article_number=row.article_number,
+                    source_url=row.source_url,
+                    variant_type=row.variant_type,
+                    product_family=row.product_family,
+                    water_seal_mm=row.water_seal_mm,
+                    outlet_dn=row.outlet_dn,
+                    flow_rate_lps=row.flow_rate_lps,
+                    height_adj_min_mm=row.height_adj_min_mm,
+                    height_adj_max_mm=row.height_adj_max_mm,
+                    cutout_mm=row.cutout_mm,
+                    side_inlet=row.side_inlet,
+                    row_text=row.row_text,
+                    attribution_status="candidate_variant",
+                    why_not_promoted="multiple_candidate_articles",
+                )
+            )
+        else:
+            updated.append(row)
+    return updated
+
+
+def build_article_variants_dataframe(registry: pd.DataFrame | None = None, products: pd.DataFrame | None = None, debug: Any = None) -> pd.DataFrame:
+    registry = pd.DataFrame() if registry is None else registry.copy()
+    products = pd.DataFrame() if products is None else products.copy()
+    candidate_rows: list[pd.Series | None] = []
+    if not products.empty and "product_id" in products.columns:
+        matches = products[products["product_id"].fillna("").astype(str).eq(BASE_PRODUCT_ID)]
+        candidate_rows.extend(row for _, row in matches.iterrows())
+    source_urls = _source_urls_from_pipeline(registry, debug, candidate_rows)
+    if not source_urls:
+        return pd.DataFrame(columns=list(VARIANT_COLUMNS))
+    _inspected, rows = fetch_normalized_variant_rows(source_urls)
+    rows = apply_article_variant_attribution(rows)
+    return pd.DataFrame([row.as_dict() for row in rows], columns=list(VARIANT_COLUMNS))
+
 def _row_summary(row: pd.Series | None) -> dict[str, str]:
     return diag._row_summary(row)
 
@@ -247,6 +325,7 @@ def build_variant_report() -> VariantReport:
     _base_location, base_row = diag.locate_product_id(BASE_PRODUCT_ID, frames)
     source_urls = _source_urls_from_pipeline(registry, debug, [base_row])
     inspected_urls, variant_rows = fetch_normalized_variant_rows(source_urls)
+    variant_rows = apply_article_variant_attribution(variant_rows)
 
     body_candidates = [row for row in variant_rows if row.variant_type == CANDIDATE_BODY_VARIANT]
     matching = [row for row in body_candidates if row.water_seal_mm == 50 and "DN50" in (row.outlet_dn or "").upper().split("/")]
