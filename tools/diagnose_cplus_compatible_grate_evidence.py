@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import re
 import sys
 from pathlib import Path
@@ -53,6 +54,23 @@ COMPAT_TERMS_RE = re.compile(r"\b(?:compatible|kompatibel|passend|vhodn|určen|p
 CPLUS_RE = re.compile(r"(?:ShowerDrain\s*C\+|\bC\+\b|cplus)", re.IGNORECASE)
 ARTICLE_RE = re.compile(r"\b(?:\d{4}\.\d{2}\.\d{2}|\d{8})\b")
 SOURCE_HINT_RE = re.compile(r"(?:showerdrain[-_ ]?c\+|showerdrain[-_ ]?cplus|showerdrain[-_ ]?c|design[-_ ]?rost|grate|rost|abdeckung)", re.IGNORECASE)
+DEFAULT_RELEVANT_SOURCE_MARKERS = (
+    "showerdrain-cplus",
+    "showerdrain-c/",
+    "design-roste-aus-geschliffenem-edelstahl",
+)
+DEFAULT_EXCLUDED_SOURCE_MARKERS = (
+    "easyflow",
+    "easyflow-plus",
+    "showerdrain-public",
+    "showerdrain-mplus",
+    "showerdrain-eplus",
+    "passavant",
+    "passino",
+    "mg",
+    "showerpoint",
+)
+RECOMMENDED_NEXT_ACTION = "find explicit C+ article matrix / catalog table"
 
 
 @dataclass(frozen=True)
@@ -81,6 +99,8 @@ class CPlusCompatibleGrateDiagnostic:
     candidate_evidence: tuple[CandidateEvidence, ...]
     safe_to_add_compatible_grate_bom_rows: bool
     recommendation: str
+    recommended_action: str
+    include_broad_sources: bool = False
 
 
 def _norm(df: pd.DataFrame | None, col: str) -> pd.Series:
@@ -111,7 +131,18 @@ def _urls_from_value(value: Any) -> set[str]:
     return urls
 
 
-def collect_related_source_urls(*frames: pd.DataFrame) -> tuple[str, ...]:
+def _is_default_relevant_source_url(url: str) -> bool:
+    normalized = _canonical_url(url).lower()
+    if not normalized:
+        return False
+    if normalized in {_canonical_url(known).lower() for known in KNOWN_CPLUS_SOURCE_URLS}:
+        return True
+    if any(marker in normalized for marker in DEFAULT_EXCLUDED_SOURCE_MARKERS):
+        return False
+    return any(marker in normalized for marker in DEFAULT_RELEVANT_SOURCE_MARKERS)
+
+
+def collect_related_source_urls(*frames: pd.DataFrame, include_broad_sources: bool = False) -> tuple[str, ...]:
     urls: set[str] = set(KNOWN_CPLUS_SOURCE_URLS) | set(KNOWN_RELATED_GRATE_SOURCE_URLS)
     for df in frames:
         if df is None or df.empty:
@@ -126,6 +157,8 @@ def collect_related_source_urls(*frames: pd.DataFrame) -> tuple[str, ...]:
                 continue
             for col in columns:
                 urls.update(_urls_from_value(row.get(col, "")))
+    if not include_broad_sources:
+        urls = {url for url in urls if _is_default_relevant_source_url(url)}
     return tuple(sorted(u for u in urls if u))
 
 
@@ -365,15 +398,30 @@ def find_candidate_evidence(source_urls: Iterable[str], *frames: pd.DataFrame) -
     return tuple(inspections), tuple(evidence)
 
 
-def build_diagnostic(candidates_all: pd.DataFrame, products: pd.DataFrame, components: pd.DataFrame, evidence_df: pd.DataFrame, bom_options: pd.DataFrame) -> CPlusCompatibleGrateDiagnostic:
+def build_diagnostic(
+    candidates_all: pd.DataFrame,
+    products: pd.DataFrame,
+    components: pd.DataFrame,
+    evidence_df: pd.DataFrame,
+    bom_options: pd.DataFrame,
+    *,
+    include_broad_sources: bool = False,
+) -> CPlusCompatibleGrateDiagnostic:
     base_rows, missing_base_ids = locate_cplus_base_rows(products)
-    source_urls = collect_related_source_urls(candidates_all, products, components, bom_options, evidence_df)
+    source_urls = collect_related_source_urls(
+        candidates_all,
+        products,
+        components,
+        bom_options,
+        evidence_df,
+        include_broad_sources=include_broad_sources,
+    )
     inspections, candidate_evidence = find_candidate_evidence(source_urls, candidates_all, products, components, bom_options, evidence_df)
     safe = any(ev.evidence_type == "explicit_article_matrix" and ev.compatibility_confidence == "explicit" for ev in candidate_evidence)
     if safe:
         recommendation = "Future compatible_grate BOM rows may be added only for the explicit article-level C+ rows listed above."
     else:
-        recommendation = "Do not add C+ compatible_grate BOM rows yet; evidence is not explicit article-level C+ compatibility."
+        recommendation = "Do not add C+ compatible_grate BOM rows and do not generate C+ assembled products yet; evidence is not explicit article-level C+ compatibility."
     return CPlusCompatibleGrateDiagnostic(
         base_rows=base_rows,
         missing_base_ids=missing_base_ids,
@@ -382,10 +430,12 @@ def build_diagnostic(candidates_all: pd.DataFrame, products: pd.DataFrame, compo
         candidate_evidence=candidate_evidence,
         safe_to_add_compatible_grate_bom_rows=safe,
         recommendation=recommendation,
+        recommended_action="add only the explicit C+ article rows listed above" if safe else RECOMMENDED_NEXT_ACTION,
+        include_broad_sources=include_broad_sources,
     )
 
 
-def run_diagnostic() -> CPlusCompatibleGrateDiagnostic:
+def run_diagnostic(*, include_broad_sources: bool = False) -> CPlusCompatibleGrateDiagnostic:
     candidates, _debug = aco.discover_candidates(target_length_mm=1200, tolerance_mm=100)
     candidates_all = pd.DataFrame(candidates or [])
     products, _comparison, components, evidence_df, bom_options = pipeline.run_update(
@@ -396,10 +446,28 @@ def run_diagnostic() -> CPlusCompatibleGrateDiagnostic:
         selected_connectors=["aco"],
     )
     products, components = _fallback_products_and_components(products, components)
-    return build_diagnostic(candidates_all, products, components, evidence_df, bom_options)
+    return build_diagnostic(
+        candidates_all,
+        products,
+        components,
+        evidence_df,
+        bom_options,
+        include_broad_sources=include_broad_sources,
+    )
 
 
-def print_diagnostic(diag: CPlusCompatibleGrateDiagnostic) -> None:
+def _evidence_counts(diag: CPlusCompatibleGrateDiagnostic) -> tuple[int, int, int]:
+    explicit_count = sum(
+        1
+        for ev in diag.candidate_evidence
+        if ev.evidence_type == "explicit_article_matrix" and ev.compatibility_confidence == "explicit"
+    )
+    ambiguous_count = sum(1 for ev in diag.candidate_evidence if ev.evidence_type == "ambiguous")
+    absent_count = sum(1 for ev in diag.candidate_evidence if ev.evidence_type == "absent")
+    return explicit_count, ambiguous_count, absent_count
+
+
+def print_diagnostic(diag: CPlusCompatibleGrateDiagnostic, *, verbose: bool = False) -> None:
     print("ACO ShowerDrain C+ compatible grate evidence diagnostic")
     print("\nProtected C+ base rows:")
     for base_id in PROTECTED_CPLUS_BASE_IDS:
@@ -418,24 +486,78 @@ def print_diagnostic(diag: CPlusCompatibleGrateDiagnostic) -> None:
         print(f"- {source.source_url} [{source.status}]")
         for snippet in source.matched_snippets[:3]:
             print(f"  - {snippet}")
-    print("\nCandidate compatible grate evidence:")
-    if not diag.candidate_evidence:
-        print("- none")
-    for ev in diag.candidate_evidence:
-        print(f"- article_number: {ev.article_number or '(none)'}")
-        print(f"  product_id: {ev.product_id or '(none)'}")
-        print(f"  source_url: {ev.source_url or '(none)'}")
-        print(f"  evidence_type: {ev.evidence_type}")
-        print(f"  compatibility_confidence: {ev.compatibility_confidence}")
-        print(f"  row_text: {ev.row_text}")
-    print("\nSafe to add future C+ compatible_grate BOM rows:", "yes" if diag.safe_to_add_compatible_grate_bom_rows else "no")
-    print("Recommended next implementation step:", diag.recommendation)
+    explicit_count, ambiguous_count, absent_count = _evidence_counts(diag)
+    print("\nCandidate compatible grate evidence summary:")
+    print(f"- explicit C+ article-level rows: {explicit_count}")
+    print(f"- ambiguous ShowerDrain C-only grate rows: {ambiguous_count}")
+    print(f"- absent/irrelevant candidate rows: {absent_count}")
+
+    explicit_rows = [
+        ev
+        for ev in diag.candidate_evidence
+        if ev.evidence_type == "explicit_article_matrix" and ev.compatibility_confidence == "explicit"
+    ]
+    if explicit_rows:
+        print("\nExplicit C+ compatible grate rows:")
+        for ev in explicit_rows:
+            print(f"- article_number: {ev.article_number or '(none)'}")
+            print(f"  product_id: {ev.product_id or '(none)'}")
+            print(f"  source_url: {ev.source_url or '(none)'}")
+            print(f"  evidence_snippet: {ev.row_text}")
+            print(f"  evidence_type: {ev.evidence_type}")
+            print(f"  compatibility_confidence: {ev.compatibility_confidence}")
+
+    ambiguous_rows = [ev for ev in diag.candidate_evidence if ev.evidence_type == "ambiguous"]
+    if ambiguous_rows:
+        print("\nAmbiguous ShowerDrain C-only grate rows:")
+        for ev in ambiguous_rows:
+            print(f"- article_number: {ev.article_number or '(none)'}")
+            print(f"  product_id: {ev.product_id or '(none)'}")
+            print(f"  source_url: {ev.source_url or '(none)'}")
+            print(f"  evidence_type: {ev.evidence_type}")
+            print(f"  compatibility_confidence: {ev.compatibility_confidence}")
+
+    if verbose:
+        absent_rows = [ev for ev in diag.candidate_evidence if ev.evidence_type == "absent"]
+        if absent_rows:
+            print("\nAbsent candidate rows (verbose):")
+            for ev in absent_rows:
+                print(f"- article_number: {ev.article_number or '(none)'}")
+                print(f"  product_id: {ev.product_id or '(none)'}")
+                print(f"  source_url: {ev.source_url or '(none)'}")
+                print(f"  evidence_type: {ev.evidence_type}")
+                print(f"  compatibility_confidence: {ev.compatibility_confidence}")
+                print(f"  row_text: {ev.row_text}")
+
+    print("\nC+ evidence summary:")
+    print(f"- explicit C+ compatible grate evidence: {explicit_count}")
+    print(f"- ambiguous ShowerDrain C-only grate rows: {ambiguous_count}")
+    print(f"- safe_to_add_cplus_bom_rows: {diag.safe_to_add_compatible_grate_bom_rows}")
+    print(f"- recommended_action: {diag.recommended_action}")
+    print("\nFinal conclusion:")
+    if diag.safe_to_add_compatible_grate_bom_rows:
+        print("- explicit C+ article-level evidence was detected; add only those listed compatible_grate rows.")
+    else:
+        print("- do not add C+ compatible_grate BOM rows")
+        print("- do not generate C+ assembled products")
     print("Production behavior changed: no (diagnostic-only script/test patch)")
 
 
-def main() -> int:
-    diag = run_diagnostic()
-    print_diagnostic(diag)
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Diagnose C+ compatible grate evidence without changing production data.")
+    parser.add_argument(
+        "--include-broad-sources",
+        action="store_true",
+        help="Inspect broader discovered URLs in addition to default C+/C/C-grate relevant sources.",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print absent candidate rows and full row text for low-signal evidence.",
+    )
+    args = parser.parse_args(argv)
+    diag = run_diagnostic(include_broad_sources=args.include_broad_sources)
+    print_diagnostic(diag, verbose=args.verbose)
     return 0
 
 
