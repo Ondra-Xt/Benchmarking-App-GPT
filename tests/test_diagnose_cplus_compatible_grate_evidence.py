@@ -36,18 +36,31 @@ def test_locate_cplus_base_rows_reports_required_technical_fields():
     assert rows["aco-showerdrain-cplus-low-h69"]["height_adj_min_mm"] == "57"
 
 
-def test_collect_related_source_urls_includes_known_cplus_and_related_grate_sources():
+def test_collect_related_source_urls_defaults_to_relevant_cplus_c_and_grate_sources():
     candidates = pd.DataFrame([
         {
             "product_id": "aco-90108801",
             "product_family": "showerdrain_c_article_grate",
             "system_role": "grate",
-            "source_url": "https://www.aco.example/c/design-roste/",
+            "source_url": "https://www.aco.example/produkte/showerdrain-c/design-roste/",
         },
         {
-            "product_id": "unrelated",
-            "product_family": "other",
-            "source_url": "https://www.aco.example/unrelated/",
+            "product_id": "aco-90108802",
+            "product_family": "showerdrain_c_article_grate",
+            "system_role": "grate",
+            "source_url": "https://www.aco.example/design-roste-aus-geschliffenem-edelstahl/",
+        },
+        {
+            "product_id": "unrelated_easyflow",
+            "product_family": "easyflow",
+            "system_role": "grate",
+            "source_url": "https://www.aco.example/easyflow/designrost/",
+        },
+        {
+            "product_id": "unrelated_public",
+            "product_family": "showerdrain_public",
+            "system_role": "grate",
+            "source_url": "https://www.aco.example/showerdrain-public/grate/",
         },
     ])
     bom = pd.DataFrame([
@@ -63,9 +76,17 @@ def test_collect_related_source_urls_includes_known_cplus_and_related_grate_sour
     urls = mod.collect_related_source_urls(candidates, bom)
 
     assert "https://www.aco.cz/produkty/odvodneni-koupelen/sprchove-zlaby/aco-showerdrain-cplus/" in urls
-    assert "https://www.aco.example/c/design-roste/" in urls
-    assert "https://www.aco.example/cplus/matrix/" in urls
-    assert "https://www.aco.example/unrelated/" not in urls
+    assert "https://www.aco.example/produkte/showerdrain-c/design-roste/" in urls
+    assert "https://www.aco.example/design-roste-aus-geschliffenem-edelstahl/" in urls
+    assert "https://www.aco.example/cplus/matrix/" not in urls
+    assert "https://www.aco.example/easyflow/designrost/" not in urls
+    assert "https://www.aco.example/showerdrain-public/grate/" not in urls
+
+    broad_urls = mod.collect_related_source_urls(candidates, bom, include_broad_sources=True)
+
+    assert "https://www.aco.example/cplus/matrix/" in broad_urls
+    assert "https://www.aco.example/easyflow/designrost/" in broad_urls
+    assert "https://www.aco.example/showerdrain-public/grate/" in broad_urls
 
 
 def test_find_candidate_evidence_classifies_explicit_article_matrix(monkeypatch):
@@ -195,3 +216,36 @@ def test_run_diagnostic_invokes_discovery_and_pipeline_with_required_args(monkey
     assert calls["discover"] == (1200, 100)
     assert calls["run_update"] == (1, 1200, 100, ("aco",))
     assert diag.missing_base_ids == ()
+
+
+def test_print_diagnostic_summarizes_absent_rows_unless_verbose(capsys):
+    diag = mod.CPlusCompatibleGrateDiagnostic(
+        base_rows={
+            "aco-showerdrain-cplus-standard-h92": {field: "x" for field in mod.TECHNICAL_FIELDS},
+            "aco-showerdrain-cplus-low-h69": {field: "y" for field in mod.TECHNICAL_FIELDS},
+        },
+        missing_base_ids=(),
+        source_urls_inspected=("https://www.aco.example/produkte/showerdrain-c/design-roste/",),
+        source_inspections=(),
+        candidate_evidence=(
+            mod.CandidateEvidence("9010.88.01", "aco-90108801", "https://www.aco.example/produkte/showerdrain-c/design-roste/", "Design-Rost passend für ACO ShowerDrain C", "ambiguous", "ambiguous"),
+            mod.CandidateEvidence("", "easyflow-grate", "https://www.aco.example/easyflow/designrost/", "noisy absent row text", "absent", "absent"),
+        ),
+        safe_to_add_compatible_grate_bom_rows=False,
+        recommendation="Do not add",
+        recommended_action=mod.RECOMMENDED_NEXT_ACTION,
+    )
+
+    mod.print_diagnostic(diag)
+
+    out = capsys.readouterr().out
+    assert "absent/irrelevant candidate rows: 1" in out
+    assert "Ambiguous ShowerDrain C-only grate rows:" in out
+    assert "noisy absent row text" not in out
+    assert "Absent candidate rows (verbose):" not in out
+
+    mod.print_diagnostic(diag, verbose=True)
+
+    verbose_out = capsys.readouterr().out
+    assert "Absent candidate rows (verbose):" in verbose_out
+    assert "noisy absent row text" in verbose_out
