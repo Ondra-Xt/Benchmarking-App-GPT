@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 import re
+import warnings
 from pathlib import Path
 from unittest.mock import patch
 
@@ -366,11 +367,15 @@ class PipelineExportTests(unittest.TestCase):
         cfg = default_config()
         cfg.enable_article_variant_products = True
 
-        with patch.dict(pipeline.CONNECTORS, {"aco": _FakeAcoConnector()}, clear=True), \
-             patch("tools.report_easyflow_article_variants.build_article_variants_dataframe", return_value=variants) as helper:
-            products, comparison, _excluded, _evidence, bom = pipeline.run_update(registry, cfg)
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always", FutureWarning)
+            with patch.dict(pipeline.CONNECTORS, {"aco": _FakeAcoConnector()}, clear=True), \
+                 patch("tools.report_easyflow_article_variants.build_article_variants_dataframe", return_value=variants) as helper:
+                products, comparison, _excluded, _evidence, bom = pipeline.run_update(registry, cfg)
 
         helper.assert_called_once()
+        future_warnings = [warning for warning in caught_warnings if issubclass(warning.category, FutureWarning)]
+        self.assertEqual(future_warnings, [])
         expected_ids = {
             "aco-easyflow-article-25005500",
             "aco-easyflow-article-25000500",

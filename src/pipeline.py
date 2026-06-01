@@ -133,6 +133,29 @@ def _is_present(value: Any) -> bool:
     return str(value).strip() != ""
 
 
+def _concat_nonempty_article_rows(base_df: pd.DataFrame, rows: List[Dict[str, Any]]) -> pd.DataFrame:
+    """Append article variant rows without pandas all-NA concat dtype inference."""
+    append_df = pd.DataFrame(rows)
+    if append_df.empty:
+        return base_df
+
+    if base_df is None or base_df.empty:
+        column_order = list(getattr(base_df, "columns", [])) + [
+            col for col in append_df.columns if col not in getattr(base_df, "columns", [])
+        ]
+        return append_df.reindex(columns=column_order).reset_index(drop=True)
+
+    column_order = list(base_df.columns) + [col for col in append_df.columns if col not in base_df.columns]
+    concat_inputs = [
+        frame.dropna(axis=1, how="all")
+        for frame in (base_df, append_df)
+        if frame is not None and not frame.empty
+    ]
+    if not concat_inputs:
+        return pd.DataFrame(columns=column_order)
+    return pd.concat(concat_inputs, ignore_index=True, sort=False).reindex(columns=column_order)
+
+
 def _build_article_variant_product_rows(
     registry_df: pd.DataFrame,
     products_df: pd.DataFrame,
@@ -4145,9 +4168,9 @@ def run_update(
     if _config_bool(cfg, "enable_article_variant_products", False):
         article_product_rows, article_comparison_rows = _build_article_variant_product_rows(registry_df, products_df, cfg)
         if article_product_rows:
-            products_df = pd.concat([products_df, pd.DataFrame(article_product_rows)], ignore_index=True, sort=False)
+            products_df = _concat_nonempty_article_rows(products_df, article_product_rows)
         if article_comparison_rows:
-            comparison_df = pd.concat([comparison_df, pd.DataFrame(article_comparison_rows)], ignore_index=True, sort=False)
+            comparison_df = _concat_nonempty_article_rows(comparison_df, article_comparison_rows)
 
     if not comparison_df.empty and not products_df.empty:
         extra_cols = [
