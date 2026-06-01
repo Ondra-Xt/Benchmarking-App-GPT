@@ -229,6 +229,176 @@ class PipelineExportTests(unittest.TestCase):
             product_ids = {row[1] for row in self._sheet_rows(out, "Products")[1:]}
             self.assertFalse(set(article_df["article_number"]) & product_ids)
 
+
+    def test_article_variant_products_flag_defaults_to_disabled(self):
+        registry = pd.DataFrame([
+            {
+                "manufacturer": "aco",
+                "product_id": "aco-assembled-easyflow-compact",
+                "product_name": "ACO Easyflow base",
+                "product_url": "https://example.test/easyflow/komplettablaeufe-aco-easyflow-dn-50/",
+                "candidate_type": "drain",
+                "system_role": "complete_system",
+                "product_family": "easyflow",
+            }
+        ])
+        variants = pd.DataFrame([
+            {
+                "manufacturer": "aco",
+                "base_product_id": "aco-assembled-easyflow-compact",
+                "article_number": "2500.55.00",
+                "variant_type": "candidate_body_variant",
+                "product_family": "easyflow",
+                "source_url": "https://example.test/easyflow/komplettablaeufe-aco-easyflow-dn-50/",
+                "water_seal_mm": 50,
+                "outlet_dn": "DN50",
+                "flow_rate_lps": 1.5,
+                "height_adj_min_mm": 15,
+                "height_adj_max_mm": 96,
+                "attribution_status": "candidate_variant",
+            }
+        ])
+
+        with patch.dict(pipeline.CONNECTORS, {"aco": _FakeAcoConnector()}, clear=True), \
+             patch("tools.report_easyflow_article_variants.build_article_variants_dataframe", return_value=variants) as helper:
+            products, comparison, _excluded, _evidence, bom = pipeline.run_update(registry, default_config())
+
+        helper.assert_not_called()
+        article_ids = {"aco-easyflow-article-25005500"}
+        self.assertFalse(article_ids & set(products["product_id"].astype(str)))
+        self.assertFalse(article_ids & set(comparison["product_id"].astype(str)))
+        self.assertEqual(len(products), 1)
+        self.assertEqual(len(comparison), 1)
+        self.assertTrue(bom.empty)
+
+    def test_article_variant_products_enabled_promotes_only_expected_easyflow_articles(self):
+        registry = pd.DataFrame([
+            {
+                "manufacturer": "aco",
+                "product_id": "aco-assembled-easyflow-compact",
+                "product_name": "ACO Easyflow base",
+                "product_url": "https://example.test/easyflow/komplettablaeufe-aco-easyflow-dn-50/",
+                "candidate_type": "drain",
+                "system_role": "complete_system",
+                "product_family": "easyflow",
+            }
+        ])
+        variants = pd.DataFrame([
+            {
+                "manufacturer": "aco",
+                "base_product_id": "aco-assembled-easyflow-compact",
+                "article_number": "2500.55.00",
+                "variant_type": "candidate_body_variant",
+                "product_family": "easyflow",
+                "source_url": "https://example.test/easyflow/komplettablaeufe-aco-easyflow-dn-50/",
+                "water_seal_mm": 50,
+                "outlet_dn": "DN50",
+                "flow_rate_lps": 1.5,
+                "height_adj_min_mm": 15,
+                "height_adj_max_mm": 96,
+                "attribution_status": "candidate_variant",
+            },
+            {
+                "manufacturer": "aco",
+                "base_product_id": "aco-assembled-easyflow-compact",
+                "article_number": "2500.05.00",
+                "variant_type": "candidate_body_variant",
+                "product_family": "easyflow",
+                "source_url": "https://example.test/easyflow/einzelablaeufe-aco-easyflow-dn-50/",
+                "water_seal_mm": 50,
+                "outlet_dn": "DN50",
+                "flow_rate_lps": 1.0,
+                "height_adj_min_mm": 7,
+                "height_adj_max_mm": 75,
+                "attribution_status": "candidate_variant",
+            },
+            {
+                "manufacturer": "aco",
+                "base_product_id": "aco-assembled-easyflow-compact",
+                "article_number": "2500.00.00",
+                "variant_type": "candidate_body_variant",
+                "product_family": "easyflow",
+                "source_url": "https://example.test/easyflow/einzelablaeufe-aco-easyflow-dn-50/",
+                "water_seal_mm": 50,
+                "outlet_dn": "DN50",
+                "flow_rate_lps": 1.0,
+                "height_adj_min_mm": 7,
+                "height_adj_max_mm": 75,
+                "attribution_status": "candidate_variant",
+            },
+            {
+                "manufacturer": "aco",
+                "base_product_id": "aco-assembled-easyflow-compact",
+                "article_number": "9010.88.00",
+                "variant_type": "excluded_grate_variant",
+                "product_family": "easyflow",
+                "source_url": "https://example.test/easyflow/grate/",
+                "attribution_status": "excluded_not_body_variant",
+            },
+            {
+                "manufacturer": "aco",
+                "base_product_id": "aco-assembled-easyflow-compact",
+                "article_number": "9999.99.99",
+                "variant_type": "excluded_accessory_variant",
+                "product_family": "easyflow",
+                "source_url": "https://example.test/easyflow/accessory/",
+                "attribution_status": "excluded_not_body_variant",
+            },
+            {
+                "manufacturer": "aco",
+                "base_product_id": "aco-assembled-easyflow-compact",
+                "article_number": "8888.88.88",
+                "variant_type": "excluded_easyflowplus",
+                "product_family": "easyflowplus",
+                "source_url": "https://example.test/easyflowplus/",
+                "attribution_status": "excluded_not_body_variant",
+            },
+            {
+                "manufacturer": "aco",
+                "base_product_id": "aco-assembled-easyflow-compact",
+                "article_number": "7777.77.77",
+                "variant_type": "candidate_body_variant",
+                "product_family": "easyflow",
+                "source_url": "",
+                "attribution_status": "candidate_variant",
+            },
+        ])
+        cfg = default_config()
+        cfg.enable_article_variant_products = True
+
+        with patch.dict(pipeline.CONNECTORS, {"aco": _FakeAcoConnector()}, clear=True), \
+             patch("tools.report_easyflow_article_variants.build_article_variants_dataframe", return_value=variants) as helper:
+            products, comparison, _excluded, _evidence, bom = pipeline.run_update(registry, cfg)
+
+        helper.assert_called_once()
+        expected_ids = {
+            "aco-easyflow-article-25005500",
+            "aco-easyflow-article-25000500",
+            "aco-easyflow-article-25000000",
+        }
+        rejected_ids = {
+            "aco-easyflow-article-90108800",
+            "aco-easyflow-article-99999999",
+            "aco-easyflow-article-88888888",
+            "aco-easyflow-article-77777777",
+        }
+        product_ids = set(products["product_id"].astype(str))
+        comparison_ids = set(comparison["product_id"].astype(str))
+        self.assertTrue(expected_ids <= product_ids)
+        self.assertTrue(expected_ids <= comparison_ids)
+        self.assertFalse(rejected_ids & product_ids)
+        self.assertFalse(rejected_ids & comparison_ids)
+        self.assertIn("aco-assembled-easyflow-compact", product_ids)
+        article_rows = products[products["product_id"].astype(str).isin(expected_ids)].copy()
+        self.assertEqual(set(article_rows["candidate_type"]), {"article_variant"})
+        self.assertEqual(set(article_rows["product_family"]), {"easyflow_article_variant"})
+        self.assertEqual(set(article_rows["classification_reason"]), {"source_backed_article_variant"})
+        self.assertEqual(set(article_rows["base_product_id"]), {"aco-assembled-easyflow-compact"})
+        self.assertEqual(set(article_rows["article_number"]), {"2500.55.00", "2500.05.00", "2500.00.00"})
+        self.assertEqual(set(article_rows["outlet_dn"]), {"DN50"})
+        self.assertFalse(article_rows["source_url"].astype(str).str.strip().eq("").any())
+        self.assertTrue(bom.empty)
+
     def test_export_writes_source_checks_sheet_from_evidence(self):
         with tempfile.TemporaryDirectory() as td:
             template = Path(td) / "template.xlsx"
