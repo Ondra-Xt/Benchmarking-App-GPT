@@ -83,6 +83,44 @@ ARTICLE_VARIANT_COLUMNS = [
     "why_not_promoted",
 ]
 
+FINAL_SET_DETAILS_COLUMNS = [
+    "set_id",
+    "assembled_product_id",
+    "assembled_family",
+    "manufacturer",
+    "product_name",
+    "base_product_id",
+    "component_id",
+    "component_role",
+    "component_family",
+    "flow_rate_lps",
+    "water_seal_mm",
+    "outlet_dn",
+    "height_adj_min_mm",
+    "height_adj_max_mm",
+    "is_complete_technical_data",
+    "missing_technical_fields",
+    "data_quality_status",
+    "source_status_note",
+    "ready_for_benchmark",
+    "ready_for_customer_view",
+    "blocked_reason",
+    "article_variant_status",
+    "article_variant_note",
+    "product_url",
+    "source_url",
+    "sources",
+]
+
+FINAL_SET_DETAILS_EASYFLOW_BLOCKED_REASON = (
+    "flow/height ambiguous at current article/variant granularity"
+)
+FINAL_SET_DETAILS_EASYFLOW_ARTICLE_NOTE = (
+    "matching Article_Variants include multiple WS50/DN50 candidates; "
+    "no article variant is selected by default"
+)
+FINAL_SET_DETAILS_NON_EASYFLOW_ARTICLE_NOTE = "not required for current assembled set"
+
 
 def _assembled_family(product_id: Any) -> str:
     pid = str(product_id or "")
@@ -119,6 +157,139 @@ def _final_assembly_source_status_note(family: str, missing_fields: list[str]) -
     if family == "easyflow" and EASYFLOW_AMBIGUOUS_TECHNICAL_FIELDS.issubset(set(missing_fields)):
         return EASYFLOW_AMBIGUOUS_STATUS_NOTE
     return "partial technical data"
+
+
+def _parse_final_set_parts(product_id: Any, family: str) -> tuple[str, str]:
+    pid = str(product_id or "").strip()
+    if not pid.startswith(ASSEMBLED_PREFIX):
+        return "", ""
+
+    family_prefixes = {
+        "easyflowplus": "aco-assembled-easyflowplus-",
+        "easyflow": "aco-assembled-easyflow-",
+        "showerdrain_c": "aco-assembled-showerdrain-c-",
+        "showerdrain_splus": "aco-assembled-showerdrain-splus-",
+    }
+    prefix = family_prefixes.get(str(family or ""), ASSEMBLED_PREFIX)
+    remainder = pid[len(prefix):] if pid.startswith(prefix) else pid[len(ASSEMBLED_PREFIX):]
+    if not remainder or "__" not in remainder:
+        return "", ""
+
+    base_product_id, component_id = remainder.split("__", 1)
+    return base_product_id.strip(), component_id.strip()
+
+
+def _first_present(row: pd.Series, columns: tuple[str, ...]) -> Any:
+    for column in columns:
+        value = row.get(column)
+        if _present(value):
+            return value
+    return ""
+
+
+def _build_component_lookup(
+    bom_options_df: pd.DataFrame,
+    components_df: pd.DataFrame,
+) -> dict[str, dict[str, Any]]:
+    bom_options_df = pd.DataFrame() if bom_options_df is None else bom_options_df.copy()
+    components_df = pd.DataFrame() if components_df is None else components_df.copy()
+    if bom_options_df.empty or "product_id" not in bom_options_df.columns:
+        return {}
+
+    component_rows: dict[str, pd.Series] = {}
+    if not components_df.empty and "product_id" in components_df.columns:
+        for _, component in components_df.iterrows():
+            component_id = str(component.get("product_id") or "").strip()
+            if component_id and component_id not in component_rows:
+                component_rows[component_id] = component
+
+    lookup: dict[str, dict[str, Any]] = {}
+    for product_id, group in bom_options_df.groupby(bom_options_df["product_id"].fillna("").astype(str)):
+        product_id = str(product_id or "").strip()
+        if not product_id or len(group) != 1:
+            continue
+        row = group.iloc[0]
+        component_id = str(row.get("component_id") or "").strip()
+        if not component_id:
+            continue
+        component = component_rows.get(component_id)
+        component_role = _first_present(row, ("component_role", "option_role", "system_role"))
+        component_family = _first_present(row, ("component_family", "family", "product_family"))
+        if component is not None:
+            if not _present(component_role):
+                component_role = _first_present(component, ("component_role", "system_role", "candidate_type"))
+            if not _present(component_family):
+                component_family = _first_present(component, ("component_family", "family", "product_family"))
+        lookup[product_id] = {
+            "component_id": component_id,
+            "component_role": component_role,
+            "component_family": component_family,
+        }
+    return lookup
+
+
+def _extract_final_set_details(
+    final_assemblies_df: pd.DataFrame,
+    bom_options_df: pd.DataFrame,
+    components_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Return export-only detail rows for already-created final assemblies."""
+    final_assemblies_df = pd.DataFrame() if final_assemblies_df is None else final_assemblies_df.copy()
+    if final_assemblies_df.empty:
+        return pd.DataFrame(columns=FINAL_SET_DETAILS_COLUMNS)
+
+    product_col = "product_id" if "product_id" in final_assemblies_df.columns else "assembled_product_id"
+    assembled_mask = final_assemblies_df.get(product_col, pd.Series([""] * len(final_assemblies_df), index=final_assemblies_df.index)).fillna("").astype(str).str.startswith(ASSEMBLED_PREFIX)
+    final_assemblies_df = final_assemblies_df[assembled_mask].copy()
+    bom_lookup = _build_component_lookup(bom_options_df, components_df)
+
+    rows: list[dict[str, Any]] = []
+    for _, assembly in final_assemblies_df.iterrows():
+        assembled_product_id = str(assembly.get(product_col) or "").strip()
+        assembled_family = str(assembly.get("assembled_family") or _assembled_family(assembled_product_id)).strip()
+        base_product_id, component_id = _parse_final_set_parts(assembled_product_id, assembled_family)
+        component_role = ""
+        component_family = ""
+        lookup = bom_lookup.get(assembled_product_id, {})
+        if lookup:
+            component_id = lookup.get("component_id") or component_id
+            component_role = lookup.get("component_role") or ""
+            component_family = lookup.get("component_family") or ""
+
+        data_quality_status = str(assembly.get("data_quality_status") or "").strip().lower()
+        is_complete = data_quality_status == "complete"
+        is_easyflow_partial = assembled_family == "easyflow" and data_quality_status == "partial"
+
+        rows.append({
+            "set_id": assembled_product_id,
+            "assembled_product_id": assembled_product_id,
+            "assembled_family": assembled_family,
+            "manufacturer": assembly.get("manufacturer", ""),
+            "product_name": assembly.get("product_name", assembly.get("name", "")),
+            "base_product_id": base_product_id,
+            "component_id": component_id,
+            "component_role": component_role,
+            "component_family": component_family,
+            "flow_rate_lps": assembly.get("flow_rate_lps", ""),
+            "water_seal_mm": assembly.get("water_seal_mm", ""),
+            "outlet_dn": assembly.get("outlet_dn", ""),
+            "height_adj_min_mm": assembly.get("height_adj_min_mm", ""),
+            "height_adj_max_mm": assembly.get("height_adj_max_mm", ""),
+            "is_complete_technical_data": assembly.get("is_complete_technical_data", is_complete),
+            "missing_technical_fields": assembly.get("missing_technical_fields", ""),
+            "data_quality_status": data_quality_status,
+            "source_status_note": assembly.get("source_status_note", ""),
+            "ready_for_benchmark": is_complete,
+            "ready_for_customer_view": is_complete,
+            "blocked_reason": FINAL_SET_DETAILS_EASYFLOW_BLOCKED_REASON if is_easyflow_partial else "",
+            "article_variant_status": "multiple_candidate_articles" if is_easyflow_partial else "not_required",
+            "article_variant_note": FINAL_SET_DETAILS_EASYFLOW_ARTICLE_NOTE if is_easyflow_partial else FINAL_SET_DETAILS_NON_EASYFLOW_ARTICLE_NOTE,
+            "product_url": assembly.get("product_url", ""),
+            "source_url": assembly.get("source_url", ""),
+            "sources": assembly.get("sources", ""),
+        })
+
+    return pd.DataFrame(rows, columns=FINAL_SET_DETAILS_COLUMNS)
 
 
 def _extract_final_assemblies(products_df: pd.DataFrame) -> pd.DataFrame:
@@ -607,6 +778,7 @@ def export_excel(
     - Candidates_All
     - Products
     - Final_Assemblies
+    - Final_Set_Details
     - Components
     - Comparison
     - Excluded
@@ -692,9 +864,12 @@ def export_excel(
         for _, row in df.iterrows():
             ws.append([_to_excel_cell(v) for v in row.tolist()])
 
+    final_assemblies_df = _extract_final_assemblies(products_df)
+
     write_df("Candidates_All", registry_df)
     write_df("Products", products_df)
-    write_df("Final_Assemblies", _extract_final_assemblies(products_df))
+    write_df("Final_Assemblies", final_assemblies_df)
+    write_df("Final_Set_Details", _extract_final_set_details(final_assemblies_df, bom_options_df, components_df))
     write_df("Components", components_df)
     write_df("Comparison", comparison_df)
     write_df("Excluded", excluded_df)

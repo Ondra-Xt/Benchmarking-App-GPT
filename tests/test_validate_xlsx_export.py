@@ -16,7 +16,7 @@ def _base_dataframes():
         {"manufacturer": "aco", "product_id": "aco-showerdrain-cplus-standard-h92", "system_role": "drain_unit", "flow_rate_lps": 0.91, "water_seal_mm": 50, "outlet_dn": "DN50", "height_adj_min_mm": 80, "height_adj_max_mm": 128},
         {"manufacturer": "aco", "product_id": "aco-showerdrain-cplus-low-h69", "system_role": "drain_unit", "flow_rate_lps": 0.62, "water_seal_mm": 25, "outlet_dn": "DN40", "height_adj_min_mm": 57, "height_adj_max_mm": 128},
     ])
-    return {
+    data = {
         "Products": products,
         "Comparison": products[["manufacturer", "product_id", "system_role"]].copy(),
         "Scoring_Field_Coverage": products[["manufacturer", "product_id"]].copy(),
@@ -113,6 +113,39 @@ def _base_dataframes():
             },
         ]),
     }
+    final = data["Final_Assemblies"]
+    data["Final_Set_Details"] = pd.DataFrame([
+        {
+            "set_id": row["product_id"],
+            "assembled_product_id": row["product_id"],
+            "assembled_family": row["assembled_family"],
+            "manufacturer": row["manufacturer"],
+            "product_name": "",
+            "base_product_id": "",
+            "component_id": "",
+            "component_role": "",
+            "component_family": "",
+            "flow_rate_lps": row["flow_rate_lps"],
+            "water_seal_mm": row["water_seal_mm"],
+            "outlet_dn": row["outlet_dn"],
+            "height_adj_min_mm": row["height_adj_min_mm"],
+            "height_adj_max_mm": row["height_adj_max_mm"],
+            "is_complete_technical_data": row["is_complete_technical_data"],
+            "missing_technical_fields": row["missing_technical_fields"],
+            "data_quality_status": row["data_quality_status"],
+            "source_status_note": row["source_status_note"],
+            "ready_for_benchmark": False,
+            "ready_for_customer_view": False,
+            "blocked_reason": "flow/height ambiguous at current article/variant granularity",
+            "article_variant_status": "multiple_candidate_articles",
+            "article_variant_note": "matching Article_Variants include multiple WS50/DN50 candidates; no article variant is selected by default",
+            "product_url": "",
+            "source_url": "",
+            "sources": "",
+        }
+        for _, row in final.iterrows()
+    ])
+    return data
 
 def _result_for(results, name):
     return next(r for r in results if r.name == name)
@@ -139,6 +172,9 @@ def _patch_small_expectations(mod, counts):
         "partial": 2,
         "missing": 0,
     }
+    mod.EXPECTED_FINAL_SET_DETAILS_ROW_COUNT = counts.get("Final_Set_Details", counts.get("Final_Assemblies", 2))
+    mod.EXPECTED_FINAL_SET_DETAILS_FAMILY_COUNTS = mod.EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS.copy()
+    mod.EXPECTED_FINAL_SET_DETAILS_READY_COUNTS = {True: 0, False: 2}
 
 
 def test_default_baseline_counts_updated():
@@ -146,6 +182,7 @@ def test_default_baseline_counts_updated():
     assert mod.EXPECTED_SHEET_COUNTS["Candidates_All"] == 118
     assert mod.EXPECTED_SHEET_COUNTS["Components"] == 100
     assert mod.EXPECTED_SHEET_COUNTS["Final_Assemblies"] == 28
+    assert mod.EXPECTED_FINAL_SET_DETAILS_ROW_COUNT == 28
 
 
 def test_pass_workbook_exits_0(tmp_path):
@@ -293,6 +330,7 @@ def test_compatible_grate_metadata_missing_no_explicit_matrix_sentence_fails(tmp
 def test_final_assemblies_baseline_expectations():
     mod = _load_validator_module()
     assert mod.EXPECTED_SHEET_COUNTS["Final_Assemblies"] == 28
+    assert mod.EXPECTED_FINAL_SET_DETAILS_ROW_COUNT == 28
     assert mod.EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS == {
         "easyflow": 2,
         "easyflowplus": 6,
