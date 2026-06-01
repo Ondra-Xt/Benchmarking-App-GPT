@@ -103,6 +103,134 @@ def _stable_aco_id_from_row(row: Dict[str, Any]) -> str:
     return f"aco-{fam}-{slug}" if fam not in slug else f"aco-{slug}"
 
 
+
+
+def _config_bool(cfg: Union[WeightConfig, Dict[str, Any]], key: str, default: bool = False) -> bool:
+    if isinstance(cfg, WeightConfig):
+        value = cfg.get(key, default)
+    elif isinstance(cfg, dict):
+        value = cfg.get(key, default)
+    else:
+        value = getattr(cfg, key, default)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
+def _article_variant_product_id(article_number: Any) -> str:
+    digits = re.sub(r"\D+", "", str(article_number or ""))
+    return f"aco-easyflow-article-{digits}" if digits else ""
+
+
+def _is_present(value: Any) -> bool:
+    if value is None:
+        return False
+    try:
+        if pd.isna(value):
+            return False
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip() != ""
+
+
+def _build_article_variant_product_rows(
+    registry_df: pd.DataFrame,
+    products_df: pd.DataFrame,
+    cfg: Union[WeightConfig, Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Build experimental product rows from evidence-only Article_Variants diagnostics."""
+    try:
+        from tools import report_easyflow_article_variants as article_variants
+
+        variants = article_variants.build_article_variants_dataframe(registry_df, products_df)
+    except Exception:
+        return [], []
+    if variants is None or variants.empty:
+        return [], []
+
+    existing_ids = set()
+    if products_df is not None and not products_df.empty and "product_id" in products_df.columns:
+        existing_ids = set(products_df["product_id"].fillna("").astype(str))
+
+    product_rows: List[Dict[str, Any]] = []
+    comparison_rows: List[Dict[str, Any]] = []
+    seen_ids: Set[str] = set()
+    for _, variant in variants.iterrows():
+        if str(variant.get("variant_type") or "").strip() != "candidate_body_variant":
+            continue
+        if str(variant.get("attribution_status") or "").strip() != "candidate_variant":
+            continue
+        if not _is_present(variant.get("article_number")) or not _is_present(variant.get("source_url")):
+            continue
+        product_id = _article_variant_product_id(variant.get("article_number"))
+        if not product_id or product_id in existing_ids or product_id in seen_ids:
+            continue
+        seen_ids.add(product_id)
+
+        params = {
+            key: variant.get(key)
+            for key in (
+                "water_seal_mm",
+                "outlet_dn",
+                "flow_rate_lps",
+                "height_adj_min_mm",
+                "height_adj_max_mm",
+            )
+            if _is_present(variant.get(key))
+        }
+        param_score, param_detail = compute_parameter_score(params, cfg)
+        equiv_score = compute_equivalence_score({"candidate_type": "article_variant", **params}, cfg)
+        system_score = compute_system_score("drain", has_bom_options=False)
+        final_score = compute_final_score(param_score, system_score, equiv_score, cfg)
+        source_url = str(variant.get("source_url") or "").strip()
+        article_number = str(variant.get("article_number") or "").strip()
+        product_name = f"ACO Easyflow article variant {article_number}"
+        row = {
+            "manufacturer": "aco",
+            "product_id": product_id,
+            "product_name": product_name,
+            "product_url": source_url,
+            "product_family": "easyflow_article_variant",
+            "family": "easyflow_article_variant",
+            "candidate_type": "article_variant",
+            "promote_to_product": "yes",
+            "promotion_reason": "source_backed_article_variant",
+            "classification_reason": "source_backed_article_variant",
+            "missing_required_parts": "",
+            "matched_component_ids": "",
+            "pairing_reason": "",
+            "why_not_product_reason": "",
+            "system_role": "article_variant",
+            "source_url": source_url,
+            "sources": source_url,
+            "article_number": article_number,
+            "base_product_id": str(variant.get("base_product_id") or "").strip(),
+            "water_seal_mm": variant.get("water_seal_mm"),
+            "outlet_dn": variant.get("outlet_dn"),
+            "flow_rate_lps": variant.get("flow_rate_lps"),
+            "height_adj_min_mm": variant.get("height_adj_min_mm"),
+            "height_adj_max_mm": variant.get("height_adj_max_mm"),
+            "param_score": param_score,
+            "equiv_score": equiv_score,
+            "system_score": system_score,
+            "final_score": final_score,
+            "final_score_pct": final_score * 100.0,
+            "benchmark_scoring_notes": "experimental_article_variant_products_flag",
+            **{k: v for k, v in (param_detail or {}).items()},
+        }
+        product_rows.append(row)
+        comparison_rows.append({
+            "manufacturer": "aco",
+            "product_id": product_id,
+            "product_name": product_name,
+            "product_url": source_url,
+            "final_score": final_score,
+            "param_score": param_score,
+            "equiv_score": equiv_score,
+            "system_score": system_score,
+        })
+    return product_rows, comparison_rows
+
 def _pick_connector(manufacturer: str, url: str):
     """
     Prefer manufacturer key, fallback to URL-based detection.
@@ -4012,6 +4140,14 @@ def run_update(
             for field in ("water_seal_mm", "outlet_dn"):
                 if _final_easyflow_empty(products_df.at[idx, field]) and not _final_easyflow_empty(base_row.get(field)):
                     products_df.loc[idx, field] = base_row.get(field)
+
+
+    if _config_bool(cfg, "enable_article_variant_products", False):
+        article_product_rows, article_comparison_rows = _build_article_variant_product_rows(registry_df, products_df, cfg)
+        if article_product_rows:
+            products_df = pd.concat([products_df, pd.DataFrame(article_product_rows)], ignore_index=True, sort=False)
+        if article_comparison_rows:
+            comparison_df = pd.concat([comparison_df, pd.DataFrame(article_comparison_rows)], ignore_index=True, sort=False)
 
     if not comparison_df.empty and not products_df.empty:
         extra_cols = [
