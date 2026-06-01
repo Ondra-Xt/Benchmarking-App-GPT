@@ -56,6 +56,41 @@ EXPECTED_FINAL_ASSEMBLIES_STATUS_COUNTS = {
     "partial": 2,
     "missing": 0,
 }
+EXPECTED_FINAL_SET_DETAILS_ROW_COUNT = 28
+EXPECTED_FINAL_SET_DETAILS_FAMILY_COUNTS = EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS.copy()
+EXPECTED_FINAL_SET_DETAILS_READY_COUNTS = {
+    True: 26,
+    False: 2,
+}
+FINAL_SET_DETAILS_REQUIRED_COLUMNS = [
+    "set_id",
+    "assembled_product_id",
+    "assembled_family",
+    "manufacturer",
+    "product_name",
+    "base_product_id",
+    "component_id",
+    "component_role",
+    "component_family",
+    "flow_rate_lps",
+    "water_seal_mm",
+    "outlet_dn",
+    "height_adj_min_mm",
+    "height_adj_max_mm",
+    "is_complete_technical_data",
+    "missing_technical_fields",
+    "data_quality_status",
+    "source_status_note",
+    "ready_for_benchmark",
+    "ready_for_customer_view",
+    "blocked_reason",
+    "article_variant_status",
+    "article_variant_note",
+    "product_url",
+    "source_url",
+    "sources",
+]
+FINAL_SET_DETAILS_EASYFLOW_BLOCKED_SNIPPET = "flow/height ambiguous"
 FINAL_ASSEMBLIES_EASYFLOW_MISSING_FIELDS = (
     "flow_rate_lps,height_adj_min_mm,height_adj_max_mm"
 )
@@ -69,6 +104,7 @@ REQUIRED_SHEETS = [
     "Components",
     "BOM_Options",
     "Final_Assemblies",
+    "Final_Set_Details",
     "Article_Variants",
 ]
 OPTIONAL_SHEETS = ["Evidence"]
@@ -166,11 +202,16 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
     required_sheets = [s for s in REQUIRED_SHEETS if s in EXPECTED_SHEET_COUNTS]
     if "Final_Assemblies" in EXPECTED_SHEET_COUNTS and "Article_Variants" not in required_sheets:
         required_sheets.append("Article_Variants")
+    if "Final_Assemblies" in EXPECTED_SHEET_COUNTS and "Final_Set_Details" not in required_sheets:
+        required_sheets.append("Final_Set_Details")
     missing = [s for s in required_sheets if s not in xls.sheet_names]
     results.append(CheckResult("required_sheets", not missing, f"missing={missing} expected={required_sheets}"))
     if "Final_Assemblies" in required_sheets:
         final_sheet_exists = "Final_Assemblies" in xls.sheet_names
         results.append(CheckResult("final_assemblies_sheet_exists", final_sheet_exists, f"present={final_sheet_exists}"))
+    if "Final_Set_Details" in required_sheets:
+        detail_sheet_exists = "Final_Set_Details" in xls.sheet_names
+        results.append(CheckResult("final_set_details_sheet_exists", detail_sheet_exists, f"present={detail_sheet_exists}"))
     if missing:
         return False, results
 
@@ -187,6 +228,7 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
         sheets["BOM_Options"],
     )
     final_assemblies = sheets.get("Final_Assemblies")
+    final_set_details = sheets.get("Final_Set_Details")
     article_variants = sheets.get("Article_Variants", pd.DataFrame(columns=ARTICLE_VARIANTS_REQUIRED_COLUMNS))
 
     for name, expected in EXPECTED_SHEET_COUNTS.items():
@@ -331,6 +373,75 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
         for field in FINAL_ASSEMBLIES_EASYFLOW_EMPTY_FIELDS:
             filled = int((~_empty_series(easyflow, field)).sum())
             results.append(CheckResult(f"final_assemblies_easyflow_empty:{field}", filled == 0, f"actual_filled={filled} expected_filled=0"))
+
+    if final_set_details is not None:
+        missing_columns = [
+            col for col in FINAL_SET_DETAILS_REQUIRED_COLUMNS
+            if col not in final_set_details.columns
+        ]
+        results.append(CheckResult(
+            "final_set_details_required_columns",
+            not missing_columns,
+            f"missing={missing_columns} expected={FINAL_SET_DETAILS_REQUIRED_COLUMNS}",
+        ))
+
+        actual = len(final_set_details)
+        results.append(CheckResult(
+            "final_set_details_row_count",
+            actual == EXPECTED_FINAL_SET_DETAILS_ROW_COUNT,
+            f"actual={actual} expected={EXPECTED_FINAL_SET_DETAILS_ROW_COUNT}",
+        ))
+
+        detail_ids = _norm_series(final_set_details, "assembled_product_id").str.lower()
+        prefix_matches = int(detail_ids.str.startswith(FINAL_ASSEMBLIES_PREFIX).sum())
+        results.append(CheckResult(
+            "final_set_details_assembled_product_id_prefix",
+            prefix_matches == len(final_set_details),
+            f"actual={prefix_matches} expected={len(final_set_details)} prefix={FINAL_ASSEMBLIES_PREFIX}",
+        ))
+        set_ids_empty = int(_norm_series(final_set_details, "set_id").eq("").sum())
+        detail_ids_empty = int(_norm_series(final_set_details, "assembled_product_id").eq("").sum())
+        results.append(CheckResult("final_set_details_set_id_non_empty", set_ids_empty == 0, f"actual_empty={set_ids_empty} expected_empty=0"))
+        results.append(CheckResult("final_set_details_assembled_product_id_non_empty", detail_ids_empty == 0, f"actual_empty={detail_ids_empty} expected_empty=0"))
+
+        detail_families = _norm_series(final_set_details, "assembled_family").str.lower()
+        for family, expected in EXPECTED_FINAL_SET_DETAILS_FAMILY_COUNTS.items():
+            actual = int((detail_families == family).sum())
+            results.append(CheckResult(f"final_set_details_family_count:{family}", actual == expected, f"actual={actual} expected={expected}"))
+
+        for field in ["ready_for_benchmark", "ready_for_customer_view"]:
+            for expected_bool, expected_count in EXPECTED_FINAL_SET_DETAILS_READY_COUNTS.items():
+                actual = int(_bool_series_eq(final_set_details, field, expected_bool).sum())
+                results.append(CheckResult(
+                    f"final_set_details_{field}_count:{expected_bool}",
+                    actual == expected_count,
+                    f"actual={actual} expected={expected_count}",
+                ))
+
+        easyflow_mask = detail_families.eq("easyflow")
+        easyflow = final_set_details[easyflow_mask]
+        non_easyflow = final_set_details[~easyflow_mask]
+        easyflow_status_bad = int((~_string_series_eq(easyflow, "data_quality_status", "partial")).sum())
+        easyflow_benchmark_bad = int((~_bool_series_eq(easyflow, "ready_for_benchmark", False)).sum())
+        easyflow_customer_bad = int((~_bool_series_eq(easyflow, "ready_for_customer_view", False)).sum())
+        easyflow_blocked_bad = int((~_norm_series(easyflow, "blocked_reason").str.lower().str.contains(FINAL_SET_DETAILS_EASYFLOW_BLOCKED_SNIPPET, regex=False)).sum())
+        easyflow_variant_bad = int((~_string_series_eq(easyflow, "article_variant_status", "multiple_candidate_articles")).sum())
+        results.append(CheckResult("final_set_details_easyflow_status_partial", easyflow_status_bad == 0, f"actual_bad={easyflow_status_bad} expected_bad=0"))
+        results.append(CheckResult("final_set_details_easyflow_ready_for_benchmark_false", easyflow_benchmark_bad == 0, f"actual_bad={easyflow_benchmark_bad} expected_bad=0"))
+        results.append(CheckResult("final_set_details_easyflow_ready_for_customer_view_false", easyflow_customer_bad == 0, f"actual_bad={easyflow_customer_bad} expected_bad=0"))
+        results.append(CheckResult("final_set_details_easyflow_blocked_reason", easyflow_blocked_bad == 0, f"actual_bad={easyflow_blocked_bad} expected_snippet={FINAL_SET_DETAILS_EASYFLOW_BLOCKED_SNIPPET}"))
+        results.append(CheckResult("final_set_details_easyflow_article_variant_status", easyflow_variant_bad == 0, f"actual_bad={easyflow_variant_bad} expected=multiple_candidate_articles"))
+
+        non_easyflow_status_bad = int((~_string_series_eq(non_easyflow, "data_quality_status", "complete")).sum())
+        non_easyflow_benchmark_bad = int((~_bool_series_eq(non_easyflow, "ready_for_benchmark", True)).sum())
+        non_easyflow_customer_bad = int((~_bool_series_eq(non_easyflow, "ready_for_customer_view", True)).sum())
+        non_easyflow_blocked_filled = int((~_empty_series(non_easyflow, "blocked_reason")).sum())
+        non_easyflow_variant_bad = int((~_string_series_eq(non_easyflow, "article_variant_status", "not_required")).sum())
+        results.append(CheckResult("final_set_details_non_easyflow_status_complete", non_easyflow_status_bad == 0, f"actual_bad={non_easyflow_status_bad} expected_bad=0"))
+        results.append(CheckResult("final_set_details_non_easyflow_ready_for_benchmark_true", non_easyflow_benchmark_bad == 0, f"actual_bad={non_easyflow_benchmark_bad} expected_bad=0"))
+        results.append(CheckResult("final_set_details_non_easyflow_ready_for_customer_view_true", non_easyflow_customer_bad == 0, f"actual_bad={non_easyflow_customer_bad} expected_bad=0"))
+        results.append(CheckResult("final_set_details_non_easyflow_blocked_reason_empty", non_easyflow_blocked_filled == 0, f"actual_filled={non_easyflow_blocked_filled} expected_filled=0"))
+        results.append(CheckResult("final_set_details_non_easyflow_article_variant_status", non_easyflow_variant_bad == 0, f"actual_bad={non_easyflow_variant_bad} expected=not_required"))
 
     cmp_product_ids = _norm_series(comparison, "product_id").str.lower()
     for prefix, expected in EXPECTED_ASSEMBLED_PREFIX_COUNTS.items():

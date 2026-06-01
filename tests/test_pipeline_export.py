@@ -1631,13 +1631,16 @@ class PipelineExportTests(unittest.TestCase):
 
             wb = openpyxl.load_workbook(out)
             self.assertIn("Final_Assemblies", wb.sheetnames)
+            self.assertIn("Final_Set_Details", wb.sheetnames)
             self.assertIn("Products", wb.sheetnames)
             self.assertIn("Comparison", wb.sheetnames)
 
             product_rows = self._sheet_rows(out, "Products")
             final_rows = self._sheet_rows(out, "Final_Assemblies")
+            detail_rows = self._sheet_rows(out, "Final_Set_Details")
             self.assertEqual(len(product_rows) - 1, len(products))
             self.assertEqual(len(final_rows) - 1, 5)
+            self.assertEqual(len(detail_rows) - 1, 5)
 
             headers = list(final_rows[0])
             self.assertIn("assembled_family", headers)
@@ -1676,6 +1679,25 @@ class PipelineExportTests(unittest.TestCase):
             self.assertTrue((complete_rows["is_complete_technical_data"] == True).all())
             self.assertTrue((complete_rows["data_quality_status"] == "complete").all())
             self.assertTrue((complete_rows["missing_technical_fields"].fillna("") == "").all())
+
+            detail_headers = list(detail_rows[0])
+            detail_df = pd.DataFrame(detail_rows[1:], columns=detail_headers)
+            self.assertEqual(set(detail_df["assembled_product_id"]), set(final_df["product_id"]))
+            self.assertEqual(detail_df["ready_for_benchmark"].value_counts().to_dict(), {True: 4, False: 1})
+            detail_easyflow = detail_df[detail_df["assembled_family"] == "easyflow"].iloc[0]
+            self.assertEqual(detail_easyflow["set_id"], detail_easyflow["assembled_product_id"])
+            self.assertEqual(detail_easyflow["ready_for_benchmark"], False)
+            self.assertEqual(detail_easyflow["ready_for_customer_view"], False)
+            self.assertEqual(
+                detail_easyflow["blocked_reason"],
+                "flow/height ambiguous at current article/variant granularity",
+            )
+            self.assertEqual(detail_easyflow["article_variant_status"], "multiple_candidate_articles")
+            complete_detail_rows = detail_df[detail_df["assembled_family"] != "easyflow"]
+            self.assertTrue((complete_detail_rows["ready_for_benchmark"] == True).all())
+            self.assertTrue((complete_detail_rows["ready_for_customer_view"] == True).all())
+            self.assertTrue((complete_detail_rows["article_variant_status"] == "not_required").all())
+            self.assertTrue((complete_detail_rows["blocked_reason"].fillna("") == "").all())
 
 if __name__ == "__main__":
     unittest.main()
