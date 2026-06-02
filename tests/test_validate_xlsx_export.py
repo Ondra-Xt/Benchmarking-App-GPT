@@ -11,6 +11,54 @@ def _load_validator_module():
     return mod
 
 
+def _mplus_compound_mappings_dataframe():
+    rows = []
+    for article, water_seal, outlet_dn in [
+        ("9010.81.20", "50", "DN40/DN50"),
+        ("9010.81.21", "30", "DN40/DN50"),
+        ("9010.81.22", "25", "DN40"),
+        ("9010.81.23", "50", "DN50"),
+    ]:
+        drain_id = f"aco-{article.replace('.', '')}"
+        rows.append({
+            "set_id": f"diagnostic-mplus-channel-body-25-128__{drain_id}__mplus-design-roste-elektropoliert",
+            "product_family": "showerdrain_mplus",
+            "assembly_model": "channel_body_x_drain_body_x_grate",
+            "channel_body_id": "channel-body-25-128",
+            "channel_body_article_number": "",
+            "drain_body_id": drain_id,
+            "drain_body_article_number": article,
+            "grate_id": "mplus-design-roste-elektropoliert",
+            "grate_article_number": "",
+            "source_url_channel_body": "https://example.test/mplus/channel",
+            "source_url_drain_body": "https://example.test/mplus/drain",
+            "source_url_grate": "https://example.test/mplus/grate",
+            "water_seal_mm": water_seal,
+            "outlet_dn": outlet_dn,
+            "height_adj_min_mm": "25",
+            "height_adj_max_mm": "128",
+            "flow_rate_lps": "",
+            "flow_rate_lps_10mm_head": 0.4,
+            "flow_rate_lps_20mm_head": 0.46,
+            "selected_default_flow_rate_lps": "",
+            "accessory_flow_reduction_lps": 0.1,
+            "flow_policy": "split_fields_only",
+            "flow_evidence_type": "explicit_drain_body_family_level",
+            "flow_confidence": "medium",
+            "flow_article_specific": False,
+            "flow_attribution_scope": "drain_body_family_level",
+            "missing_technical_fields": "flow_rate_lps",
+            "data_quality_status": "partial",
+            "safe_to_generate": False,
+            "ready_for_benchmark": False,
+            "ready_for_customer_view": False,
+            "blocking_reason": "benchmark policy for multi-head-condition flow values not yet accepted",
+            "recommended_next_action": "accept a benchmark policy before writing Products.flow_rate_lps or generating M+ assemblies",
+            "production_status_note": "diagnostic/proposal-only; no Products/BOM/assembly generation change",
+        })
+    return pd.DataFrame(rows)
+
+
 def _base_dataframes():
     products = pd.DataFrame([
         {"manufacturer": "aco", "product_id": "aco-showerdrain-cplus-standard-h92", "system_role": "drain_unit", "flow_rate_lps": 0.91, "water_seal_mm": 50, "outlet_dn": "DN50", "height_adj_min_mm": 80, "height_adj_max_mm": 128},
@@ -26,6 +74,7 @@ def _base_dataframes():
             "manufacturer": "aco", "product_id": "aco-showerdrain-cplus-standard-h92", "component_id": "aco-comp-1", "option_type": "compatible_grate",
             "option_meta": "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; source_limitation=; no explicit article-to-article matrix found"
         }]),
+        "Mplus_Compound_Mappings": _mplus_compound_mappings_dataframe(),
         "Article_Variants": pd.DataFrame([
             {
                 "manufacturer": "aco",
@@ -182,6 +231,9 @@ def test_default_baseline_counts_updated():
     assert mod.EXPECTED_SHEET_COUNTS["Candidates_All"] == 118
     assert mod.EXPECTED_SHEET_COUNTS["Components"] == 100
     assert mod.EXPECTED_SHEET_COUNTS["Final_Assemblies"] == 28
+    assert mod.EXPECTED_SHEET_COUNTS["Final_Set_Details"] == 28
+    assert mod.EXPECTED_SHEET_COUNTS["Mplus_Compound_Mappings"] == 4
+    assert mod.EXPECTED_SHEET_COUNTS["Article_Variants"] == 76
     assert mod.EXPECTED_FINAL_SET_DETAILS_ROW_COUNT == 28
 
 
@@ -330,6 +382,9 @@ def test_compatible_grate_metadata_missing_no_explicit_matrix_sentence_fails(tmp
 def test_final_assemblies_baseline_expectations():
     mod = _load_validator_module()
     assert mod.EXPECTED_SHEET_COUNTS["Final_Assemblies"] == 28
+    assert mod.EXPECTED_SHEET_COUNTS["Final_Set_Details"] == 28
+    assert mod.EXPECTED_SHEET_COUNTS["Mplus_Compound_Mappings"] == 4
+    assert mod.EXPECTED_SHEET_COUNTS["Article_Variants"] == 76
     assert mod.EXPECTED_FINAL_SET_DETAILS_ROW_COUNT == 28
     assert mod.EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS == {
         "easyflow": 2,
@@ -454,3 +509,57 @@ def test_final_assemblies_easyflow_completeness_status_must_match(tmp_path):
     assert not _result_for(results, "final_assemblies_easyflow_is_complete_false").passed
     assert not _result_for(results, "final_assemblies_easyflow_missing_fields").passed
     assert not _result_for(results, "final_assemblies_easyflow_source_note").passed
+
+
+def test_mplus_compound_mappings_validation_rejects_product_flow_write(tmp_path):
+    mod = _load_validator_module()
+    counts = {
+        "Products": 2,
+        "Comparison": 2,
+        "Scoring_Field_Coverage": 2,
+        "Candidates_All": 2,
+        "Components": 1,
+        "BOM_Options": 1,
+        "Final_Assemblies": 2,
+        "Final_Set_Details": 2,
+        "Mplus_Compound_Mappings": 4,
+        "Article_Variants": 3,
+    }
+    _patch_small_expectations(mod, counts)
+    mod.EXPECTED_SHEET_COUNTS = counts
+    data = _base_dataframes()
+    data["Mplus_Compound_Mappings"].loc[0, "flow_rate_lps"] = "0.4"
+    path = tmp_path / "mplus_bad_flow.xlsx"
+    _write_xlsx(path, data)
+
+    passed, results = mod.validate_xlsx(str(path))
+
+    assert not passed
+    assert not _result_for(results, "mplus_compound_mappings_empty:flow_rate_lps").passed
+
+
+def test_mplus_compound_mappings_validation_passes_expected_diagnostic_rows(tmp_path):
+    mod = _load_validator_module()
+    counts = {
+        "Products": 2,
+        "Comparison": 2,
+        "Scoring_Field_Coverage": 2,
+        "Candidates_All": 2,
+        "Components": 1,
+        "BOM_Options": 1,
+        "Final_Assemblies": 2,
+        "Final_Set_Details": 2,
+        "Mplus_Compound_Mappings": 4,
+        "Article_Variants": 3,
+    }
+    _patch_small_expectations(mod, counts)
+    mod.EXPECTED_SHEET_COUNTS = counts
+    path = tmp_path / "mplus_ok.xlsx"
+    _write_xlsx(path, _base_dataframes())
+
+    passed, results = mod.validate_xlsx(str(path))
+
+    assert passed
+    assert _result_for(results, "row_count:Mplus_Compound_Mappings").passed
+    assert _result_for(results, "mplus_compound_mappings_expected_articles").passed
+    assert _result_for(results, "mplus_compound_mappings_empty:selected_default_flow_rate_lps").passed
