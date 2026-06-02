@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 from collections import Counter
 from dataclasses import dataclass, field
@@ -74,6 +75,8 @@ class MPlusCompoundMappingReport:
     deduplicated_candidate_counts: dict[str, int]
     channel_bodies: tuple[mplus_sources.MPlusCandidateRow, ...]
     drain_bodies: tuple[mplus_sources.MPlusCandidateRow, ...]
+    article_level_drain_bodies: tuple[mplus_sources.MPlusCandidateRow, ...]
+    generic_drain_body_pages: tuple[mplus_sources.MPlusCandidateRow, ...]
     grates: tuple[mplus_sources.MPlusCandidateRow, ...]
     optional_accessories: tuple[mplus_sources.MPlusCandidateRow, ...]
     proposed_mappings: tuple[ProposedCompoundMappingRow, ...]
@@ -95,6 +98,66 @@ def _norm(df: pd.DataFrame | None, col: str) -> pd.Series:
 
 def _candidate_id(row: mplus_sources.MPlusCandidateRow) -> str:
     return _clean(row.proposed_product_id) or _clean(row.article_number) or _clean(row.source_url)
+
+
+def _slug(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", _clean(value).lower())
+    return re.sub(r"-+", "-", slug).strip("-")
+
+
+def _source_path_slug(source_url: str) -> str:
+    url = mplus_sources._canonical_url(source_url).rstrip("/")
+    return _slug(url.rsplit("/", 1)[-1])
+
+
+def _diagnostic_part_id(row: mplus_sources.MPlusCandidateRow) -> str:
+    proposed_id = _clean(row.proposed_product_id)
+    if proposed_id:
+        return proposed_id
+
+    article_digits = mplus_sources._digits_only(_clean(row.article_number))
+    if article_digits:
+        return f"aco-{article_digits}"
+
+    if row.candidate_type == "mplus_channel_body_candidate":
+        height_min = _clean(row.height_adj_min_mm)
+        height_max = _clean(row.height_adj_max_mm)
+        if height_min and height_max:
+            return f"channel-body-{height_min}-{height_max}"
+        path_slug = _source_path_slug(row.source_url)
+        if path_slug:
+            return f"channel-body-{path_slug}"
+
+    if row.candidate_type == "mplus_grate_component":
+        path_slug = _source_path_slug(row.source_url)
+        if "design-roste" in path_slug and "elektropoliert" in path_slug:
+            return "mplus-design-roste-elektropoliert"
+        if path_slug:
+            return f"mplus-{path_slug}"
+
+    path_slug = _source_path_slug(row.source_url)
+    return f"mplus-{path_slug}" if path_slug else ""
+
+
+def _is_article_level_drain_body(row: mplus_sources.MPlusCandidateRow) -> bool:
+    return bool(
+        _clean(row.article_number)
+        and _clean(row.proposed_product_id)
+        and _clean(row.candidate_type) == "mplus_drain_body_candidate"
+    )
+
+
+def split_drain_bodies(
+    drain_bodies: Iterable[mplus_sources.MPlusCandidateRow],
+) -> tuple[tuple[mplus_sources.MPlusCandidateRow, ...], tuple[mplus_sources.MPlusCandidateRow, ...]]:
+    article_level: list[mplus_sources.MPlusCandidateRow] = []
+    generic_pages: list[mplus_sources.MPlusCandidateRow] = []
+    for row in drain_bodies:
+        if _is_article_level_drain_body(row):
+            article_level.append(row)
+        else:
+            generic_pages.append(row)
+    return tuple(article_level), tuple(generic_pages)
 
 
 def _dedupe_candidates(
@@ -205,9 +268,11 @@ def build_proposed_mappings(
     for channel in channel_bodies:
         for drain in drain_bodies:
             for grate in grates:
-                channel_id = _candidate_id(channel)
-                drain_id = _candidate_id(drain)
-                grate_id = _candidate_id(grate)
+                if not _is_article_level_drain_body(drain):
+                    continue
+                channel_id = _diagnostic_part_id(channel)
+                drain_id = _diagnostic_part_id(drain)
+                grate_id = _diagnostic_part_id(grate)
                 water_seal_mm = _field_from_drain_or_channel("water_seal_mm", drain, channel)
                 outlet_dn = _field_from_drain_or_channel("outlet_dn", drain, channel)
                 flow_rate_lps = _field_from_drain_or_channel("flow_rate_lps", drain, channel)
@@ -220,12 +285,7 @@ def build_proposed_mappings(
                     height_adj_min_mm=height_adj_min_mm,
                     height_adj_max_mm=height_adj_max_mm,
                 )
-                classes_exist = bool(channel_id and drain_id and grate_id)
-                source_backed_relationship = all(
-                    row.product_family == mplus_sources.MPLUS_FAMILY and row.system_role
-                    for row in (channel, drain, grate)
-                )
-                safe_to_generate = bool(classes_exist and source_backed_relationship and not missing)
+                safe_to_generate = False
                 rows.append(
                     ProposedCompoundMappingRow(
                         channel_body_id=channel_id,
@@ -325,10 +385,12 @@ def build_report(
     drain_bodies = _dedupe_candidates(drain_raw, role="drain_body")
     grates = _dedupe_candidates(grate_raw, role="grate")
     optional_accessories = _dedupe_candidates(accessories_raw, role="accessory")
-    mappings = build_proposed_mappings(channel_bodies, drain_bodies, grates)
+    article_level_drain_bodies, generic_drain_body_pages = split_drain_bodies(drain_bodies)
+    mappings = build_proposed_mappings(channel_bodies, article_level_drain_bodies, grates)
     confidence_summary = dict(sorted(Counter(row.mapping_confidence for row in mappings).items()))
     safe_counter = Counter("safe" if row.safe_to_generate else "blocked" for row in mappings)
-    missing_summary = dict(sorted(Counter(field for row in mappings for field in row.missing_technical_fields).items()))
+    missing_counter = Counter(field for row in mappings for field in row.missing_technical_fields)
+    missing_summary = {field: missing_counter.get(field, 0) for field in REQUIRED_TECHNICAL_FIELDS}
 
     return MPlusCompoundMappingReport(
         sheet_counts=_sheet_counts(
@@ -349,11 +411,15 @@ def build_report(
         deduplicated_candidate_counts={
             "channel_bodies": len(channel_bodies),
             "drain_bodies": len(drain_bodies),
+            "article_level_drain_bodies": len(article_level_drain_bodies),
+            "generic_drain_body_pages": len(generic_drain_body_pages),
             "grates": len(grates),
             "optional_accessories": len(optional_accessories),
         },
         channel_bodies=channel_bodies,
         drain_bodies=drain_bodies,
+        article_level_drain_bodies=article_level_drain_bodies,
+        generic_drain_body_pages=generic_drain_body_pages,
         grates=grates,
         optional_accessories=optional_accessories,
         proposed_mappings=mappings,
@@ -401,6 +467,21 @@ def print_report(report: MPlusCompoundMappingReport) -> None:
     _print_count_dict("Mapping confidence summary", report.mapping_confidence_summary)
     _print_count_dict("safe_to_generate counts", report.safe_to_generate_counts)
     _print_count_dict("Missing technical-field summary", report.missing_technical_field_summary)
+    print(f"\nArticle-level drain bodies: {len(report.article_level_drain_bodies)}")
+    print(f"Generic drain body pages: {len(report.generic_drain_body_pages)}")
+    print("\nGeneric / non-article drain body evidence:")
+    if not report.generic_drain_body_pages:
+        print("- none")
+    for row in report.generic_drain_body_pages:
+        print(
+            "- "
+            f"article_number={row.article_number or '(none)'}; "
+            f"proposed_product_id={row.proposed_product_id or '(none)'}; "
+            f"candidate_type={row.candidate_type}; system_role={row.system_role or '(none)'}; "
+            f"source_url={mplus_sources._canonical_url(row.source_url)}; evidence_type={row.evidence_type}; "
+            f"row_text={row.row_text[:220]}"
+        )
+
     print(f"\nOptional accessory count: {len(report.optional_accessories)}")
 
     r = report.risk_checks
