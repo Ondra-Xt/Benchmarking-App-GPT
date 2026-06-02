@@ -122,6 +122,71 @@ FINAL_SET_DETAILS_EASYFLOW_ARTICLE_NOTE = (
 FINAL_SET_DETAILS_NON_EASYFLOW_ARTICLE_NOTE = "not required for current assembled set"
 
 
+
+MPLUS_COMPOUND_MAPPING_COLUMNS = [
+    "set_id",
+    "product_family",
+    "assembly_model",
+    "channel_body_id",
+    "channel_body_article_number",
+    "drain_body_id",
+    "drain_body_article_number",
+    "grate_id",
+    "grate_article_number",
+    "source_url_channel_body",
+    "source_url_drain_body",
+    "source_url_grate",
+    "water_seal_mm",
+    "outlet_dn",
+    "height_adj_min_mm",
+    "height_adj_max_mm",
+    "flow_rate_lps",
+    "flow_rate_lps_10mm_head",
+    "flow_rate_lps_20mm_head",
+    "selected_default_flow_rate_lps",
+    "accessory_flow_reduction_lps",
+    "flow_policy",
+    "flow_evidence_type",
+    "flow_confidence",
+    "flow_article_specific",
+    "flow_attribution_scope",
+    "missing_technical_fields",
+    "data_quality_status",
+    "safe_to_generate",
+    "ready_for_benchmark",
+    "ready_for_customer_view",
+    "blocking_reason",
+    "recommended_next_action",
+    "production_status_note",
+]
+
+MPLUS_DIAGNOSTIC_ARTICLE_DEFAULTS = {
+    "9010.81.20": {"water_seal_mm": "50", "outlet_dn": "DN40/DN50"},
+    "9010.81.21": {"water_seal_mm": "30", "outlet_dn": "DN40/DN50"},
+    "9010.81.22": {"water_seal_mm": "25", "outlet_dn": "DN40"},
+    "9010.81.23": {"water_seal_mm": "50", "outlet_dn": "DN50"},
+}
+MPLUS_CHANNEL_BODY_ID = "channel-body-25-128"
+MPLUS_GRATE_ID = "mplus-design-roste-elektropoliert"
+MPLUS_CHANNEL_BODY_SOURCE_URL = (
+    "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/"
+    "aco-showerdrain-mplus/rinnenkoerper-einbauhoehe-oberkante-estrich-25-128-mm/"
+)
+MPLUS_DRAIN_BODY_SOURCE_URL = (
+    "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/"
+    "aco-showerdrain-mplus/ablaufkoerper-zur-duschrinne-aco-showerdrain-mplus/"
+)
+MPLUS_GRATE_SOURCE_URL = (
+    "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/"
+    "aco-showerdrain-mplus/design-roste-aus-elektropoliertem-edelstahl/"
+)
+MPLUS_RECOMMENDED_NEXT_ACTION = (
+    "accept a benchmark policy before writing Products.flow_rate_lps or generating M+ assemblies"
+)
+MPLUS_PRODUCTION_STATUS_NOTE = (
+    "diagnostic/proposal-only; no Products/BOM/assembly generation change"
+)
+
 def _assembled_family(product_id: Any) -> str:
     pid = str(product_id or "")
     if pid.startswith("aco-assembled-easyflowplus-"):
@@ -759,6 +824,136 @@ def _extract_article_variants(registry_df: pd.DataFrame, products_df: pd.DataFra
     variants = article_variants.build_article_variants_dataframe(registry_df, products_df)
     return variants.reindex(columns=ARTICLE_VARIANT_COLUMNS)
 
+
+def _flow_candidate_by_head(flow_diagnostic: Any, head_mm: str) -> Any:
+    for candidate in getattr(flow_diagnostic, "drain_body_flow_candidates", ()):
+        if str(getattr(candidate, "head_mm", "")).strip() == str(head_mm):
+            return candidate
+    return None
+
+
+def _first_accessory_flow_reduction(flow_diagnostic: Any) -> str:
+    for reduction in getattr(flow_diagnostic, "accessory_flow_reduction_lps", ()):
+        value = getattr(reduction, "accessory_flow_reduction_lps", "")
+        if _present(value):
+            return str(value).strip()
+    return ""
+
+
+def _mplus_mapping_by_article(mapping_report: Any) -> dict[str, Any]:
+    return {
+        str(getattr(row, "drain_body_article_number", "")).strip(): row
+        for row in getattr(mapping_report, "proposed_mappings", ())
+        if str(getattr(row, "drain_body_article_number", "")).strip()
+    }
+
+
+def _mplus_cell(value: Any, fallback: Any = "") -> Any:
+    return value if _present(value) else fallback
+
+
+def _fallback_mplus_mapping_value(article_number: str, field: str) -> str:
+    drain_id = f"aco-{article_number.replace('.', '')}"
+    values = {
+        "set_id": f"diagnostic-mplus-{MPLUS_CHANNEL_BODY_ID}__{drain_id}__{MPLUS_GRATE_ID}",
+        "product_family": "showerdrain_mplus",
+        "assembly_model": "channel_body_x_drain_body_x_grate",
+        "channel_body_id": MPLUS_CHANNEL_BODY_ID,
+        "channel_body_article_number": "",
+        "drain_body_id": drain_id,
+        "drain_body_article_number": article_number,
+        "grate_id": MPLUS_GRATE_ID,
+        "grate_article_number": "",
+        "source_url_channel_body": MPLUS_CHANNEL_BODY_SOURCE_URL,
+        "source_url_drain_body": MPLUS_DRAIN_BODY_SOURCE_URL,
+        "source_url_grate": MPLUS_GRATE_SOURCE_URL,
+        "water_seal_mm": MPLUS_DIAGNOSTIC_ARTICLE_DEFAULTS[article_number]["water_seal_mm"],
+        "outlet_dn": MPLUS_DIAGNOSTIC_ARTICLE_DEFAULTS[article_number]["outlet_dn"],
+        "height_adj_min_mm": "25",
+        "height_adj_max_mm": "128",
+    }
+    return values.get(field, "")
+
+
+def _extract_mplus_compound_mappings(
+    registry_df: pd.DataFrame,
+    products_df: pd.DataFrame,
+    comparison_df: pd.DataFrame,
+    components_df: pd.DataFrame,
+    bom_options_df: pd.DataFrame,
+    final_assemblies_df: pd.DataFrame,
+    final_set_details_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Return diagnostic-only ACO ShowerDrain M+ compound mapping proposal rows."""
+    from tools import diagnose_mplus_flow_rate_sources as flow_sources
+    from tools import report_mplus_compound_assembly_mapping as compound_mapping
+    from tools import report_mplus_flow_rate_policy as flow_policy
+
+    mapping_report = compound_mapping.build_report(
+        registry_df,
+        products_df,
+        comparison_df,
+        components_df,
+        bom_options_df,
+        final_assemblies_df,
+        final_set_details_df,
+    )
+    flow_diagnostic = flow_sources.build_diagnostic()
+    policy_report = flow_policy.build_policy_report(
+        flow_diagnostic,
+        mapping_report,
+        use_confirmed_mapping_fallback=True,
+    )
+
+    by_article = _mplus_mapping_by_article(mapping_report)
+    flow_10mm = _flow_candidate_by_head(flow_diagnostic, "10")
+    flow_20mm = _flow_candidate_by_head(flow_diagnostic, "20")
+    flow_evidence = flow_10mm or flow_20mm
+    accessory_reduction = _first_accessory_flow_reduction(flow_diagnostic)
+
+    rows: list[dict[str, Any]] = []
+    for article_number in MPLUS_DIAGNOSTIC_ARTICLE_DEFAULTS:
+        mapping = by_article.get(article_number)
+        row = {
+            "set_id": _fallback_mplus_mapping_value(article_number, "set_id"),
+            "product_family": _fallback_mplus_mapping_value(article_number, "product_family"),
+            "assembly_model": _fallback_mplus_mapping_value(article_number, "assembly_model"),
+            "channel_body_id": _fallback_mplus_mapping_value(article_number, "channel_body_id"),
+            "channel_body_article_number": _mplus_cell(getattr(mapping, "channel_body_article_number", ""), _fallback_mplus_mapping_value(article_number, "channel_body_article_number")),
+            "drain_body_id": _fallback_mplus_mapping_value(article_number, "drain_body_id"),
+            "drain_body_article_number": _mplus_cell(getattr(mapping, "drain_body_article_number", ""), article_number),
+            "grate_id": _fallback_mplus_mapping_value(article_number, "grate_id"),
+            "grate_article_number": _mplus_cell(getattr(mapping, "grate_article_number", ""), _fallback_mplus_mapping_value(article_number, "grate_article_number")),
+            "source_url_channel_body": _mplus_cell(getattr(mapping, "source_url_channel_body", ""), _fallback_mplus_mapping_value(article_number, "source_url_channel_body")),
+            "source_url_drain_body": _mplus_cell(getattr(mapping, "source_url_drain_body", ""), _fallback_mplus_mapping_value(article_number, "source_url_drain_body")),
+            "source_url_grate": _mplus_cell(getattr(mapping, "source_url_grate", ""), _fallback_mplus_mapping_value(article_number, "source_url_grate")),
+            "water_seal_mm": _mplus_cell(getattr(mapping, "water_seal_mm", ""), _fallback_mplus_mapping_value(article_number, "water_seal_mm")),
+            "outlet_dn": _mplus_cell(getattr(mapping, "outlet_dn", ""), _fallback_mplus_mapping_value(article_number, "outlet_dn")),
+            "height_adj_min_mm": _fallback_mplus_mapping_value(article_number, "height_adj_min_mm"),
+            "height_adj_max_mm": _fallback_mplus_mapping_value(article_number, "height_adj_max_mm"),
+            "flow_rate_lps": "",
+            "flow_rate_lps_10mm_head": getattr(flow_10mm, "flow_rate_lps", ""),
+            "flow_rate_lps_20mm_head": getattr(flow_20mm, "flow_rate_lps", ""),
+            "selected_default_flow_rate_lps": policy_report.selected_default_flow_rate_lps,
+            "accessory_flow_reduction_lps": accessory_reduction,
+            "flow_policy": policy_report.recommended_policy,
+            "flow_evidence_type": getattr(flow_evidence, "evidence_type", ""),
+            "flow_confidence": getattr(flow_evidence, "confidence", ""),
+            "flow_article_specific": bool(getattr(flow_evidence, "article_specific", False)),
+            "flow_attribution_scope": getattr(flow_evidence, "flow_attribution_scope", ""),
+            "missing_technical_fields": "flow_rate_lps",
+            "data_quality_status": "partial",
+            "safe_to_generate": False,
+            "ready_for_benchmark": False,
+            "ready_for_customer_view": False,
+            "blocking_reason": policy_report.blocking_reason,
+            "recommended_next_action": MPLUS_RECOMMENDED_NEXT_ACTION,
+            "production_status_note": MPLUS_PRODUCTION_STATUS_NOTE,
+        }
+        rows.append(row)
+
+    return pd.DataFrame(rows, columns=MPLUS_COMPOUND_MAPPING_COLUMNS)
+
 def export_excel(
     template_path: str,
     out_path: str,
@@ -785,6 +980,7 @@ def export_excel(
     - Evidence
     - BOM_Options
     - Source_Checks
+    - Mplus_Compound_Mappings
     - Article_Variants
     - Final_Scoring_Weights
     - Legacy_Equivalence_Weights
@@ -865,11 +1061,22 @@ def export_excel(
             ws.append([_to_excel_cell(v) for v in row.tolist()])
 
     final_assemblies_df = _extract_final_assemblies(products_df)
+    final_set_details_df = _extract_final_set_details(final_assemblies_df, bom_options_df, components_df)
+    mplus_compound_mappings_df = _extract_mplus_compound_mappings(
+        registry_df,
+        products_df,
+        comparison_df,
+        components_df,
+        bom_options_df,
+        final_assemblies_df,
+        final_set_details_df,
+    )
 
     write_df("Candidates_All", registry_df)
     write_df("Products", products_df)
     write_df("Final_Assemblies", final_assemblies_df)
-    write_df("Final_Set_Details", _extract_final_set_details(final_assemblies_df, bom_options_df, components_df))
+    write_df("Final_Set_Details", final_set_details_df)
+    write_df("Mplus_Compound_Mappings", mplus_compound_mappings_df)
     write_df("Components", components_df)
     write_df("Comparison", comparison_df)
     write_df("Excluded", excluded_df)
