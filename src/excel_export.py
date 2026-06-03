@@ -123,6 +123,77 @@ FINAL_SET_DETAILS_NON_EASYFLOW_ARTICLE_NOTE = "not required for current assemble
 
 
 
+EPLUS_PROPOSAL_MAPPING_COLUMNS = [
+    "set_id",
+    "product_family",
+    "assembly_model",
+    "body_id",
+    "body_article_number",
+    "body_source_url",
+    "grate_id",
+    "grate_article_number",
+    "grate_source_url",
+    "flow_rate_lps",
+    "water_seal_mm",
+    "outlet_dn",
+    "height_adj_min_mm",
+    "height_adj_max_mm",
+    "body_evidence_type",
+    "body_confidence",
+    "grate_evidence_type",
+    "grate_confidence",
+    "compatibility_evidence_type",
+    "compatibility_confidence",
+    "article_level_compatibility_found",
+    "data_quality_status",
+    "missing_evidence",
+    "safe_to_generate",
+    "ready_for_benchmark",
+    "ready_for_customer_view",
+    "blocking_reason",
+    "recommended_next_action",
+    "production_status_note",
+]
+
+EPLUS_BODY_PROPOSALS = (
+    (
+        "aco-showerdrain-eplus-rinnenkoerper-einbauhoehe-oberkante-estrich-25-128-mm",
+        "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/"
+        "aco-showerdrain-eplus/rinnenkoerper-einbauhoehe-oberkante-estrich-25-128-mm/",
+        25,
+    ),
+    (
+        "aco-showerdrain-eplus-rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm",
+        "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/"
+        "aco-showerdrain-eplus/rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm/",
+        57,
+    ),
+    (
+        "aco-showerdrain-eplus-rinnenkoerper-einbauhoehe-oberkante-estrich-80-128-mm-din-en-1253-1",
+        "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/"
+        "aco-showerdrain-eplus/rinnenkoerper-einbauhoehe-oberkante-estrich-80-128-mm-din-en-1253-1/",
+        80,
+    ),
+)
+EPLUS_GRATE_ID = "aco-showerdrain-eplus-design-roste-aus-elektropoliertem-edelstahl"
+EPLUS_GRATE_SOURCE_URL = (
+    "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/"
+    "aco-showerdrain-eplus/design-roste-aus-elektropoliertem-edelstahl/"
+)
+EPLUS_COMPATIBILITY_EVIDENCE_TYPE = "page_level_family_bom_or_inferred_from_current_bom"
+EPLUS_MISSING_EVIDENCE = "explicit_article_level_base_to_grate_compatibility"
+EPLUS_BLOCKING_REASON = (
+    "E+ diagnostic has only conservative page-level body/grate evidence and no explicit "
+    "article-level base-to-grate compatibility matrix."
+)
+EPLUS_RECOMMENDED_NEXT_ACTION = (
+    "collect explicit article-level E+ base-to-grate compatibility before production generation."
+)
+EPLUS_PRODUCTION_STATUS_NOTE = (
+    "diagnostic/proposal-only; no Products/BOM/assembly generation change"
+)
+
+
 MPLUS_COMPOUND_MAPPING_COLUMNS = [
     "set_id",
     "product_family",
@@ -495,7 +566,6 @@ def _present(v: Any) -> bool:
         return False
     s = str(v).strip().lower()
     return s not in {"", "nan", "none", "null", "unknown", "not_applicable"}
-
 
 
 
@@ -875,6 +945,56 @@ def _fallback_mplus_mapping_value(article_number: str, field: str) -> str:
     return values.get(field, "")
 
 
+def _extract_eplus_proposal_mappings(
+    products_df: pd.DataFrame,
+    final_assemblies_df: pd.DataFrame,
+    final_set_details_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Return diagnostic-only ACO ShowerDrain E+ base_x_grate proposal rows.
+
+    The rows are export-only diagnostics: they deliberately keep all production readiness
+    flags false and are not fed back into Products, BOM_Options, or assembly generation.
+    """
+    rows: list[dict[str, Any]] = []
+    for body_id, body_source_url, height_min in EPLUS_BODY_PROPOSALS:
+        set_id = f"diagnostic-eplus-{body_id}__{EPLUS_GRATE_ID}"
+        rows.append(
+            {
+                "set_id": set_id,
+                "product_family": "showerdrain_eplus",
+                "assembly_model": "base_x_grate",
+                "body_id": body_id,
+                "body_article_number": "",
+                "body_source_url": body_source_url,
+                "grate_id": EPLUS_GRATE_ID,
+                "grate_article_number": "",
+                "grate_source_url": EPLUS_GRATE_SOURCE_URL,
+                "flow_rate_lps": 0.70,
+                "water_seal_mm": 50,
+                "outlet_dn": "DN50",
+                "height_adj_min_mm": height_min,
+                "height_adj_max_mm": 128,
+                "body_evidence_type": "source_page_level_body_url",
+                "body_confidence": "high",
+                "grate_evidence_type": "source_page_level_grate_url",
+                "grate_confidence": "high",
+                "compatibility_evidence_type": EPLUS_COMPATIBILITY_EVIDENCE_TYPE,
+                "compatibility_confidence": "medium",
+                "article_level_compatibility_found": False,
+                "data_quality_status": "proposal_only_partial",
+                "missing_evidence": EPLUS_MISSING_EVIDENCE,
+                "safe_to_generate": False,
+                "ready_for_benchmark": False,
+                "ready_for_customer_view": False,
+                "blocking_reason": EPLUS_BLOCKING_REASON,
+                "recommended_next_action": EPLUS_RECOMMENDED_NEXT_ACTION,
+                "production_status_note": EPLUS_PRODUCTION_STATUS_NOTE,
+            }
+        )
+
+    return pd.DataFrame(rows, columns=EPLUS_PROPOSAL_MAPPING_COLUMNS)
+
+
 def _extract_mplus_compound_mappings(
     registry_df: pd.DataFrame,
     products_df: pd.DataFrame,
@@ -981,6 +1101,7 @@ def export_excel(
     - BOM_Options
     - Source_Checks
     - Mplus_Compound_Mappings
+    - Eplus_Proposal_Mappings
     - Article_Variants
     - Final_Scoring_Weights
     - Legacy_Equivalence_Weights
@@ -1071,12 +1192,18 @@ def export_excel(
         final_assemblies_df,
         final_set_details_df,
     )
+    eplus_proposal_mappings_df = _extract_eplus_proposal_mappings(
+        products_df,
+        final_assemblies_df,
+        final_set_details_df,
+    )
 
     write_df("Candidates_All", registry_df)
     write_df("Products", products_df)
     write_df("Final_Assemblies", final_assemblies_df)
     write_df("Final_Set_Details", final_set_details_df)
     write_df("Mplus_Compound_Mappings", mplus_compound_mappings_df)
+    write_df("Eplus_Proposal_Mappings", eplus_proposal_mappings_df)
     write_df("Components", components_df)
     write_df("Comparison", comparison_df)
     write_df("Excluded", excluded_df)

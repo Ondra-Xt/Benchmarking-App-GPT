@@ -281,7 +281,9 @@ class PipelineExportTests(unittest.TestCase):
             wb = openpyxl.load_workbook(out)
             self.assertIn("Mplus_Compound_Mappings", wb.sheetnames)
             self.assertLess(wb.sheetnames.index("Final_Set_Details"), wb.sheetnames.index("Mplus_Compound_Mappings"))
-            self.assertLess(wb.sheetnames.index("Mplus_Compound_Mappings"), wb.sheetnames.index("Article_Variants"))
+            self.assertLess(wb.sheetnames.index("Mplus_Compound_Mappings"), wb.sheetnames.index("Eplus_Proposal_Mappings"))
+            self.assertLess(wb.sheetnames.index("Eplus_Proposal_Mappings"), wb.sheetnames.index("Components"))
+            self.assertLess(wb.sheetnames.index("Eplus_Proposal_Mappings"), wb.sheetnames.index("Article_Variants"))
 
             rows = self._sheet_rows(out, "Mplus_Compound_Mappings")
             df = pd.DataFrame(rows[1:], columns=rows[0])
@@ -292,6 +294,23 @@ class PipelineExportTests(unittest.TestCase):
             self.assertEqual(set(df["flow_rate_lps_10mm_head"]), {"0.4"})
             self.assertEqual(set(df["flow_rate_lps_20mm_head"]), {"0.46"})
             self.assertEqual(set(df["safe_to_generate"]), {False})
+            eplus_rows = self._sheet_rows(out, "Eplus_Proposal_Mappings")
+            eplus_df = pd.DataFrame(eplus_rows[1:], columns=eplus_rows[0])
+            self.assertEqual(len(eplus_df), 3)
+            self.assertEqual(set(eplus_df["body_id"]), {
+                "aco-showerdrain-eplus-rinnenkoerper-einbauhoehe-oberkante-estrich-25-128-mm",
+                "aco-showerdrain-eplus-rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm",
+                "aco-showerdrain-eplus-rinnenkoerper-einbauhoehe-oberkante-estrich-80-128-mm-din-en-1253-1",
+            })
+            self.assertEqual(set(eplus_df["grate_id"]), {"aco-showerdrain-eplus-design-roste-aus-elektropoliertem-edelstahl"})
+            self.assertEqual(set(eplus_df["flow_rate_lps"]), {0.7})
+            self.assertEqual(set(eplus_df["water_seal_mm"]), {50})
+            self.assertEqual(set(eplus_df["outlet_dn"]), {"DN50"})
+            self.assertEqual(set(eplus_df["height_adj_min_mm"]), {25, 57, 80})
+            self.assertEqual(set(eplus_df["height_adj_max_mm"]), {128})
+            self.assertEqual(set(eplus_df["safe_to_generate"]), {False})
+            self.assertEqual(set(eplus_df["ready_for_benchmark"]), {False})
+            self.assertEqual(set(eplus_df["ready_for_customer_view"]), {False})
             self.assertEqual(len(self._sheet_rows(out, "Products")) - 1, 1)
             self.assertEqual(len(self._sheet_rows(out, "Final_Assemblies")) - 1, 0)
             self.assertEqual(len(self._sheet_rows(out, "Final_Set_Details")) - 1, 0)
