@@ -3,6 +3,26 @@ import pandas as pd
 import tools.report_assembly_gaps as mod
 
 
+def _mplus_compound_mappings_dataframe():
+    return pd.DataFrame([
+        {
+            "product_family": "showerdrain_mplus",
+            "assembly_model": "channel_body_x_drain_body_x_grate",
+            "drain_body_article_number": article,
+            "flow_rate_lps": "",
+            "flow_rate_lps_10mm_head": 0.4,
+            "flow_rate_lps_20mm_head": 0.46,
+            "selected_default_flow_rate_lps": "",
+            "flow_policy": "split_fields_only",
+            "safe_to_generate": False,
+            "ready_for_benchmark": False,
+            "ready_for_customer_view": False,
+            "blocking_reason": "benchmark policy for multi-head-condition flow values not yet accepted",
+        }
+        for article in ("9010.81.20", "9010.81.21", "9010.81.22", "9010.81.23")
+    ])
+
+
 def test_build_report_classifies_active_ready_and_blocked_families():
     candidates = pd.DataFrame([
         {"product_id": "aco-cplus-base", "product_family": "showerdrain_cplus", "product_url": "https://example.test/cplus"},
@@ -66,6 +86,67 @@ def test_build_report_classifies_active_ready_and_blocked_families():
     assert set(report.ready_candidate_families) == {"showerdrain_cplus", "linear_x"}
 
 
+def test_build_report_accounts_for_mplus_proposal_only_mappings(capsys):
+    products = pd.DataFrame([
+        {"product_id": "aco-assembled-showerdrain-splus-a__grate", "product_family": "showerdrain_splus", "flow_rate_lps": 0.8, "water_seal_mm": 50, "outlet_dn": "DN50", "height_adj_min_mm": 90, "height_adj_max_mm": 120},
+        {"product_id": "aco-assembled-showerdrain-c-a__grate", "product_family": "showerdrain_c", "flow_rate_lps": 0.7, "water_seal_mm": 50, "outlet_dn": "DN50", "height_adj_min_mm": 80, "height_adj_max_mm": 110},
+        {"product_id": "aco-assembled-easyflow-a__grate", "product_family": "easyflow", "flow_rate_lps": 0.6, "water_seal_mm": 50, "outlet_dn": "DN50", "height_adj_min_mm": 70, "height_adj_max_mm": 100},
+        {"product_id": "aco-assembled-easyflowplus-a__grate", "product_family": "easyflowplus", "flow_rate_lps": 0.6, "water_seal_mm": 50, "outlet_dn": "DN50", "height_adj_min_mm": 70, "height_adj_max_mm": 100},
+        {"product_id": "aco-cplus-base", "product_family": "showerdrain_cplus", "flow_rate_lps": 0.8, "water_seal_mm": 50, "outlet_dn": "DN50", "height_adj_min_mm": 90, "height_adj_max_mm": 120},
+    ])
+    components = pd.DataFrame([
+        {"product_id": "aco-cplus-grate", "option_family": "showerdrain_cplus"},
+    ])
+    bom = pd.DataFrame([
+        {"product_id": "aco-cplus-base", "parent_family": "showerdrain_cplus", "component_id": "aco-cplus-grate", "option_family": "showerdrain_cplus", "option_type": "optional_accessory"},
+    ])
+
+    report = mod.build_report(
+        pd.DataFrame(),
+        products,
+        components,
+        bom,
+        final_assemblies=pd.DataFrame(),
+        final_set_details=pd.DataFrame(),
+        article_variants=pd.DataFrame(),
+        mplus_compound_mappings=_mplus_compound_mappings_dataframe(),
+    )
+    by_family = {gap.family: gap for gap in report.families}
+    mplus = by_family["showerdrain_mplus"]
+
+    assert report.sheet_counts["Mplus_Compound_Mappings"] == 4
+    assert mplus.current_assembled_count == 0
+    assert mplus.status == "blocked_proposal_only_flow_policy"
+    assert mplus.proposal_only_mapping_count == 4
+    assert mplus.proposal_assembly_model == "channel_body_x_drain_body_x_grate"
+    assert mplus.proposal_safe_to_generate_count == 0
+    assert mplus.proposal_blocked_count == 4
+    assert mplus.proposal_flow_policy == "split_fields_only"
+    assert mplus.proposal_flow_rate_lps_10mm_head == "0.4"
+    assert mplus.proposal_flow_rate_lps_20mm_head == "0.46"
+    assert mplus.proposal_selected_default_flow_rate_lps == ""
+    assert mplus.proposal_blocking_reason == "benchmark policy for multi-head-condition flow values not yet accepted"
+    assert mplus.next_required_action == "accept benchmark policy for multi-head-condition flow values before generating M+ production assemblies"
+    assert "showerdrain_mplus" not in report.ready_candidate_families
+    assert report.proposal_only_mapping_families == ("showerdrain_mplus",)
+    assert by_family["showerdrain_cplus"].status == "blocked_no_compatible_grate_evidence"
+    assert by_family["showerdrain_cplus"].next_required_action == "find explicit C+ compatible grate evidence / article matrix"
+
+    mod.print_report(report)
+    out = capsys.readouterr().out
+    assert "- Mplus_Compound_Mappings: 4" in out
+    assert "showerdrain_mplus | 0 | 0 | 0 | 0 | 0 | 0 | blocked_proposal_only_flow_policy | 0 | 4 | accept benchmark policy" in out
+    assert "Ready candidate families:\n- none" in out
+    assert "Proposal-only diagnostic mappings:" in out
+    assert "- showerdrain_mplus: 4 mappings, safe_to_generate=0, blocked=4, reason=benchmark policy for multi-head-condition flow values not yet accepted" in out
+    assert "assembly_model=channel_body_x_drain_body_x_grate" in out
+    assert "flow_policy=split_fields_only" in out
+    assert "flow_rate_lps_10mm_head=0.4" in out
+    assert "flow_rate_lps_20mm_head=0.46" in out
+    assert "selected_default_flow_rate_lps=empty" in out
+    assert "Production behavior changed: no" in out
+
+
 def test_build_report_blocks_article_variant_ambiguity_and_prints(monkeypatch, capsys):
     products = pd.DataFrame([
         {"product_id": "aco-cplus-base", "product_family": "showerdrain_cplus", "flow_rate_lps": 0.8, "water_seal_mm": 50, "outlet_dn": "DN50", "height_adj_min_mm": 90, "height_adj_max_mm": 120},
@@ -98,6 +179,7 @@ def test_main_runs_discovery_and_pipeline_without_writing_xlsx(monkeypatch, caps
     ])
     monkeypatch.setattr(mod.aco, "discover_candidates", lambda target_length_mm, tolerance_mm: ([{"product_id": "x", "product_family": "showerdrain_splus"}], {"ok": True}))
     monkeypatch.setattr(mod.pipeline, "run_update", lambda registry, cfg: (products, pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()))
+    monkeypatch.setattr(mod.excel_export, "_extract_mplus_compound_mappings", lambda *args: pd.DataFrame())
 
     rc = mod.main()
     out = capsys.readouterr().out
