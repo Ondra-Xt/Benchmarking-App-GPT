@@ -11,6 +11,61 @@ def _load_validator_module():
     return mod
 
 
+
+def _eplus_proposal_mappings_dataframe():
+    body_rows = [
+        (
+            "aco-showerdrain-eplus-rinnenkoerper-einbauhoehe-oberkante-estrich-25-128-mm",
+            "https://example.test/eplus/body-25",
+            25,
+        ),
+        (
+            "aco-showerdrain-eplus-rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm",
+            "https://example.test/eplus/body-57",
+            57,
+        ),
+        (
+            "aco-showerdrain-eplus-rinnenkoerper-einbauhoehe-oberkante-estrich-80-128-mm-din-en-1253-1",
+            "https://example.test/eplus/body-80",
+            80,
+        ),
+    ]
+    grate_id = "aco-showerdrain-eplus-design-roste-aus-elektropoliertem-edelstahl"
+    return pd.DataFrame([
+        {
+            "set_id": f"diagnostic-eplus-{body_id}__{grate_id}",
+            "product_family": "showerdrain_eplus",
+            "assembly_model": "base_x_grate",
+            "body_id": body_id,
+            "body_article_number": "",
+            "body_source_url": body_url,
+            "grate_id": grate_id,
+            "grate_article_number": "",
+            "grate_source_url": "https://example.test/eplus/grate",
+            "flow_rate_lps": 0.70,
+            "water_seal_mm": 50,
+            "outlet_dn": "DN50",
+            "height_adj_min_mm": height_min,
+            "height_adj_max_mm": 128,
+            "body_evidence_type": "source_page_level_body_url",
+            "body_confidence": "high",
+            "grate_evidence_type": "source_page_level_grate_url",
+            "grate_confidence": "high",
+            "compatibility_evidence_type": "page_level_family_bom_or_inferred_from_current_bom",
+            "compatibility_confidence": "medium",
+            "article_level_compatibility_found": False,
+            "data_quality_status": "proposal_only_partial",
+            "missing_evidence": "explicit_article_level_base_to_grate_compatibility",
+            "safe_to_generate": False,
+            "ready_for_benchmark": False,
+            "ready_for_customer_view": False,
+            "blocking_reason": "no explicit article-level base-to-grate compatibility matrix",
+            "recommended_next_action": "collect explicit article-level E+ base-to-grate compatibility before production generation",
+            "production_status_note": "diagnostic/proposal-only; no Products/BOM/assembly generation change",
+        }
+        for body_id, body_url, height_min in body_rows
+    ])
+
 def _mplus_compound_mappings_dataframe():
     rows = []
     for article, water_seal, outlet_dn in [
@@ -75,6 +130,7 @@ def _base_dataframes():
             "option_meta": "compatibility_confidence=implicit_family_level; explicit_article_matrix=false; source_limitation=; no explicit article-to-article matrix found"
         }]),
         "Mplus_Compound_Mappings": _mplus_compound_mappings_dataframe(),
+        "Eplus_Proposal_Mappings": _eplus_proposal_mappings_dataframe(),
         "Article_Variants": pd.DataFrame([
             {
                 "manufacturer": "aco",
@@ -233,6 +289,7 @@ def test_default_baseline_counts_updated():
     assert mod.EXPECTED_SHEET_COUNTS["Final_Assemblies"] == 28
     assert mod.EXPECTED_SHEET_COUNTS["Final_Set_Details"] == 28
     assert mod.EXPECTED_SHEET_COUNTS["Mplus_Compound_Mappings"] == 4
+    assert mod.EXPECTED_SHEET_COUNTS["Eplus_Proposal_Mappings"] == 3
     assert mod.EXPECTED_SHEET_COUNTS["Article_Variants"] == 76
     assert mod.EXPECTED_FINAL_SET_DETAILS_ROW_COUNT == 28
 
@@ -384,6 +441,7 @@ def test_final_assemblies_baseline_expectations():
     assert mod.EXPECTED_SHEET_COUNTS["Final_Assemblies"] == 28
     assert mod.EXPECTED_SHEET_COUNTS["Final_Set_Details"] == 28
     assert mod.EXPECTED_SHEET_COUNTS["Mplus_Compound_Mappings"] == 4
+    assert mod.EXPECTED_SHEET_COUNTS["Eplus_Proposal_Mappings"] == 3
     assert mod.EXPECTED_SHEET_COUNTS["Article_Variants"] == 76
     assert mod.EXPECTED_FINAL_SET_DETAILS_ROW_COUNT == 28
     assert mod.EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS == {

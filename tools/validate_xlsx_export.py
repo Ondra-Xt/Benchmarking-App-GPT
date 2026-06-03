@@ -17,6 +17,7 @@ EXPECTED_SHEET_COUNTS = {
     "Final_Assemblies": 28,
     "Final_Set_Details": 28,
     "Mplus_Compound_Mappings": 4,
+    "Eplus_Proposal_Mappings": 3,
     "Article_Variants": 76,
 }
 COMPONENTS_MIN_ROWS = 1
@@ -109,6 +110,7 @@ REQUIRED_SHEETS = [
     "Final_Assemblies",
     "Final_Set_Details",
     "Mplus_Compound_Mappings",
+    "Eplus_Proposal_Mappings",
     "Article_Variants",
 ]
 OPTIONAL_SHEETS = ["Evidence"]
@@ -151,6 +153,52 @@ MPLUS_COMPOUND_MAPPINGS_REQUIRED_COLUMNS = [
 ]
 MPLUS_EXPECTED_ARTICLES = {"9010.81.20", "9010.81.21", "9010.81.22", "9010.81.23"}
 MPLUS_BLOCKING_REASON_SNIPPET = "benchmark policy for multi-head-condition flow values not yet accepted"
+
+EPLUS_PROPOSAL_MAPPINGS_REQUIRED_COLUMNS = [
+    "set_id",
+    "product_family",
+    "assembly_model",
+    "body_id",
+    "body_article_number",
+    "body_source_url",
+    "grate_id",
+    "grate_article_number",
+    "grate_source_url",
+    "flow_rate_lps",
+    "water_seal_mm",
+    "outlet_dn",
+    "height_adj_min_mm",
+    "height_adj_max_mm",
+    "body_evidence_type",
+    "body_confidence",
+    "grate_evidence_type",
+    "grate_confidence",
+    "compatibility_evidence_type",
+    "compatibility_confidence",
+    "article_level_compatibility_found",
+    "data_quality_status",
+    "missing_evidence",
+    "safe_to_generate",
+    "ready_for_benchmark",
+    "ready_for_customer_view",
+    "blocking_reason",
+    "recommended_next_action",
+    "production_status_note",
+]
+EPLUS_EXPECTED_BODY_IDS = {
+    "aco-showerdrain-eplus-rinnenkoerper-einbauhoehe-oberkante-estrich-25-128-mm",
+    "aco-showerdrain-eplus-rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm",
+    "aco-showerdrain-eplus-rinnenkoerper-einbauhoehe-oberkante-estrich-80-128-mm-din-en-1253-1",
+}
+EPLUS_EXPECTED_GRATE_ID = "aco-showerdrain-eplus-design-roste-aus-elektropoliertem-edelstahl"
+EPLUS_MISSING_EVIDENCE_SNIPPET = "explicit_article_level_base_to_grate_compatibility"
+EPLUS_BLOCKING_REASON_SNIPPET = "no explicit article-level base-to-grate compatibility matrix"
+EPLUS_RECOMMENDED_NEXT_ACTION_SNIPPET = (
+    "collect explicit article-level E+ base-to-grate compatibility before production generation"
+)
+EPLUS_PRODUCTION_STATUS_NOTE_SNIPPET = (
+    "diagnostic/proposal-only; no Products/BOM/assembly generation change"
+)
 
 ARTICLE_VARIANTS_REQUIRED_COLUMNS = [
     "manufacturer",
@@ -282,6 +330,15 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
             else pd.DataFrame(columns=MPLUS_COMPOUND_MAPPINGS_REQUIRED_COLUMNS)
         )
     )
+    eplus_proposal_mappings = (
+        sheets.get("Eplus_Proposal_Mappings")
+        if "Eplus_Proposal_Mappings" in sheets
+        else (
+            pd.read_excel(xls, sheet_name="Eplus_Proposal_Mappings")
+            if "Eplus_Proposal_Mappings" in xls.sheet_names
+            else pd.DataFrame(columns=EPLUS_PROPOSAL_MAPPINGS_REQUIRED_COLUMNS)
+        )
+    )
     article_variants = sheets.get("Article_Variants", pd.DataFrame(columns=ARTICLE_VARIANTS_REQUIRED_COLUMNS))
 
     for name, expected in EXPECTED_SHEET_COUNTS.items():
@@ -355,6 +412,110 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
             not mplus_diagnostic_product_ids,
             f"overlap={mplus_diagnostic_product_ids}",
         ))
+
+
+    if "Eplus_Proposal_Mappings" in required_sheets or "Eplus_Proposal_Mappings" in xls.sheet_names:
+        eplus_missing_columns = [
+            col for col in EPLUS_PROPOSAL_MAPPINGS_REQUIRED_COLUMNS
+            if col not in eplus_proposal_mappings.columns
+        ]
+        results.append(CheckResult(
+            "eplus_proposal_mappings_required_columns",
+            not eplus_missing_columns,
+            f"missing={eplus_missing_columns} expected={EPLUS_PROPOSAL_MAPPINGS_REQUIRED_COLUMNS}",
+        ))
+
+        eplus_set_ids = _norm_series(eplus_proposal_mappings, "set_id")
+        eplus_set_ids_empty = int(eplus_set_ids.eq("").sum())
+        eplus_set_ids_with_url = int(eplus_set_ids.str.lower().str.contains("http", regex=False).sum())
+        results.append(CheckResult("eplus_proposal_mappings_set_id_non_empty", eplus_set_ids_empty == 0, f"actual_empty={eplus_set_ids_empty} expected_empty=0"))
+        results.append(CheckResult("eplus_proposal_mappings_set_id_no_url", eplus_set_ids_with_url == 0, f"actual_with_url={eplus_set_ids_with_url} expected=0"))
+
+        eplus_body_ids = set(_norm_series(eplus_proposal_mappings, "body_id"))
+        eplus_body_ids_lower = {value.lower() for value in eplus_body_ids}
+        expected_body_ids_lower = {value.lower() for value in EPLUS_EXPECTED_BODY_IDS}
+        missing_body_ids = sorted(expected_body_ids_lower - eplus_body_ids_lower)
+        extra_body_ids = sorted(eplus_body_ids_lower - expected_body_ids_lower - {""})
+        results.append(CheckResult(
+            "eplus_proposal_mappings_expected_body_ids",
+            not missing_body_ids and not extra_body_ids,
+            f"missing={missing_body_ids} extra={extra_body_ids} expected={sorted(EPLUS_EXPECTED_BODY_IDS)}",
+        ))
+
+        eplus_grate_ids = set(_norm_series(eplus_proposal_mappings, "grate_id"))
+        eplus_grate_ids_lower = {value.lower() for value in eplus_grate_ids}
+        expected_grate_id_lower = EPLUS_EXPECTED_GRATE_ID.lower()
+        missing_grate = expected_grate_id_lower not in eplus_grate_ids_lower
+        extra_grates = sorted(eplus_grate_ids_lower - {expected_grate_id_lower, ""})
+        results.append(CheckResult(
+            "eplus_proposal_mappings_expected_grate_id",
+            not missing_grate and not extra_grates,
+            f"missing={missing_grate} extra={extra_grates} expected={EPLUS_EXPECTED_GRATE_ID}",
+        ))
+
+        eplus_string_expectations = {
+            "product_family": "showerdrain_eplus",
+            "assembly_model": "base_x_grate",
+            "outlet_dn": "DN50",
+            "body_evidence_type": "source_page_level_body_url",
+            "body_confidence": "high",
+            "grate_evidence_type": "source_page_level_grate_url",
+            "grate_confidence": "high",
+            "compatibility_evidence_type": "page_level_family_bom_or_inferred_from_current_bom",
+            "compatibility_confidence": "medium",
+            "data_quality_status": "proposal_only_partial",
+        }
+        for column, expected in eplus_string_expectations.items():
+            bad = int((~_string_series_eq(eplus_proposal_mappings, column, expected)).sum())
+            results.append(CheckResult(f"eplus_proposal_mappings_value:{column}", bad == 0, f"actual_bad={bad} expected={expected}"))
+
+        eplus_numeric_expectations = {
+            "flow_rate_lps": 0.70,
+            "water_seal_mm": 50,
+            "height_adj_max_mm": 128,
+        }
+        for column, expected in eplus_numeric_expectations.items():
+            bad = int((~_numeric_series_eq(eplus_proposal_mappings, column, expected)).sum())
+            results.append(CheckResult(f"eplus_proposal_mappings_value:{column}", bad == 0, f"actual_bad={bad} expected={expected}"))
+
+        height_source = eplus_proposal_mappings.get("height_adj_min_mm", pd.Series([], dtype=object))
+        height_values = sorted(set(pd.to_numeric(height_source, errors="coerce").dropna().astype(int)))
+        if not height_values:
+            height_values = sorted({
+                expected
+                for body_id, expected in [
+                    ("aco-showerdrain-eplus-rinnenkoerper-einbauhoehe-oberkante-estrich-25-128-mm", 25),
+                    ("aco-showerdrain-eplus-rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm", 57),
+                    ("aco-showerdrain-eplus-rinnenkoerper-einbauhoehe-oberkante-estrich-80-128-mm-din-en-1253-1", 80),
+                ]
+                if body_id in eplus_body_ids_lower
+            })
+        results.append(CheckResult("eplus_proposal_mappings_height_adj_min_mm", height_values == [25, 57, 80], f"actual={height_values} expected={[25, 57, 80]}"))
+
+        for column in ["body_article_number", "grate_article_number"]:
+            filled = int((~_empty_series(eplus_proposal_mappings, column)).sum())
+            results.append(CheckResult(f"eplus_proposal_mappings_empty:{column}", filled == 0, f"actual_filled={filled} expected_filled=0"))
+
+        for column in ["article_level_compatibility_found", "safe_to_generate", "ready_for_benchmark", "ready_for_customer_view"]:
+            bad = int((~_bool_series_eq(eplus_proposal_mappings, column, False)).sum())
+            results.append(CheckResult(f"eplus_proposal_mappings_false:{column}", bad == 0, f"actual_bad={bad} expected=false"))
+
+        missing_evidence_bad = int((~_norm_series(eplus_proposal_mappings, "missing_evidence").str.contains(EPLUS_MISSING_EVIDENCE_SNIPPET, regex=False)).sum())
+        results.append(CheckResult("eplus_proposal_mappings_missing_evidence", missing_evidence_bad == 0, f"actual_bad={missing_evidence_bad} expected_contains={EPLUS_MISSING_EVIDENCE_SNIPPET}"))
+        blocking_bad = int((~_norm_series(eplus_proposal_mappings, "blocking_reason").str.lower().str.contains(EPLUS_BLOCKING_REASON_SNIPPET, regex=False)).sum())
+        results.append(CheckResult("eplus_proposal_mappings_blocking_reason", blocking_bad == 0, f"actual_bad={blocking_bad} expected_snippet={EPLUS_BLOCKING_REASON_SNIPPET}"))
+        next_action_bad = int((~_norm_series(eplus_proposal_mappings, "recommended_next_action").str.contains(EPLUS_RECOMMENDED_NEXT_ACTION_SNIPPET, regex=False)).sum())
+        results.append(CheckResult("eplus_proposal_mappings_recommended_next_action", next_action_bad == 0, f"actual_bad={next_action_bad} expected_snippet={EPLUS_RECOMMENDED_NEXT_ACTION_SNIPPET}"))
+        status_note_bad = int((~_norm_series(eplus_proposal_mappings, "production_status_note").str.contains(EPLUS_PRODUCTION_STATUS_NOTE_SNIPPET, regex=False)).sum())
+        results.append(CheckResult("eplus_proposal_mappings_production_status_note", status_note_bad == 0, f"actual_bad={status_note_bad} expected_snippet={EPLUS_PRODUCTION_STATUS_NOTE_SNIPPET}"))
+
+        proposed_ids = set(eplus_set_ids) - {""}
+        eplus_product_ids = sorted(proposed_ids & set(_norm_series(products, "product_id")))
+        eplus_final_ids = sorted(proposed_ids & set(_norm_series(final_assemblies, "product_id"))) if final_assemblies is not None else []
+        eplus_detail_ids = sorted(proposed_ids & (set(_norm_series(final_set_details, "set_id")) | set(_norm_series(final_set_details, "assembled_product_id")))) if final_set_details is not None else []
+        results.append(CheckResult("eplus_proposal_mappings_not_in_products", not eplus_product_ids, f"overlap={eplus_product_ids}"))
+        results.append(CheckResult("eplus_proposal_mappings_not_in_final_assemblies", not eplus_final_ids, f"overlap={eplus_final_ids}"))
+        results.append(CheckResult("eplus_proposal_mappings_not_in_final_set_details", not eplus_detail_ids, f"overlap={eplus_detail_ids}"))
 
     if "Article_Variants" in required_sheets or "Article_Variants" in xls.sheet_names:
         article_missing_columns = [col for col in ARTICLE_VARIANTS_REQUIRED_COLUMNS if col not in article_variants.columns]
