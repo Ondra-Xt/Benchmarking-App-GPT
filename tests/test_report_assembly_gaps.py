@@ -23,6 +23,34 @@ def _mplus_compound_mappings_dataframe():
     ])
 
 
+def _eplus_proposal_mappings_dataframe():
+    return pd.DataFrame([
+        {
+            "product_family": "showerdrain_eplus",
+            "assembly_model": "base_x_grate",
+            "body_id": body_id,
+            "grate_id": "aco-showerdrain-eplus-design-roste-aus-elektropoliertem-edelstahl",
+            "flow_rate_lps": 0.70,
+            "water_seal_mm": 50,
+            "outlet_dn": "DN50",
+            "height_adj_min_mm": height_min,
+            "height_adj_max_mm": 128,
+            "article_level_compatibility_found": False,
+            "data_quality_status": "proposal_only_partial",
+            "safe_to_generate": False,
+            "ready_for_benchmark": False,
+            "ready_for_customer_view": False,
+            "blocking_reason": "no explicit article-level base-to-grate compatibility matrix",
+            "recommended_next_action": "collect explicit article-level E+ base-to-grate compatibility before production generation",
+        }
+        for body_id, height_min in (
+            ("aco-showerdrain-eplus-rinnenkoerper-einbauhoehe-oberkante-estrich-25-128-mm", 25),
+            ("aco-showerdrain-eplus-rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm", 57),
+            ("aco-showerdrain-eplus-rinnenkoerper-einbauhoehe-oberkante-estrich-80-128-mm-din-en-1253-1", 80),
+        )
+    ])
+
+
 def test_build_report_classifies_active_ready_and_blocked_families():
     candidates = pd.DataFrame([
         {"product_id": "aco-cplus-base", "product_family": "showerdrain_cplus", "product_url": "https://example.test/cplus"},
@@ -147,6 +175,65 @@ def test_build_report_accounts_for_mplus_proposal_only_mappings(capsys):
     assert "Production behavior changed: no" in out
 
 
+def test_build_report_accounts_for_eplus_proposal_only_mappings(capsys):
+    products = pd.DataFrame([
+        {"product_id": "aco-assembled-showerdrain-splus-a__grate", "product_family": "showerdrain_splus", "flow_rate_lps": 0.8, "water_seal_mm": 50, "outlet_dn": "DN50", "height_adj_min_mm": 90, "height_adj_max_mm": 120},
+        {"product_id": "aco-assembled-showerdrain-c-a__grate", "product_family": "showerdrain_c", "flow_rate_lps": 0.7, "water_seal_mm": 50, "outlet_dn": "DN50", "height_adj_min_mm": 80, "height_adj_max_mm": 110},
+        {"product_id": "aco-assembled-easyflow-a__grate", "product_family": "easyflow", "flow_rate_lps": 0.6, "water_seal_mm": 50, "outlet_dn": "DN50", "height_adj_min_mm": 70, "height_adj_max_mm": 100},
+        {"product_id": "aco-assembled-easyflowplus-a__grate", "product_family": "easyflowplus", "flow_rate_lps": 0.6, "water_seal_mm": 50, "outlet_dn": "DN50", "height_adj_min_mm": 70, "height_adj_max_mm": 100},
+        {"product_id": "aco-cplus-base", "product_family": "showerdrain_cplus", "flow_rate_lps": 0.8, "water_seal_mm": 50, "outlet_dn": "DN50", "height_adj_min_mm": 90, "height_adj_max_mm": 120},
+    ])
+    components = pd.DataFrame([
+        {"product_id": "aco-cplus-grate", "option_family": "showerdrain_cplus"},
+    ])
+    bom = pd.DataFrame([
+        {"product_id": "aco-cplus-base", "parent_family": "showerdrain_cplus", "component_id": "aco-cplus-grate", "option_family": "showerdrain_cplus", "option_type": "optional_accessory"},
+    ])
+
+    report = mod.build_report(
+        pd.DataFrame(),
+        products,
+        components,
+        bom,
+        final_assemblies=pd.DataFrame(),
+        final_set_details=pd.DataFrame(),
+        article_variants=pd.DataFrame(),
+        mplus_compound_mappings=_mplus_compound_mappings_dataframe(),
+        eplus_proposal_mappings=_eplus_proposal_mappings_dataframe(),
+    )
+    by_family = {gap.family: gap for gap in report.families}
+    eplus = by_family["showerdrain_eplus"]
+
+    assert report.sheet_counts["Eplus_Proposal_Mappings"] == 3
+    assert eplus.current_assembled_count == 0
+    assert eplus.status == "blocked_proposal_only_compatibility_evidence"
+    assert eplus.proposal_only_mapping_count == 3
+    assert eplus.proposal_assembly_model == "base_x_grate"
+    assert eplus.proposal_safe_to_generate_count == 0
+    assert eplus.proposal_blocked_count == 3
+    assert eplus.proposal_article_level_compatibility_found == "False"
+    assert eplus.proposal_data_quality_status == "proposal_only_partial"
+    assert eplus.proposal_blocking_reason == "no explicit article-level base-to-grate compatibility matrix"
+    assert eplus.next_required_action == "collect explicit article-level E+ base-to-grate compatibility before production generation"
+    assert "showerdrain_eplus" not in report.ready_candidate_families
+    assert report.proposal_only_mapping_families == ("showerdrain_mplus", "showerdrain_eplus")
+    assert by_family["showerdrain_mplus"].status == "blocked_proposal_only_flow_policy"
+    assert by_family["showerdrain_cplus"].status == "blocked_no_compatible_grate_evidence"
+    assert by_family["showerdrain_cplus"].next_required_action == "find explicit C+ compatible grate evidence / article matrix"
+
+    mod.print_report(report)
+    out = capsys.readouterr().out
+    assert "- Eplus_Proposal_Mappings: 3" in out
+    assert "showerdrain_eplus | 0 | 0 | 0 | 0 | 0 | 0 | blocked_proposal_only_compatibility_evidence | 0 | 3 | collect explicit article-level E+ base-to-grate compatibility" in out
+    assert "Ready candidate families:\n- none" in out
+    assert "- showerdrain_mplus: 4 mappings, safe_to_generate=0, blocked=4, reason=benchmark policy for multi-head-condition flow values not yet accepted" in out
+    assert "- showerdrain_eplus: 3 mappings, safe_to_generate=0, blocked=3, reason=no explicit article-level base-to-grate compatibility matrix" in out
+    assert "assembly_model=base_x_grate" in out
+    assert "article_level_compatibility_found=False" in out
+    assert "data_quality_status=proposal_only_partial" in out
+    assert "Production behavior changed: no" in out
+
+
 def test_build_report_blocks_article_variant_ambiguity_and_prints(monkeypatch, capsys):
     products = pd.DataFrame([
         {"product_id": "aco-cplus-base", "product_family": "showerdrain_cplus", "flow_rate_lps": 0.8, "water_seal_mm": 50, "outlet_dn": "DN50", "height_adj_min_mm": 90, "height_adj_max_mm": 120},
@@ -180,6 +267,7 @@ def test_main_runs_discovery_and_pipeline_without_writing_xlsx(monkeypatch, caps
     monkeypatch.setattr(mod.aco, "discover_candidates", lambda target_length_mm, tolerance_mm: ([{"product_id": "x", "product_family": "showerdrain_splus"}], {"ok": True}))
     monkeypatch.setattr(mod.pipeline, "run_update", lambda registry, cfg: (products, pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()))
     monkeypatch.setattr(mod.excel_export, "_extract_mplus_compound_mappings", lambda *args: pd.DataFrame())
+    monkeypatch.setattr(mod.excel_export, "_extract_eplus_proposal_mappings", lambda *args: pd.DataFrame())
 
     rc = mod.main()
     out = capsys.readouterr().out
