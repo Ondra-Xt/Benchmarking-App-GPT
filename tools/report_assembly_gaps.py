@@ -40,6 +40,7 @@ STATUS_ACTIONS = {
     "blocked_incomplete_hydraulic_data": "find base product source with complete hydraulic data",
     "blocked_article_variant_ambiguous": "keep blocked because ambiguity remains; parse article table and resolve unique variant attribution",
     "blocked_proposal_only_flow_policy": "accept benchmark policy for multi-head-condition flow values before generating M+ production assemblies",
+    "blocked_proposal_only_compatibility_evidence": "collect explicit article-level E+ base-to-grate compatibility before production generation",
 }
 
 
@@ -66,6 +67,8 @@ class FamilyGap:
     proposal_flow_rate_lps_10mm_head: str = ""
     proposal_flow_rate_lps_20mm_head: str = ""
     proposal_selected_default_flow_rate_lps: str = ""
+    proposal_article_level_compatibility_found: str = ""
+    proposal_data_quality_status: str = ""
     proposal_blocking_reason: str = ""
 
 
@@ -80,7 +83,10 @@ class ProposalOnlyMappingSummary:
     flow_rate_lps_10mm_head: str
     flow_rate_lps_20mm_head: str
     selected_default_flow_rate_lps: str
+    article_level_compatibility_found: str
+    data_quality_status: str
     blocking_reason: str
+    recommended_next_action: str
 
 
 @dataclass(frozen=True)
@@ -195,32 +201,56 @@ def _unique_join(values: pd.Series) -> str:
     return ", ".join(unique)
 
 
-def _proposal_mapping_summaries(mplus_compound_mappings: pd.DataFrame) -> tuple[ProposalOnlyMappingSummary, ...]:
-    if mplus_compound_mappings is None or mplus_compound_mappings.empty:
-        return ()
+def _proposal_blocking_reason(family: str, rows: pd.DataFrame) -> str:
+    reason = _unique_join(_norm(rows, "blocking_reason"))
+    if family == "showerdrain_eplus" and "no explicit article-level base-to-grate compatibility matrix" in reason:
+        return "no explicit article-level base-to-grate compatibility matrix"
+    return reason
 
-    families = _norm(mplus_compound_mappings, "product_family").map(_canonical_family)
+
+def _proposal_recommended_next_action(family: str, rows: pd.DataFrame) -> str:
+    action = _unique_join(_norm(rows, "recommended_next_action"))
+    if family == "showerdrain_eplus" and action.endswith("."):
+        return action[:-1]
+    return action
+
+
+def _proposal_mapping_summaries(*mapping_frames: pd.DataFrame) -> tuple[ProposalOnlyMappingSummary, ...]:
     summaries: list[ProposalOnlyMappingSummary] = []
-    for family in sorted(family for family in set(families) if family):
-        rows = mplus_compound_mappings[families.eq(family)]
-        safe = _bool_series(rows.get("safe_to_generate", pd.Series(False, index=rows.index)))
-        mapping_count = int(len(rows))
-        safe_count = int(safe.sum())
-        summaries.append(
-            ProposalOnlyMappingSummary(
-                family=family,
-                mapping_count=mapping_count,
-                assembly_model=_unique_join(_norm(rows, "assembly_model")),
-                safe_to_generate_count=safe_count,
-                blocked_count=mapping_count - safe_count,
-                flow_policy=_unique_join(_norm(rows, "flow_policy")),
-                flow_rate_lps_10mm_head=_unique_join(_norm(rows, "flow_rate_lps_10mm_head")),
-                flow_rate_lps_20mm_head=_unique_join(_norm(rows, "flow_rate_lps_20mm_head")),
-                selected_default_flow_rate_lps=_unique_join(_norm(rows, "selected_default_flow_rate_lps")),
-                blocking_reason=_unique_join(_norm(rows, "blocking_reason")),
+    for mapping_frame in mapping_frames:
+        if mapping_frame is None or mapping_frame.empty:
+            continue
+
+        families = _norm(mapping_frame, "product_family").map(_canonical_family)
+        for family in sorted(family for family in set(families) if family):
+            rows = mapping_frame[families.eq(family)]
+            safe = _bool_series(rows.get("safe_to_generate", pd.Series(False, index=rows.index)))
+            mapping_count = int(len(rows))
+            safe_count = int(safe.sum())
+            summaries.append(
+                ProposalOnlyMappingSummary(
+                    family=family,
+                    mapping_count=mapping_count,
+                    assembly_model=_unique_join(_norm(rows, "assembly_model")),
+                    safe_to_generate_count=safe_count,
+                    blocked_count=mapping_count - safe_count,
+                    flow_policy=_unique_join(_norm(rows, "flow_policy")),
+                    flow_rate_lps_10mm_head=_unique_join(_norm(rows, "flow_rate_lps_10mm_head")),
+                    flow_rate_lps_20mm_head=_unique_join(_norm(rows, "flow_rate_lps_20mm_head")),
+                    selected_default_flow_rate_lps=_unique_join(_norm(rows, "selected_default_flow_rate_lps")),
+                    article_level_compatibility_found=_unique_join(_norm(rows, "article_level_compatibility_found")),
+                    data_quality_status=_unique_join(_norm(rows, "data_quality_status")),
+                    blocking_reason=_proposal_blocking_reason(family, rows),
+                    recommended_next_action=_proposal_recommended_next_action(family, rows),
+                )
             )
-        )
     return tuple(summaries)
+
+
+def _next_required_action(status: str, proposal_mapping: ProposalOnlyMappingSummary | None = None) -> str:
+    if status == "blocked_proposal_only_compatibility_evidence" and proposal_mapping and proposal_mapping.recommended_next_action:
+        return proposal_mapping.recommended_next_action
+    return STATUS_ACTIONS[status]
 
 def _component_families(components: pd.DataFrame) -> pd.Series:
     option = _norm(components, "option_family").map(_canonical_family)
@@ -278,7 +308,10 @@ def _family_gap(
     if current > 0:
         status = "already_active"
     elif proposal_mapping is not None and proposal_mapping.blocked_count > 0:
-        status = "blocked_proposal_only_flow_policy"
+        if family == "showerdrain_eplus":
+            status = "blocked_proposal_only_compatibility_evidence"
+        else:
+            status = "blocked_proposal_only_flow_policy"
     elif len(bases) == 0:
         status = "blocked_no_base_rows"
     elif len(complete_bases) == 0:
@@ -305,7 +338,7 @@ def _family_gap(
         dangling_component_ids=dangling_ids,
         source_urls_available=_source_urls_for_family(family, source_frames),
         proposed_assembled_product_count=proposed if status == "ready_candidate" else 0,
-        next_required_action=STATUS_ACTIONS[status],
+        next_required_action=_next_required_action(status, proposal_mapping),
         proposal_only_mapping_count=proposal_mapping.mapping_count if proposal_mapping else 0,
         proposal_assembly_model=proposal_mapping.assembly_model if proposal_mapping else "",
         proposal_safe_to_generate_count=proposal_mapping.safe_to_generate_count if proposal_mapping else 0,
@@ -314,6 +347,8 @@ def _family_gap(
         proposal_flow_rate_lps_10mm_head=proposal_mapping.flow_rate_lps_10mm_head if proposal_mapping else "",
         proposal_flow_rate_lps_20mm_head=proposal_mapping.flow_rate_lps_20mm_head if proposal_mapping else "",
         proposal_selected_default_flow_rate_lps=proposal_mapping.selected_default_flow_rate_lps if proposal_mapping else "",
+        proposal_article_level_compatibility_found=proposal_mapping.article_level_compatibility_found if proposal_mapping else "",
+        proposal_data_quality_status=proposal_mapping.data_quality_status if proposal_mapping else "",
         proposal_blocking_reason=proposal_mapping.blocking_reason if proposal_mapping else "",
     )
 
@@ -327,6 +362,7 @@ def build_report(
     final_set_details: pd.DataFrame | None = None,
     article_variants: pd.DataFrame | None = None,
     mplus_compound_mappings: pd.DataFrame | None = None,
+    eplus_proposal_mappings: pd.DataFrame | None = None,
 ) -> AssemblyGapReport:
     candidates_all = pd.DataFrame() if candidates_all is None else candidates_all.copy()
     products = pd.DataFrame() if products is None else products.copy()
@@ -336,7 +372,8 @@ def build_report(
     final_set_details = pd.DataFrame() if final_set_details is None else final_set_details.copy()
     article_variants = pd.DataFrame() if article_variants is None else article_variants.copy()
     mplus_compound_mappings = pd.DataFrame() if mplus_compound_mappings is None else mplus_compound_mappings.copy()
-    proposal_mappings = _proposal_mapping_summaries(mplus_compound_mappings)
+    eplus_proposal_mappings = pd.DataFrame() if eplus_proposal_mappings is None else eplus_proposal_mappings.copy()
+    proposal_mappings = _proposal_mapping_summaries(mplus_compound_mappings, eplus_proposal_mappings)
     proposal_by_family = {summary.family: summary for summary in proposal_mappings}
 
     if final_assemblies.empty:
@@ -368,7 +405,7 @@ def build_report(
             components,
             bom,
             article_variants,
-            (candidates_all, products, components, bom, final_assemblies, final_set_details, article_variants, mplus_compound_mappings),
+            (candidates_all, products, components, bom, final_assemblies, final_set_details, article_variants, mplus_compound_mappings, eplus_proposal_mappings),
             proposal_by_family.get(family),
         )
         for family in ordered
@@ -388,6 +425,7 @@ def build_report(
             "Final_Assemblies": len(final_assemblies),
             "Final_Set_Details": len(final_set_details),
             "Mplus_Compound_Mappings": len(mplus_compound_mappings),
+            "Eplus_Proposal_Mappings": len(eplus_proposal_mappings),
             "Article_Variants": len(article_variants),
         },
         current_assembled_counts=current_counts,
@@ -445,6 +483,8 @@ def print_report(report: AssemblyGapReport) -> None:
             print(f"  flow_rate_lps_10mm_head={summary.flow_rate_lps_10mm_head or 'empty'}")
             print(f"  flow_rate_lps_20mm_head={summary.flow_rate_lps_20mm_head or 'empty'}")
             print(f"  selected_default_flow_rate_lps={selected}")
+            print(f"  article_level_compatibility_found={summary.article_level_compatibility_found or 'empty'}")
+            print(f"  data_quality_status={summary.data_quality_status or 'empty'}")
     else:
         print("- none")
 
@@ -495,6 +535,11 @@ def main() -> int:
         final_assemblies,
         final_set_details,
     )
+    eplus_proposal_mappings = excel_export._extract_eplus_proposal_mappings(
+        products,
+        final_assemblies,
+        final_set_details,
+    )
     report = build_report(
         registry,
         products,
@@ -503,6 +548,7 @@ def main() -> int:
         final_assemblies=final_assemblies,
         final_set_details=final_set_details,
         mplus_compound_mappings=mplus_compound_mappings,
+        eplus_proposal_mappings=eplus_proposal_mappings,
     )
     print_report(report)
     return 0
