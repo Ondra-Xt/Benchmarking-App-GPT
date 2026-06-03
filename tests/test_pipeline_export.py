@@ -231,6 +231,71 @@ class PipelineExportTests(unittest.TestCase):
             self.assertFalse(set(article_df["article_number"]) & product_ids)
 
 
+
+    def test_export_adds_mplus_compound_mappings_after_final_set_details(self):
+        with tempfile.TemporaryDirectory() as td:
+            template = Path(td) / "template.xlsx"
+            out = Path(td) / "out.xlsx"
+            self._make_template(template)
+
+            class EmptyMappingReport:
+                proposed_mappings = ()
+                article_level_drain_bodies = ()
+                safe_to_generate_counts = {"safe": 0, "blocked": 4}
+                missing_technical_field_summary = {"flow_rate_lps": 4}
+
+            class FlowCandidate:
+                def __init__(self, flow_rate_lps, head_mm):
+                    self.flow_rate_lps = flow_rate_lps
+                    self.head_mm = head_mm
+                    self.evidence_type = "explicit_drain_body_family_level"
+                    self.confidence = "medium"
+                    self.article_specific = False
+                    self.flow_attribution_scope = "drain_body_family_level"
+
+            class AccessoryReduction:
+                accessory_flow_reduction_lps = "0.1"
+
+            class FlowRiskChecks:
+                accessory_reduction_treated_as_flow_candidate = ()
+                multiple_head_condition_flow_values_found = True
+                article_level_flow_table_values_found = False
+
+            class ArticleAssessment:
+                article_specific = False
+
+            class FlowDiagnostic:
+                target_articles = ("9010.81.20", "9010.81.21", "9010.81.22", "9010.81.23")
+                drain_body_flow_candidates = (FlowCandidate("0.4", "10"), FlowCandidate("0.46", "20"))
+                accessory_flow_reduction_lps = (AccessoryReduction(),)
+                risk_checks = FlowRiskChecks()
+                per_article = (ArticleAssessment(),)
+
+            products = pd.DataFrame([{"manufacturer": "aco", "product_id": "aco-regular-product"}])
+            with (
+                patch("tools.report_mplus_compound_assembly_mapping.build_report", return_value=EmptyMappingReport()),
+                patch("tools.diagnose_mplus_flow_rate_sources.build_diagnostic", return_value=FlowDiagnostic()),
+            ):
+                export_excel(template, out, default_config(), products_df=products, comparison_df=products)
+
+            wb = openpyxl.load_workbook(out)
+            self.assertIn("Mplus_Compound_Mappings", wb.sheetnames)
+            self.assertLess(wb.sheetnames.index("Final_Set_Details"), wb.sheetnames.index("Mplus_Compound_Mappings"))
+            self.assertLess(wb.sheetnames.index("Mplus_Compound_Mappings"), wb.sheetnames.index("Article_Variants"))
+
+            rows = self._sheet_rows(out, "Mplus_Compound_Mappings")
+            df = pd.DataFrame(rows[1:], columns=rows[0])
+            self.assertEqual(len(df), 4)
+            self.assertEqual(set(df["drain_body_article_number"]), {"9010.81.20", "9010.81.21", "9010.81.22", "9010.81.23"})
+            self.assertTrue(df["flow_rate_lps"].isna().all())
+            self.assertTrue(df["selected_default_flow_rate_lps"].isna().all())
+            self.assertEqual(set(df["flow_rate_lps_10mm_head"]), {"0.4"})
+            self.assertEqual(set(df["flow_rate_lps_20mm_head"]), {"0.46"})
+            self.assertEqual(set(df["safe_to_generate"]), {False})
+            self.assertEqual(len(self._sheet_rows(out, "Products")) - 1, 1)
+            self.assertEqual(len(self._sheet_rows(out, "Final_Assemblies")) - 1, 0)
+            self.assertEqual(len(self._sheet_rows(out, "Final_Set_Details")) - 1, 0)
+
     def test_article_variant_products_flag_defaults_to_disabled(self):
         registry = pd.DataFrame([
             {

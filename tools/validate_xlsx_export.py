@@ -15,6 +15,9 @@ EXPECTED_SHEET_COUNTS = {
     "Components": 100,
     "BOM_Options": 221,
     "Final_Assemblies": 28,
+    "Final_Set_Details": 28,
+    "Mplus_Compound_Mappings": 4,
+    "Article_Variants": 76,
 }
 COMPONENTS_MIN_ROWS = 1
 EXPECTED_BOM_OPTION_TYPE_COUNTS = {
@@ -105,9 +108,50 @@ REQUIRED_SHEETS = [
     "BOM_Options",
     "Final_Assemblies",
     "Final_Set_Details",
+    "Mplus_Compound_Mappings",
     "Article_Variants",
 ]
 OPTIONAL_SHEETS = ["Evidence"]
+
+MPLUS_COMPOUND_MAPPINGS_REQUIRED_COLUMNS = [
+    "set_id",
+    "product_family",
+    "assembly_model",
+    "channel_body_id",
+    "channel_body_article_number",
+    "drain_body_id",
+    "drain_body_article_number",
+    "grate_id",
+    "grate_article_number",
+    "source_url_channel_body",
+    "source_url_drain_body",
+    "source_url_grate",
+    "water_seal_mm",
+    "outlet_dn",
+    "height_adj_min_mm",
+    "height_adj_max_mm",
+    "flow_rate_lps",
+    "flow_rate_lps_10mm_head",
+    "flow_rate_lps_20mm_head",
+    "selected_default_flow_rate_lps",
+    "accessory_flow_reduction_lps",
+    "flow_policy",
+    "flow_evidence_type",
+    "flow_confidence",
+    "flow_article_specific",
+    "flow_attribution_scope",
+    "missing_technical_fields",
+    "data_quality_status",
+    "safe_to_generate",
+    "ready_for_benchmark",
+    "ready_for_customer_view",
+    "blocking_reason",
+    "recommended_next_action",
+    "production_status_note",
+]
+MPLUS_EXPECTED_ARTICLES = {"9010.81.20", "9010.81.21", "9010.81.22", "9010.81.23"}
+MPLUS_BLOCKING_REASON_SNIPPET = "benchmark policy for multi-head-condition flow values not yet accepted"
+
 ARTICLE_VARIANTS_REQUIRED_COLUMNS = [
     "manufacturer",
     "base_product_id",
@@ -229,6 +273,15 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
     )
     final_assemblies = sheets.get("Final_Assemblies")
     final_set_details = sheets.get("Final_Set_Details")
+    mplus_compound_mappings = (
+        sheets.get("Mplus_Compound_Mappings")
+        if "Mplus_Compound_Mappings" in sheets
+        else (
+            pd.read_excel(xls, sheet_name="Mplus_Compound_Mappings")
+            if "Mplus_Compound_Mappings" in xls.sheet_names
+            else pd.DataFrame(columns=MPLUS_COMPOUND_MAPPINGS_REQUIRED_COLUMNS)
+        )
+    )
     article_variants = sheets.get("Article_Variants", pd.DataFrame(columns=ARTICLE_VARIANTS_REQUIRED_COLUMNS))
 
     for name, expected in EXPECTED_SHEET_COUNTS.items():
@@ -237,6 +290,71 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
 
     comp_ok = len(components) >= COMPONENTS_MIN_ROWS
     results.append(CheckResult("components_min_rows", comp_ok, f"actual={len(components)} expected>={COMPONENTS_MIN_ROWS}"))
+
+
+    if "Mplus_Compound_Mappings" in required_sheets or "Mplus_Compound_Mappings" in xls.sheet_names:
+        mplus_missing_columns = [
+            col for col in MPLUS_COMPOUND_MAPPINGS_REQUIRED_COLUMNS
+            if col not in mplus_compound_mappings.columns
+        ]
+        results.append(CheckResult(
+            "mplus_compound_mappings_required_columns",
+            not mplus_missing_columns,
+            f"missing={mplus_missing_columns} expected={MPLUS_COMPOUND_MAPPINGS_REQUIRED_COLUMNS}",
+        ))
+        mplus_set_ids = _norm_series(mplus_compound_mappings, "set_id")
+        mplus_set_ids_empty = int(mplus_set_ids.eq("").sum())
+        mplus_set_ids_with_url = int(mplus_set_ids.str.lower().str.contains("http", regex=False).sum())
+        results.append(CheckResult("mplus_compound_mappings_set_id_non_empty", mplus_set_ids_empty == 0, f"actual_empty={mplus_set_ids_empty} expected_empty=0"))
+        results.append(CheckResult("mplus_compound_mappings_set_id_no_url", mplus_set_ids_with_url == 0, f"actual_with_url={mplus_set_ids_with_url} expected=0"))
+
+        mplus_articles = set(_norm_series(mplus_compound_mappings, "drain_body_article_number"))
+        missing_mplus_articles = sorted(MPLUS_EXPECTED_ARTICLES - mplus_articles)
+        extra_mplus_articles = sorted(mplus_articles - MPLUS_EXPECTED_ARTICLES - {""})
+        results.append(CheckResult(
+            "mplus_compound_mappings_expected_articles",
+            not missing_mplus_articles and not extra_mplus_articles,
+            f"missing={missing_mplus_articles} extra={extra_mplus_articles} expected={sorted(MPLUS_EXPECTED_ARTICLES)}",
+        ))
+
+        mplus_string_expectations = {
+            "product_family": "showerdrain_mplus",
+            "assembly_model": "channel_body_x_drain_body_x_grate",
+            "flow_policy": "split_fields_only",
+            "data_quality_status": "partial",
+        }
+        for column, expected in mplus_string_expectations.items():
+            bad = int((~_string_series_eq(mplus_compound_mappings, column, expected)).sum())
+            results.append(CheckResult(f"mplus_compound_mappings_value:{column}", bad == 0, f"actual_bad={bad} expected={expected}"))
+
+        mplus_numeric_expectations = {
+            "flow_rate_lps_10mm_head": 0.4,
+            "flow_rate_lps_20mm_head": 0.46,
+            "accessory_flow_reduction_lps": 0.1,
+        }
+        for column, expected in mplus_numeric_expectations.items():
+            bad = int((~_numeric_series_eq(mplus_compound_mappings, column, expected)).sum())
+            results.append(CheckResult(f"mplus_compound_mappings_value:{column}", bad == 0, f"actual_bad={bad} expected={expected}"))
+
+        for column in ["flow_rate_lps", "selected_default_flow_rate_lps"]:
+            filled = int((~_empty_series(mplus_compound_mappings, column)).sum())
+            results.append(CheckResult(f"mplus_compound_mappings_empty:{column}", filled == 0, f"actual_filled={filled} expected_filled=0"))
+
+        for column in ["flow_article_specific", "safe_to_generate", "ready_for_benchmark", "ready_for_customer_view"]:
+            bad = int((~_bool_series_eq(mplus_compound_mappings, column, False)).sum())
+            results.append(CheckResult(f"mplus_compound_mappings_false:{column}", bad == 0, f"actual_bad={bad} expected=false"))
+
+        missing_field_bad = int((~_norm_series(mplus_compound_mappings, "missing_technical_fields").str.contains("flow_rate_lps", regex=False)).sum())
+        results.append(CheckResult("mplus_compound_mappings_missing_fields_contains_flow", missing_field_bad == 0, f"actual_bad={missing_field_bad} expected_contains=flow_rate_lps"))
+        blocking_bad = int((~_norm_series(mplus_compound_mappings, "blocking_reason").str.lower().str.contains(MPLUS_BLOCKING_REASON_SNIPPET, regex=False)).sum())
+        results.append(CheckResult("mplus_compound_mappings_blocking_reason", blocking_bad == 0, f"actual_bad={blocking_bad} expected_snippet={MPLUS_BLOCKING_REASON_SNIPPET}"))
+
+        mplus_diagnostic_product_ids = sorted(set(mplus_set_ids) & set(_norm_series(products, "product_id")))
+        results.append(CheckResult(
+            "mplus_compound_mappings_not_in_products",
+            not mplus_diagnostic_product_ids,
+            f"overlap={mplus_diagnostic_product_ids}",
+        ))
 
     if "Article_Variants" in required_sheets or "Article_Variants" in xls.sheet_names:
         article_missing_columns = [col for col in ARTICLE_VARIANTS_REQUIRED_COLUMNS if col not in article_variants.columns]
