@@ -24,10 +24,10 @@ ACTIVE_FAMILIES = (
     "showerdrain_c",
     "easyflow",
     "easyflowplus",
+    "showerdrain_mplus",
 )
 REQUIRED_BLOCKED_FAMILIES = (
     "showerdrain_cplus",
-    "showerdrain_mplus",
     "showerdrain_eplus",
     "showerdrain_b",
 )
@@ -305,7 +305,9 @@ def _family_gap(
         complete_base_ids = set(_norm(complete_bases, "product_id"))
         proposed = int(_norm(valid_compatible_rows, "product_id").isin(complete_base_ids).sum())
 
-    if current > 0:
+    if family == "showerdrain_mplus" and current > 0 and proposal_mapping is not None and proposal_mapping.blocked_count > 0:
+        status = "blocked_pending_conditional_parameter_scoring"
+    elif current > 0:
         status = "already_active"
     elif proposal_mapping is not None and proposal_mapping.blocked_count > 0:
         if family in {"showerdrain_eplus", "showerdrain_cplus"}:
@@ -383,11 +385,13 @@ def build_report(
             pd.DataFrame(),
             mplus_compound_mappings,
         )
-
-    if final_assemblies.empty:
         final_assemblies = excel_export._extract_final_assemblies(products)
-    if final_set_details.empty:
         final_set_details = excel_export._extract_final_set_details(final_assemblies, bom, components)
+    else:
+        if final_assemblies.empty:
+            final_assemblies = excel_export._extract_final_assemblies(products)
+        if final_set_details.empty:
+            final_set_details = excel_export._extract_final_set_details(final_assemblies, bom, components)
     if article_variants.empty:
         try:
             article_variants = excel_export._extract_article_variants(candidates_all, products)
@@ -530,7 +534,7 @@ def print_report(report: AssemblyGapReport) -> None:
         else:
             print(f"- {blocked.family}: {blocked.next_required_action}")
 
-    print("\nProduction behavior changed: no (report only; no product, assembly, BOM, scoring, connector, validator, or XLSX export changes)")
+    print("\nProduction behavior changed: yes (report reflects blocked M+ final assembly output; no BOM, scoring, connector, or customer-ready behavior changes)")
 
 
 def main() -> int:

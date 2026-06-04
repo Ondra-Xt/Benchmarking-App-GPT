@@ -553,6 +553,27 @@ def _extract_final_assemblies(products_df: pd.DataFrame) -> pd.DataFrame:
         for family, missing_fields in zip(families, missing_by_row)
     ]
 
+    mplus_mask = families.eq("showerdrain_mplus")
+    if bool(mplus_mask.any()):
+        for column, value in {
+            "product_family": "showerdrain_mplus",
+            "family": "showerdrain_mplus",
+            "assembled_from_bom": "true",
+            "system_role": "assembled_system",
+            "flow_rate_lps": "",
+            "flow_rate_status": MPLUS_FLOW_RATE_STATUS,
+            "is_complete_technical_data": False,
+            "missing_technical_fields": "flow_rate_lps",
+            "data_quality_status": MPLUS_FINAL_DATA_QUALITY_STATUS,
+            "ready_for_benchmark": False,
+            "ready_for_customer_view": False,
+            "blocked_reason": MPLUS_BLOCKING_REASON,
+            "source_status_note": MPLUS_PRODUCTION_STATUS_NOTE,
+        }.items():
+            if column not in final_assemblies.columns:
+                final_assemblies[column] = ""
+            final_assemblies.loc[mplus_mask, column] = value
+
     return final_assemblies
 
 
@@ -1207,7 +1228,7 @@ def _append_mplus_final_assembly_rows(
         if not (channel_body_id and drain_body_id and grate_id):
             continue
         assembled_id = _mplus_assembled_product_id(channel_body_id, drain_body_id, grate_id)
-        if not assembled_id or assembled_id in existing_product_ids:
+        if not assembled_id:
             continue
         article = str(mapping.get("drain_body_article_number") or "").strip()
         name = f"ACO ShowerDrain M+ assembled set {article}".strip()
@@ -1217,6 +1238,7 @@ def _append_mplus_final_assembly_rows(
             "product_name": name,
             "candidate_type": "drain",
             "product_family": "showerdrain_mplus",
+            "family": "showerdrain_mplus",
             "complete_system": "yes",
             "system_role": "assembled_system",
             "promote_to_product": "yes",
@@ -1224,7 +1246,7 @@ def _append_mplus_final_assembly_rows(
             "why_not_product_reason": "",
             "assembly_reason": "aco_mplus_channel_body_x_drain_body_x_grate",
             "assembly_model": "channel_body_x_drain_body_x_grate",
-            "assembled_from_bom": "false",
+            "assembled_from_bom": "true",
             "channel_body_id": mapping.get("channel_body_id", ""),
             "drain_body_id": mapping.get("drain_body_id", ""),
             "grate_id": mapping.get("grate_id", ""),
@@ -1263,20 +1285,29 @@ def _append_mplus_final_assembly_rows(
                 if str(mapping.get(k) or "").strip()
             ),
         }
-        product_rows.append(product_row)
-        existing_product_ids.add(assembled_id)
+        if assembled_id in existing_product_ids and "product_id" in products_df.columns:
+            product_mask = products_df["product_id"].fillna("").astype(str).str.strip().eq(assembled_id)
+            for column, value in product_row.items():
+                if column not in products_df.columns:
+                    products_df[column] = ""
+                products_df.loc[product_mask, column] = value
+        else:
+            product_rows.append(product_row)
+            existing_product_ids.add(assembled_id)
 
-        if assembled_id not in existing_comparison_ids:
-            comparison_row = {
+        comparison_row = {
                 "manufacturer": "aco",
                 "product_id": assembled_id,
                 "product_name": name,
                 "candidate_type": "drain",
                 "product_family": "showerdrain_mplus",
+                "family": "showerdrain_mplus",
                 "complete_system": "yes",
+                "system_role": "assembled_system",
                 "promote_to_product": "yes",
                 "promotion_reason": "assembled_from_mplus_compound_mapping",
                 "why_not_product_reason": "",
+                "assembled_from_bom": "true",
                 "matched_component_ids": product_row["matched_component_ids"],
                 "flow_rate_lps": "",
                 "flow_rate_status": MPLUS_FLOW_RATE_STATUS,
@@ -1289,6 +1320,13 @@ def _append_mplus_final_assembly_rows(
                 "blocked_reason": MPLUS_BLOCKING_REASON,
                 "data_quality_status": MPLUS_FINAL_DATA_QUALITY_STATUS,
             }
+        if assembled_id in existing_comparison_ids and "product_id" in comparison_df.columns:
+            comparison_mask = comparison_df["product_id"].fillna("").astype(str).str.strip().eq(assembled_id)
+            for column, value in comparison_row.items():
+                if column not in comparison_df.columns:
+                    comparison_df[column] = ""
+                comparison_df.loc[comparison_mask, column] = value
+        else:
             comparison_rows.append(comparison_row)
             existing_comparison_ids.add(assembled_id)
 

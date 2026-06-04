@@ -1797,6 +1797,14 @@ class PipelineExportTests(unittest.TestCase):
             self.assertTrue((complete_detail_rows["ready_for_customer_view"] == True).all())
             self.assertTrue((complete_detail_rows["article_variant_status"] == "not_required").all())
             self.assertTrue((complete_detail_rows["blocked_reason"].fillna("") == "").all())
+            mplus_rows = final_df[final_df["assembled_family"] == "showerdrain_mplus"]
+            self.assertTrue((mplus_rows["ready_for_benchmark"] == False).all())
+            self.assertTrue((mplus_rows["ready_for_customer_view"] == False).all())
+            self.assertTrue((mplus_rows["product_family"] == "showerdrain_mplus").all())
+            self.assertTrue((mplus_rows["family"] == "showerdrain_mplus").all())
+            self.assertTrue((mplus_rows["assembled_from_bom"] == "true").all())
+            self.assertTrue((mplus_rows["flow_rate_status"] == "conditional").all())
+            self.assertTrue((mplus_rows["flow_rate_lps"].fillna("") == "").all())
             mplus_detail_rows = detail_df[detail_df["assembled_family"] == "showerdrain_mplus"]
             self.assertTrue((mplus_detail_rows["ready_for_benchmark"] == False).all())
             self.assertTrue((mplus_detail_rows["ready_for_customer_view"] == False).all())

@@ -141,6 +141,41 @@ def test_mplus_final_assembly_rows_are_generated_but_blocked():
     assert set(conditional["set_id"]) == set(mappings["set_id"])
 
 
+def test_existing_mplus_rows_are_normalized_to_blocked_metadata():
+    mappings = _mplus_mapping_rows()
+    products, comparison = _append_mplus_final_assembly_rows(pd.DataFrame(), pd.DataFrame(), mappings)
+    products["ready_for_benchmark"] = True
+    products["ready_for_customer_view"] = True
+    products["assembled_from_bom"] = "false"
+    products["family"] = ""
+    comparison["ready_for_benchmark"] = True
+    comparison["ready_for_customer_view"] = True
+    comparison["assembled_from_bom"] = "false"
+    comparison["family"] = ""
+
+    products, comparison = _append_mplus_final_assembly_rows(products, comparison, mappings)
+    final_assemblies = _extract_final_assemblies(products)
+    final_set_details = _extract_final_set_details(final_assemblies, pd.DataFrame(), pd.DataFrame())
+
+    assert products["product_family"].eq("showerdrain_mplus").all()
+    assert products["family"].eq("showerdrain_mplus").all()
+    assert products["assembled_from_bom"].eq("true").all()
+    assert products["flow_rate_status"].eq("conditional").all()
+    assert products["ready_for_benchmark"].eq(False).all()
+    assert products["ready_for_customer_view"].eq(False).all()
+    assert comparison["product_family"].eq("showerdrain_mplus").all()
+    assert comparison["family"].eq("showerdrain_mplus").all()
+    assert comparison["assembled_from_bom"].eq("true").all()
+    assert comparison["ready_for_benchmark"].eq(False).all()
+    assert comparison["ready_for_customer_view"].eq(False).all()
+    assert final_assemblies["ready_for_benchmark"].eq(False).all()
+    assert final_assemblies["ready_for_customer_view"].eq(False).all()
+    assert final_assemblies["data_quality_status"].eq("conditional_parameter_available_production_blocked").all()
+    assert final_assemblies["blocked_reason"].eq("blocked_pending_conditional_parameter_scoring").all()
+    assert final_set_details["ready_for_benchmark"].eq(False).all()
+    assert final_set_details["ready_for_customer_view"].eq(False).all()
+
+
 def test_mplus_default_flow_stays_empty_while_final_rows_are_blocked():
     mappings = _mplus_mapping_rows()
     products = pd.DataFrame(
