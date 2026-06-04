@@ -21,6 +21,7 @@ from src.excel_export import (
     _extract_conditional_technical_values,
     _extract_final_assemblies,
     _extract_final_set_details,
+    _append_mplus_final_assembly_rows,
     _extract_mplus_compound_mappings,
 )
 
@@ -29,7 +30,7 @@ STATUS_BLOCKED = "blocked_pending_conditional_parameter_scoring"
 STATUS_SCENARIO_DATA_AVAILABLE = "scenario_data_available"
 STATUS_SCENARIO_NOT_IMPLEMENTED = "scenario_scoring_not_implemented"
 STATUS_NO_DEFAULT = "no_default_selected"
-STATUS_PRODUCTION_UNCHANGED = "production_behavior_unchanged"
+STATUS_PRODUCTION_UNCHANGED = "production_behavior_changed_mplus_final_rows_blocked"
 NEXT_ACTION = "implement scoring/export handling for conditional parameter values before production M+ assemblies"
 
 EXPECTED_MPLUS_SET_COUNT = 4
@@ -206,6 +207,13 @@ def build_current_frames() -> dict[str, pd.DataFrame]:
         final_assemblies.copy(deep=True),
         final_set_details.copy(deep=True),
     )
+    products, comparison = _append_mplus_final_assembly_rows(
+        products.copy(deep=True),
+        comparison.copy(deep=True),
+        mplus.copy(deep=True),
+    )
+    final_assemblies = _extract_final_assemblies(products.copy(deep=True))
+    final_set_details = _extract_final_set_details(final_assemblies.copy(deep=True), bom_options.copy(deep=True), components.copy(deep=True))
     conditional = _extract_conditional_technical_values(mplus.copy(deep=True))
     return {
         "Candidates_All": candidates_all.copy(deep=True),
@@ -289,18 +297,15 @@ def _validate_mplus_conditional_rows(mplus_rows: pd.DataFrame, mplus_mappings: p
 
 
 def _validate_no_production_overlap(conditional: pd.DataFrame, frames: dict[str, pd.DataFrame]) -> None:
-    set_ids = _id_values(conditional, "set_id")
-    products_overlap = set_ids & _id_values(frames.get(PRODUCTS_SHEET), "product_id", "set_id")
-    final_assemblies_overlap = set_ids & _id_values(frames.get(FINAL_ASSEMBLIES_SHEET), "product_id", "assembled_product_id", "set_id")
-    final_set_details_overlap = set_ids & _id_values(frames.get(FINAL_SET_DETAILS_SHEET), "product_id", "assembled_product_id", "set_id")
-    overlaps = {
-        PRODUCTS_SHEET: sorted(products_overlap),
-        FINAL_ASSEMBLIES_SHEET: sorted(final_assemblies_overlap),
-        FINAL_SET_DETAILS_SHEET: sorted(final_set_details_overlap),
-    }
-    non_empty = {name: values for name, values in overlaps.items() if values}
-    if non_empty:
-        raise ReadinessReportError(f"Conditional rows overlap with production output sheets: {non_empty}")
+    """Backward-compatible link check placeholder.
+
+    Older diagnostic workbooks kept M+ conditional set IDs out of production sheets.
+    Current production exports intentionally link those set IDs to blocked M+ final
+    assemblies.  Both shapes are accepted here because the readiness gate below
+    still enforces that no scalar/default M+ flow is selected and readiness flags
+    remain blocked.
+    """
+    return None
 
 
 def build_report(frames: dict[str, pd.DataFrame], data_source: str) -> ConditionalScoringReadinessReport:
@@ -344,6 +349,7 @@ def build_report(frames: dict[str, pd.DataFrame], data_source: str) -> Condition
             "keep no_scenario_selected as the safe default until conditional-parameter scoring policy is approved",
             "do not select a scalar/default M+ flow value before an explicit policy decision",
         ),
+        production_behavior_changed=True,
     )
 
 
@@ -416,13 +422,13 @@ def print_report(report: ConditionalScoringReadinessReport) -> None:
         print(f"- {action}")
 
     print("\nProduction behavior status:")
-    print("- Products changed: no")
+    print("- Products changed: yes (blocked M+ assembled rows added)")
     print("- BOM changed: no")
-    print("- Final_Assemblies changed: no")
-    print("- Final_Set_Details changed: no")
+    print("- Final_Assemblies changed: yes (blocked M+ assembled rows added)")
+    print("- Final_Set_Details changed: yes (blocked M+ assembled rows added)")
     print("- Scoring changed: no")
     print("- Customer-facing output changed: no")
-    print("- Production behavior changed: no")
+    print("- Production behavior changed: yes")
     print(f"- status: {STATUS_PRODUCTION_UNCHANGED}")
 
 
@@ -453,7 +459,7 @@ def main(argv: list[str] | None = None) -> int:
     except (FileNotFoundError, ReadinessReportError) as exc:
         print("Conditional-parameter scoring readiness report (read-only)")
         print(f"ERROR: {exc}")
-        print("Production behavior changed: no")
+        print("Production behavior changed: yes")
         return 2
 
 

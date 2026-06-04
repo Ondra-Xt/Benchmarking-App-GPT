@@ -154,15 +154,13 @@ def test_report_fails_for_malformed_mplus_conditional_rows():
         raise AssertionError("expected ReadinessReportError")
 
 
-def test_report_fails_when_conditional_rows_overlap_with_production_outputs():
+def test_report_allows_conditional_rows_linked_to_blocked_production_outputs():
     products = pd.DataFrame([{"product_id": MPLUS_SET_IDS[0]}])
 
-    try:
-        mod.build_report(_frames(Products=products), "test fixture")
-    except mod.ReadinessReportError as exc:
-        assert "overlap with production output sheets" in str(exc)
-    else:
-        raise AssertionError("expected ReadinessReportError")
+    report = mod.build_report(_frames(Products=products), "test fixture")
+
+    assert report.mplus_readiness.status == "blocked_pending_conditional_parameter_scoring"
+    assert report.mplus_readiness.ready_for_benchmark_count == 0
 
 
 def test_report_shows_scenario_data_available_but_scoring_not_implemented(capsys):
@@ -193,14 +191,14 @@ def test_report_confirms_production_behavior_changed_no(capsys):
     mod.print_report(report)
     out = capsys.readouterr().out
 
-    assert report.production_behavior_changed is False
-    assert "Products changed: no" in out
+    assert report.production_behavior_changed is True
+    assert "Products changed: yes (blocked M+ assembled rows added)" in out
     assert "BOM changed: no" in out
-    assert "Final_Assemblies changed: no" in out
-    assert "Final_Set_Details changed: no" in out
+    assert "Final_Assemblies changed: yes (blocked M+ assembled rows added)" in out
+    assert "Final_Set_Details changed: yes (blocked M+ assembled rows added)" in out
     assert "Scoring changed: no" in out
     assert "Customer-facing output changed: no" in out
-    assert "Production behavior changed: no" in out
+    assert "Production behavior changed: yes" in out
 
 
 def test_main_supports_xlsx_read_only(tmp_path, capsys):
@@ -253,4 +251,4 @@ def test_main_returns_nonzero_for_invalid_mplus_default_selection(tmp_path, caps
     assert result == 2
     assert "ERROR:" in out
     assert "selected_default_flow_rate_lps is filled" in out
-    assert "Production behavior changed: no" in out
+    assert "Production behavior changed: yes" in out
