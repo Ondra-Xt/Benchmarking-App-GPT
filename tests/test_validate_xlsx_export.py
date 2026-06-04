@@ -107,12 +107,52 @@ def _mplus_compound_mappings_dataframe():
             "safe_to_generate": False,
             "ready_for_benchmark": False,
             "ready_for_customer_view": False,
-            "blocking_reason": "benchmark policy for multi-head-condition flow values not yet accepted",
-            "recommended_next_action": "accept a benchmark policy before writing Products.flow_rate_lps or generating M+ assemblies",
-            "production_status_note": "diagnostic/proposal-only; no Products/BOM/assembly generation change",
+            "blocking_reason": "blocked_pending_conditional_parameter_scoring",
+            "recommended_next_action": "implement scoring/export handling for conditional parameter values before production M+ assemblies",
+            "production_status_note": "diagnostic/conditional-parameter-only; conditional flow data available; no Products/BOM/assembly generation change",
         })
     return pd.DataFrame(rows)
 
+
+
+
+def _conditional_technical_values_dataframe():
+    rows = []
+    for _, mapping in _mplus_compound_mappings_dataframe().iterrows():
+        for value, condition_value, condition_label in [
+            (0.4, 10, "10 mm head water level"),
+            (0.46, 20, "20 mm head water level"),
+        ]:
+            rows.append({
+                "set_id": mapping["set_id"],
+                "product_family": mapping["product_family"],
+                "assembly_model": mapping["assembly_model"],
+                "parameter_name": "flow_rate_lps",
+                "value": value,
+                "unit": "l/s",
+                "condition_type": "head_water_level",
+                "condition_value": condition_value,
+                "condition_unit": "mm",
+                "condition_label": condition_label,
+                "channel_body_id": mapping["channel_body_id"],
+                "drain_body_id": mapping["drain_body_id"],
+                "grate_id": mapping["grate_id"],
+                "source_url_channel_body": mapping["source_url_channel_body"],
+                "source_url_drain_body": mapping["source_url_drain_body"],
+                "source_url_grate": mapping["source_url_grate"],
+                "evidence_type": mapping["flow_evidence_type"],
+                "confidence": mapping["flow_confidence"],
+                "attribution_scope": mapping["flow_attribution_scope"],
+                "article_specific": False,
+                "data_quality_status": "conditional_parameter_available_production_blocked",
+                "safe_to_generate": False,
+                "ready_for_benchmark": False,
+                "ready_for_customer_view": False,
+                "blocking_reason": "blocked_pending_conditional_parameter_scoring",
+                "recommended_next_action": "implement scoring/export handling for conditional parameter values before production M+ assemblies",
+                "production_status_note": "diagnostic/conditional-parameter-only; conditional flow data available; no Products/BOM/assembly generation change",
+            })
+    return pd.DataFrame(rows)
 
 def _base_dataframes():
     products = pd.DataFrame([
@@ -131,6 +171,7 @@ def _base_dataframes():
         }]),
         "Mplus_Compound_Mappings": _mplus_compound_mappings_dataframe(),
         "Eplus_Proposal_Mappings": _eplus_proposal_mappings_dataframe(),
+        "Conditional_Technical_Values": _conditional_technical_values_dataframe(),
         "Article_Variants": pd.DataFrame([
             {
                 "manufacturer": "aco",
@@ -290,6 +331,7 @@ def test_default_baseline_counts_updated():
     assert mod.EXPECTED_SHEET_COUNTS["Final_Set_Details"] == 28
     assert mod.EXPECTED_SHEET_COUNTS["Mplus_Compound_Mappings"] == 4
     assert mod.EXPECTED_SHEET_COUNTS["Eplus_Proposal_Mappings"] == 3
+    assert mod.EXPECTED_SHEET_COUNTS["Conditional_Technical_Values"] == 8
     assert mod.EXPECTED_SHEET_COUNTS["Article_Variants"] == 76
     assert mod.EXPECTED_FINAL_SET_DETAILS_ROW_COUNT == 28
 
@@ -442,6 +484,7 @@ def test_final_assemblies_baseline_expectations():
     assert mod.EXPECTED_SHEET_COUNTS["Final_Set_Details"] == 28
     assert mod.EXPECTED_SHEET_COUNTS["Mplus_Compound_Mappings"] == 4
     assert mod.EXPECTED_SHEET_COUNTS["Eplus_Proposal_Mappings"] == 3
+    assert mod.EXPECTED_SHEET_COUNTS["Conditional_Technical_Values"] == 8
     assert mod.EXPECTED_SHEET_COUNTS["Article_Variants"] == 76
     assert mod.EXPECTED_FINAL_SET_DETAILS_ROW_COUNT == 28
     assert mod.EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS == {
@@ -581,6 +624,8 @@ def test_mplus_compound_mappings_validation_rejects_product_flow_write(tmp_path)
         "Final_Assemblies": 2,
         "Final_Set_Details": 2,
         "Mplus_Compound_Mappings": 4,
+        "Eplus_Proposal_Mappings": 3,
+        "Conditional_Technical_Values": 8,
         "Article_Variants": 3,
     }
     _patch_small_expectations(mod, counts)
@@ -608,6 +653,8 @@ def test_mplus_compound_mappings_validation_passes_expected_diagnostic_rows(tmp_
         "Final_Assemblies": 2,
         "Final_Set_Details": 2,
         "Mplus_Compound_Mappings": 4,
+        "Eplus_Proposal_Mappings": 3,
+        "Conditional_Technical_Values": 8,
         "Article_Variants": 3,
     }
     _patch_small_expectations(mod, counts)
@@ -621,3 +668,5 @@ def test_mplus_compound_mappings_validation_passes_expected_diagnostic_rows(tmp_
     assert _result_for(results, "row_count:Mplus_Compound_Mappings").passed
     assert _result_for(results, "mplus_compound_mappings_expected_articles").passed
     assert _result_for(results, "mplus_compound_mappings_empty:selected_default_flow_rate_lps").passed
+    assert _result_for(results, "conditional_technical_values_mplus_row_count").passed
+    assert _result_for(results, "conditional_technical_values_two_flow_rows_per_mplus_set").passed

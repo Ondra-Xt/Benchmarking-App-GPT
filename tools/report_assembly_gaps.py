@@ -39,7 +39,7 @@ STATUS_ACTIONS = {
     "blocked_no_valid_components": "add component-only candidate; parse article table if component IDs are only present in source text",
     "blocked_incomplete_hydraulic_data": "find base product source with complete hydraulic data",
     "blocked_article_variant_ambiguous": "keep blocked because ambiguity remains; parse article table and resolve unique variant attribution",
-    "blocked_proposal_only_flow_policy": "accept benchmark policy for multi-head-condition flow values before generating M+ production assemblies",
+    "blocked_pending_conditional_parameter_scoring": "implement scoring/export handling for conditional parameter values before production M+ assemblies",
     "blocked_proposal_only_compatibility_evidence": "collect explicit article-level base-to-grate compatibility before production generation",
 }
 
@@ -311,7 +311,7 @@ def _family_gap(
         if family in {"showerdrain_eplus", "showerdrain_cplus"}:
             status = "blocked_proposal_only_compatibility_evidence"
         else:
-            status = "blocked_proposal_only_flow_policy"
+            status = "blocked_pending_conditional_parameter_scoring"
     elif len(bases) == 0:
         status = "blocked_no_base_rows"
     elif len(complete_bases) == 0:

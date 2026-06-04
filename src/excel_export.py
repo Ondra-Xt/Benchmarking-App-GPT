@@ -252,10 +252,64 @@ MPLUS_GRATE_SOURCE_URL = (
     "aco-showerdrain-mplus/design-roste-aus-elektropoliertem-edelstahl/"
 )
 MPLUS_RECOMMENDED_NEXT_ACTION = (
-    "accept a benchmark policy before writing Products.flow_rate_lps or generating M+ assemblies"
+    "implement scoring/export handling for conditional parameter values before production M+ assemblies"
 )
 MPLUS_PRODUCTION_STATUS_NOTE = (
-    "diagnostic/proposal-only; no Products/BOM/assembly generation change"
+    "diagnostic/conditional-parameter-only; conditional flow data available; no Products/BOM/assembly generation change"
+)
+MPLUS_BLOCKING_REASON = "blocked_pending_conditional_parameter_scoring"
+
+CONDITIONAL_TECHNICAL_VALUES_COLUMNS = [
+    "set_id",
+    "product_family",
+    "assembly_model",
+    "parameter_name",
+    "value",
+    "unit",
+    "condition_type",
+    "condition_value",
+    "condition_unit",
+    "condition_label",
+    "channel_body_id",
+    "drain_body_id",
+    "grate_id",
+    "source_url_channel_body",
+    "source_url_drain_body",
+    "source_url_grate",
+    "evidence_type",
+    "confidence",
+    "attribution_scope",
+    "article_specific",
+    "data_quality_status",
+    "safe_to_generate",
+    "ready_for_benchmark",
+    "ready_for_customer_view",
+    "blocking_reason",
+    "recommended_next_action",
+    "production_status_note",
+]
+
+MPLUS_CONDITIONAL_FLOW_VARIANTS = (
+    {
+        "parameter_name": "flow_rate_lps",
+        "value": 0.4,
+        "unit": "l/s",
+        "condition_type": "head_water_level",
+        "condition_value": 10,
+        "condition_unit": "mm",
+        "condition_label": "10 mm head water level",
+        "mplus_source_column": "flow_rate_lps_10mm_head",
+    },
+    {
+        "parameter_name": "flow_rate_lps",
+        "value": 0.46,
+        "unit": "l/s",
+        "condition_type": "head_water_level",
+        "condition_value": 20,
+        "condition_unit": "mm",
+        "condition_label": "20 mm head water level",
+        "mplus_source_column": "flow_rate_lps_20mm_head",
+    },
 )
 
 def _assembled_family(product_id: Any) -> str:
@@ -1066,13 +1120,66 @@ def _extract_mplus_compound_mappings(
             "safe_to_generate": False,
             "ready_for_benchmark": False,
             "ready_for_customer_view": False,
-            "blocking_reason": policy_report.blocking_reason,
+            "blocking_reason": MPLUS_BLOCKING_REASON,
             "recommended_next_action": MPLUS_RECOMMENDED_NEXT_ACTION,
             "production_status_note": MPLUS_PRODUCTION_STATUS_NOTE,
         }
         rows.append(row)
 
     return pd.DataFrame(rows, columns=MPLUS_COMPOUND_MAPPING_COLUMNS)
+
+
+def _extract_conditional_technical_values(mplus_compound_mappings_df: pd.DataFrame) -> pd.DataFrame:
+    """Return diagnostic-only condition-specific technical values for proposal rows.
+
+    M+ flow-rate values are source-backed at different head-water levels.  This
+    sheet preserves those variants without selecting a production default or
+    feeding the values into Products.flow_rate_lps, scoring, BOM generation, or
+    final assembly generation.
+    """
+    rows: list[dict[str, Any]] = []
+    if mplus_compound_mappings_df is None or mplus_compound_mappings_df.empty:
+        return pd.DataFrame(columns=CONDITIONAL_TECHNICAL_VALUES_COLUMNS)
+
+    for _, mapping in mplus_compound_mappings_df.iterrows():
+        for variant in MPLUS_CONDITIONAL_FLOW_VARIANTS:
+            source_column = variant["mplus_source_column"]
+            value = pd.to_numeric(_mplus_cell(mapping.get(source_column, ""), variant["value"]), errors="coerce")
+            if pd.isna(value):
+                value = variant["value"]
+            rows.append(
+                {
+                    "set_id": mapping.get("set_id", ""),
+                    "product_family": mapping.get("product_family", ""),
+                    "assembly_model": mapping.get("assembly_model", ""),
+                    "parameter_name": variant["parameter_name"],
+                    "value": value,
+                    "unit": variant["unit"],
+                    "condition_type": variant["condition_type"],
+                    "condition_value": variant["condition_value"],
+                    "condition_unit": variant["condition_unit"],
+                    "condition_label": variant["condition_label"],
+                    "channel_body_id": mapping.get("channel_body_id", ""),
+                    "drain_body_id": mapping.get("drain_body_id", ""),
+                    "grate_id": mapping.get("grate_id", ""),
+                    "source_url_channel_body": mapping.get("source_url_channel_body", ""),
+                    "source_url_drain_body": mapping.get("source_url_drain_body", ""),
+                    "source_url_grate": mapping.get("source_url_grate", ""),
+                    "evidence_type": mapping.get("flow_evidence_type", ""),
+                    "confidence": mapping.get("flow_confidence", ""),
+                    "attribution_scope": mapping.get("flow_attribution_scope", ""),
+                    "article_specific": mapping.get("flow_article_specific", False),
+                    "data_quality_status": "conditional_parameter_available_production_blocked",
+                    "safe_to_generate": False,
+                    "ready_for_benchmark": False,
+                    "ready_for_customer_view": False,
+                    "blocking_reason": MPLUS_BLOCKING_REASON,
+                    "recommended_next_action": MPLUS_RECOMMENDED_NEXT_ACTION,
+                    "production_status_note": MPLUS_PRODUCTION_STATUS_NOTE,
+                }
+            )
+
+    return pd.DataFrame(rows, columns=CONDITIONAL_TECHNICAL_VALUES_COLUMNS)
 
 def export_excel(
     template_path: str,
@@ -1197,6 +1304,7 @@ def export_excel(
         final_assemblies_df,
         final_set_details_df,
     )
+    conditional_technical_values_df = _extract_conditional_technical_values(mplus_compound_mappings_df)
 
     write_df("Candidates_All", registry_df)
     write_df("Products", products_df)
@@ -1204,6 +1312,7 @@ def export_excel(
     write_df("Final_Set_Details", final_set_details_df)
     write_df("Mplus_Compound_Mappings", mplus_compound_mappings_df)
     write_df("Eplus_Proposal_Mappings", eplus_proposal_mappings_df)
+    write_df("Conditional_Technical_Values", conditional_technical_values_df)
     write_df("Components", components_df)
     write_df("Comparison", comparison_df)
     write_df("Excluded", excluded_df)

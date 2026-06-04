@@ -18,6 +18,7 @@ EXPECTED_SHEET_COUNTS = {
     "Final_Set_Details": 28,
     "Mplus_Compound_Mappings": 4,
     "Eplus_Proposal_Mappings": 3,
+    "Conditional_Technical_Values": 8,
     "Article_Variants": 76,
 }
 COMPONENTS_MIN_ROWS = 1
@@ -111,6 +112,7 @@ REQUIRED_SHEETS = [
     "Final_Set_Details",
     "Mplus_Compound_Mappings",
     "Eplus_Proposal_Mappings",
+    "Conditional_Technical_Values",
     "Article_Variants",
 ]
 OPTIONAL_SHEETS = ["Evidence"]
@@ -152,7 +154,7 @@ MPLUS_COMPOUND_MAPPINGS_REQUIRED_COLUMNS = [
     "production_status_note",
 ]
 MPLUS_EXPECTED_ARTICLES = {"9010.81.20", "9010.81.21", "9010.81.22", "9010.81.23"}
-MPLUS_BLOCKING_REASON_SNIPPET = "benchmark policy for multi-head-condition flow values not yet accepted"
+MPLUS_BLOCKING_REASON_SNIPPET = "blocked_pending_conditional_parameter_scoring"
 
 EPLUS_PROPOSAL_MAPPINGS_REQUIRED_COLUMNS = [
     "set_id",
@@ -199,6 +201,39 @@ EPLUS_RECOMMENDED_NEXT_ACTION_SNIPPET = (
 EPLUS_PRODUCTION_STATUS_NOTE_SNIPPET = (
     "diagnostic/proposal-only; no Products/BOM/assembly generation change"
 )
+
+CONDITIONAL_TECHNICAL_VALUES_REQUIRED_COLUMNS = [
+    "set_id",
+    "product_family",
+    "assembly_model",
+    "parameter_name",
+    "value",
+    "unit",
+    "condition_type",
+    "condition_value",
+    "condition_unit",
+    "condition_label",
+    "channel_body_id",
+    "drain_body_id",
+    "grate_id",
+    "source_url_channel_body",
+    "source_url_drain_body",
+    "source_url_grate",
+    "evidence_type",
+    "confidence",
+    "attribution_scope",
+    "article_specific",
+    "data_quality_status",
+    "safe_to_generate",
+    "ready_for_benchmark",
+    "ready_for_customer_view",
+    "blocking_reason",
+    "recommended_next_action",
+    "production_status_note",
+]
+CONDITIONAL_MPLUS_EXPECTED_ROW_COUNT = 8
+CONDITIONAL_PRODUCTION_STATUS_NOTE_SNIPPET = "diagnostic/conditional-parameter-only"
+CONDITIONAL_RECOMMENDED_NEXT_ACTION_SNIPPET = "implement scoring/export handling for conditional parameter values before production M+ assemblies"
 
 ARTICLE_VARIANTS_REQUIRED_COLUMNS = [
     "manufacturer",
@@ -337,6 +372,15 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
             pd.read_excel(xls, sheet_name="Eplus_Proposal_Mappings")
             if "Eplus_Proposal_Mappings" in xls.sheet_names
             else pd.DataFrame(columns=EPLUS_PROPOSAL_MAPPINGS_REQUIRED_COLUMNS)
+        )
+    )
+    conditional_technical_values = (
+        sheets.get("Conditional_Technical_Values")
+        if "Conditional_Technical_Values" in sheets
+        else (
+            pd.read_excel(xls, sheet_name="Conditional_Technical_Values")
+            if "Conditional_Technical_Values" in xls.sheet_names
+            else pd.DataFrame(columns=CONDITIONAL_TECHNICAL_VALUES_REQUIRED_COLUMNS)
         )
     )
     article_variants = sheets.get("Article_Variants", pd.DataFrame(columns=ARTICLE_VARIANTS_REQUIRED_COLUMNS))
@@ -516,6 +560,79 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
         results.append(CheckResult("eplus_proposal_mappings_not_in_products", not eplus_product_ids, f"overlap={eplus_product_ids}"))
         results.append(CheckResult("eplus_proposal_mappings_not_in_final_assemblies", not eplus_final_ids, f"overlap={eplus_final_ids}"))
         results.append(CheckResult("eplus_proposal_mappings_not_in_final_set_details", not eplus_detail_ids, f"overlap={eplus_detail_ids}"))
+
+    if "Conditional_Technical_Values" in required_sheets or "Conditional_Technical_Values" in xls.sheet_names:
+        conditional_missing_columns = [
+            col for col in CONDITIONAL_TECHNICAL_VALUES_REQUIRED_COLUMNS
+            if col not in conditional_technical_values.columns
+        ]
+        results.append(CheckResult(
+            "conditional_technical_values_required_columns",
+            not conditional_missing_columns,
+            f"missing={conditional_missing_columns} expected={CONDITIONAL_TECHNICAL_VALUES_REQUIRED_COLUMNS}",
+        ))
+
+        mplus_conditional = conditional_technical_values[
+            _norm_series(conditional_technical_values, "product_family").str.lower().eq("showerdrain_mplus")
+        ]
+        results.append(CheckResult(
+            "conditional_technical_values_mplus_row_count",
+            len(mplus_conditional) == CONDITIONAL_MPLUS_EXPECTED_ROW_COUNT,
+            f"actual={len(mplus_conditional)} expected={CONDITIONAL_MPLUS_EXPECTED_ROW_COUNT}",
+        ))
+
+        expected_variants = {(10, 0.4), (20, 0.46)}
+        bad_set_ids: list[str] = []
+        for set_id, rows in mplus_conditional.groupby(_norm_series(mplus_conditional, "set_id")):
+            actual_variants = set(
+                zip(
+                    pd.to_numeric(rows.get("condition_value"), errors="coerce").dropna().astype(int),
+                    pd.to_numeric(rows.get("value"), errors="coerce").dropna().round(2),
+                )
+            )
+            if len(rows) != 2 or actual_variants != expected_variants:
+                bad_set_ids.append(str(set_id))
+        results.append(CheckResult(
+            "conditional_technical_values_two_flow_rows_per_mplus_set",
+            not bad_set_ids and mplus_conditional["set_id"].nunique() == 4,
+            f"bad_set_ids={bad_set_ids} actual_set_ids={mplus_conditional['set_id'].nunique()} expected_set_ids=4",
+        ))
+
+        mplus_conditional_string_expectations = {
+            "parameter_name": "flow_rate_lps",
+            "unit": "l/s",
+            "condition_type": "head_water_level",
+            "condition_unit": "mm",
+            "blocking_reason": MPLUS_BLOCKING_REASON_SNIPPET,
+        }
+        for column, expected in mplus_conditional_string_expectations.items():
+            bad = int((~_string_series_eq(mplus_conditional, column, expected)).sum())
+            results.append(CheckResult(f"conditional_technical_values_value:{column}", bad == 0, f"actual_bad={bad} expected={expected}"))
+
+        labels = set(_norm_series(mplus_conditional, "condition_label"))
+        results.append(CheckResult(
+            "conditional_technical_values_condition_labels",
+            labels == {"10 mm head water level", "20 mm head water level"},
+            f"actual={sorted(labels)} expected={["10 mm head water level", "20 mm head water level"]}",
+        ))
+
+        for column in ["article_specific", "safe_to_generate", "ready_for_benchmark", "ready_for_customer_view"]:
+            bad = int((~_bool_series_eq(mplus_conditional, column, False)).sum())
+            results.append(CheckResult(f"conditional_technical_values_false:{column}", bad == 0, f"actual_bad={bad} expected=false"))
+
+        status_note_bad = int((~_norm_series(mplus_conditional, "production_status_note").str.contains(CONDITIONAL_PRODUCTION_STATUS_NOTE_SNIPPET, regex=False)).sum())
+        results.append(CheckResult("conditional_technical_values_production_status_note", status_note_bad == 0, f"actual_bad={status_note_bad} expected_snippet={CONDITIONAL_PRODUCTION_STATUS_NOTE_SNIPPET}"))
+        next_action_bad = int((~_norm_series(mplus_conditional, "recommended_next_action").str.contains(CONDITIONAL_RECOMMENDED_NEXT_ACTION_SNIPPET, regex=False)).sum())
+        results.append(CheckResult("conditional_technical_values_recommended_next_action", next_action_bad == 0, f"actual_bad={next_action_bad} expected_snippet={CONDITIONAL_RECOMMENDED_NEXT_ACTION_SNIPPET}"))
+
+        conditional_set_ids = set(_norm_series(mplus_conditional, "set_id")) - {""}
+        product_overlap = sorted(conditional_set_ids & set(_norm_series(products, "product_id")))
+        final_overlap = sorted(conditional_set_ids & set(_norm_series(final_assemblies, "product_id"))) if final_assemblies is not None else []
+        detail_overlap = sorted(conditional_set_ids & (set(_norm_series(final_set_details, "set_id")) | set(_norm_series(final_set_details, "assembled_product_id")))) if final_set_details is not None else []
+        results.append(CheckResult("conditional_technical_values_not_in_products", not product_overlap, f"overlap={product_overlap}"))
+        results.append(CheckResult("conditional_technical_values_not_in_final_assemblies", not final_overlap, f"overlap={final_overlap}"))
+        results.append(CheckResult("conditional_technical_values_not_in_final_set_details", not detail_overlap, f"overlap={detail_overlap}"))
+
 
     if "Article_Variants" in required_sheets or "Article_Variants" in xls.sheet_names:
         article_missing_columns = [col for col in ARTICLE_VARIANTS_REQUIRED_COLUMNS if col not in article_variants.columns]
