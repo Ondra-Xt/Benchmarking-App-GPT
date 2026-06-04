@@ -40,7 +40,7 @@ STATUS_ACTIONS = {
     "blocked_incomplete_hydraulic_data": "find base product source with complete hydraulic data",
     "blocked_article_variant_ambiguous": "keep blocked because ambiguity remains; parse article table and resolve unique variant attribution",
     "blocked_proposal_only_flow_policy": "accept benchmark policy for multi-head-condition flow values before generating M+ production assemblies",
-    "blocked_proposal_only_compatibility_evidence": "collect explicit article-level E+ base-to-grate compatibility before production generation",
+    "blocked_proposal_only_compatibility_evidence": "collect explicit article-level base-to-grate compatibility before production generation",
 }
 
 
@@ -308,7 +308,7 @@ def _family_gap(
     if current > 0:
         status = "already_active"
     elif proposal_mapping is not None and proposal_mapping.blocked_count > 0:
-        if family == "showerdrain_eplus":
+        if family in {"showerdrain_eplus", "showerdrain_cplus"}:
             status = "blocked_proposal_only_compatibility_evidence"
         else:
             status = "blocked_proposal_only_flow_policy"
@@ -363,6 +363,7 @@ def build_report(
     article_variants: pd.DataFrame | None = None,
     mplus_compound_mappings: pd.DataFrame | None = None,
     eplus_proposal_mappings: pd.DataFrame | None = None,
+    cplus_compatible_grate_evidence: pd.DataFrame | None = None,
 ) -> AssemblyGapReport:
     candidates_all = pd.DataFrame() if candidates_all is None else candidates_all.copy()
     products = pd.DataFrame() if products is None else products.copy()
@@ -373,7 +374,8 @@ def build_report(
     article_variants = pd.DataFrame() if article_variants is None else article_variants.copy()
     mplus_compound_mappings = pd.DataFrame() if mplus_compound_mappings is None else mplus_compound_mappings.copy()
     eplus_proposal_mappings = pd.DataFrame() if eplus_proposal_mappings is None else eplus_proposal_mappings.copy()
-    proposal_mappings = _proposal_mapping_summaries(mplus_compound_mappings, eplus_proposal_mappings)
+    cplus_compatible_grate_evidence = pd.DataFrame() if cplus_compatible_grate_evidence is None else cplus_compatible_grate_evidence.copy()
+    proposal_mappings = _proposal_mapping_summaries(mplus_compound_mappings, eplus_proposal_mappings, cplus_compatible_grate_evidence)
     proposal_by_family = {summary.family: summary for summary in proposal_mappings}
 
     if final_assemblies.empty:
@@ -405,7 +407,7 @@ def build_report(
             components,
             bom,
             article_variants,
-            (candidates_all, products, components, bom, final_assemblies, final_set_details, article_variants, mplus_compound_mappings, eplus_proposal_mappings),
+            (candidates_all, products, components, bom, final_assemblies, final_set_details, article_variants, mplus_compound_mappings, eplus_proposal_mappings, cplus_compatible_grate_evidence),
             proposal_by_family.get(family),
         )
         for family in ordered
@@ -426,6 +428,7 @@ def build_report(
             "Final_Set_Details": len(final_set_details),
             "Mplus_Compound_Mappings": len(mplus_compound_mappings),
             "Eplus_Proposal_Mappings": len(eplus_proposal_mappings),
+            "Cplus_Compatible_Grate_Evidence": len(cplus_compatible_grate_evidence),
             "Article_Variants": len(article_variants),
         },
         current_assembled_counts=current_counts,
