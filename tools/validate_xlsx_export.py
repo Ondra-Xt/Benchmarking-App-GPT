@@ -1,21 +1,21 @@
 import argparse
 import sys
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import Any, List, Tuple
 
 import pandas as pd
 
 
 # Configurable baseline expectations
 EXPECTED_SHEET_COUNTS = {
-    "Products": 46,
-    "Comparison": 46,
-    "Scoring_Field_Coverage": 46,
+    "Products": 50,
+    "Comparison": 50,
+    "Scoring_Field_Coverage": 50,
     "Candidates_All": 118,
     "Components": 100,
     "BOM_Options": 221,
-    "Final_Assemblies": 28,
-    "Final_Set_Details": 28,
+    "Final_Assemblies": 32,
+    "Final_Set_Details": 32,
     "Mplus_Compound_Mappings": 4,
     "Eplus_Proposal_Mappings": 3,
     "Conditional_Technical_Values": 8,
@@ -29,7 +29,7 @@ EXPECTED_BOM_OPTION_TYPE_COUNTS = {
 EXPECTED_ASSEMBLED_PREFIX_COUNTS = {
     "aco-assembled-showerdrain-splus": 16,
     "aco-assembled-showerdrain-c": 4,
-    "aco-assembled-showerdrain-mplus": 0,
+    "aco-assembled-showerdrain-mplus": 4,
     "aco-assembled-showerdrain-eplus": 0,
     "aco-assembled-showerdrain-b": 0,
     "aco-assembled-showerdrain-cplus": 0,
@@ -39,6 +39,7 @@ EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS = {
     "easyflowplus": 6,
     "showerdrain_c": 4,
     "showerdrain_splus": 16,
+    "showerdrain_mplus": 4,
 }
 FINAL_ASSEMBLIES_PREFIX = "aco-assembled-"
 FINAL_ASSEMBLIES_EASYFLOW_EXPECTED = {
@@ -59,13 +60,14 @@ FINAL_ASSEMBLIES_REQUIRED_COMPLETENESS_COLUMNS = [
 EXPECTED_FINAL_ASSEMBLIES_STATUS_COUNTS = {
     "complete": 26,
     "partial": 2,
+    "conditional_parameter_available_production_blocked": 4,
     "missing": 0,
 }
-EXPECTED_FINAL_SET_DETAILS_ROW_COUNT = 28
+EXPECTED_FINAL_SET_DETAILS_ROW_COUNT = 32
 EXPECTED_FINAL_SET_DETAILS_FAMILY_COUNTS = EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS.copy()
 EXPECTED_FINAL_SET_DETAILS_READY_COUNTS = {
     True: 26,
-    False: 2,
+    False: 6,
 }
 FINAL_SET_DETAILS_REQUIRED_COLUMNS = [
     "set_id",
@@ -201,6 +203,9 @@ EPLUS_RECOMMENDED_NEXT_ACTION_SNIPPET = (
 EPLUS_PRODUCTION_STATUS_NOTE_SNIPPET = (
     "diagnostic/proposal-only; no Products/BOM/assembly generation change"
 )
+MPLUS_PRODUCTION_STATUS_NOTE_SNIPPET = (
+    "conditional flow values available in Conditional_Technical_Values; scenario scoring not implemented"
+)
 
 CONDITIONAL_TECHNICAL_VALUES_REQUIRED_COLUMNS = [
     "set_id",
@@ -232,7 +237,7 @@ CONDITIONAL_TECHNICAL_VALUES_REQUIRED_COLUMNS = [
     "production_status_note",
 ]
 CONDITIONAL_MPLUS_EXPECTED_ROW_COUNT = 8
-CONDITIONAL_PRODUCTION_STATUS_NOTE_SNIPPET = "diagnostic/conditional-parameter-only"
+CONDITIONAL_PRODUCTION_STATUS_NOTE_SNIPPET = "conditional flow values available in Conditional_Technical_Values; scenario scoring not implemented"
 CONDITIONAL_RECOMMENDED_NEXT_ACTION_SNIPPET = "implement scoring/export handling for conditional parameter values before production M+ assemblies"
 
 ARTICLE_VARIANTS_REQUIRED_COLUMNS = [
@@ -314,12 +319,44 @@ def _string_series_eq(df: pd.DataFrame, col: str, expected: str) -> pd.Series:
     return df[col].fillna("").astype(str).str.strip().eq(expected)
 
 
+def _coerce_bool_like(value: Any) -> bool | None:
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if hasattr(value, "item") and callable(getattr(value, "item")):
+        try:
+            value = value.item()
+        except (TypeError, ValueError):
+            pass
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+        return None
+    text = str(value).strip().lower()
+    if text == "":
+        return None
+    if text in {"true", "1", "1.0", "yes", "y"}:
+        return True
+    if text in {"false", "0", "0.0", "no", "n"}:
+        return False
+    return None
+
+
 def _bool_series_eq(df: pd.DataFrame, col: str, expected: bool) -> pd.Series:
     if col not in df.columns:
         return pd.Series([False] * len(df), index=df.index)
-    normalized = df[col].fillna("").astype(str).str.strip().str.lower()
-    expected_values = {"true", "1", "yes"} if expected else {"false", "0", "no"}
-    return normalized.isin(expected_values)
+    return pd.Series(
+        [_coerce_bool_like(value) is expected for value in df[col]],
+        index=df.index,
+    )
 
 
 def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
@@ -340,6 +377,7 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
         detail_sheet_exists = "Final_Set_Details" in xls.sheet_names
         results.append(CheckResult("final_set_details_sheet_exists", detail_sheet_exists, f"present={detail_sheet_exists}"))
     if missing:
+        xls.close()
         return False, results
 
     for s in OPTIONAL_SHEETS:
@@ -451,10 +489,11 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
         results.append(CheckResult("mplus_compound_mappings_blocking_reason", blocking_bad == 0, f"actual_bad={blocking_bad} expected_snippet={MPLUS_BLOCKING_REASON_SNIPPET}"))
 
         mplus_diagnostic_product_ids = sorted(set(mplus_set_ids) & set(_norm_series(products, "product_id")))
+        expected_mplus_promoted = EXPECTED_ASSEMBLED_PREFIX_COUNTS.get("aco-assembled-showerdrain-mplus", 0)
         results.append(CheckResult(
-            "mplus_compound_mappings_not_in_products",
-            not mplus_diagnostic_product_ids,
-            f"overlap={mplus_diagnostic_product_ids}",
+            "mplus_compound_mappings_promoted_to_products",
+            len(mplus_diagnostic_product_ids) == expected_mplus_promoted,
+            f"overlap={mplus_diagnostic_product_ids} expected_count={expected_mplus_promoted}",
         ))
 
 
@@ -629,9 +668,10 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
         product_overlap = sorted(conditional_set_ids & set(_norm_series(products, "product_id")))
         final_overlap = sorted(conditional_set_ids & set(_norm_series(final_assemblies, "product_id"))) if final_assemblies is not None else []
         detail_overlap = sorted(conditional_set_ids & (set(_norm_series(final_set_details, "set_id")) | set(_norm_series(final_set_details, "assembled_product_id")))) if final_set_details is not None else []
-        results.append(CheckResult("conditional_technical_values_not_in_products", not product_overlap, f"overlap={product_overlap}"))
-        results.append(CheckResult("conditional_technical_values_not_in_final_assemblies", not final_overlap, f"overlap={final_overlap}"))
-        results.append(CheckResult("conditional_technical_values_not_in_final_set_details", not detail_overlap, f"overlap={detail_overlap}"))
+        expected_mplus_promoted = EXPECTED_ASSEMBLED_PREFIX_COUNTS.get("aco-assembled-showerdrain-mplus", 0)
+        results.append(CheckResult("conditional_technical_values_linked_to_mplus_products", len(product_overlap) == expected_mplus_promoted, f"overlap={product_overlap} expected_count={expected_mplus_promoted}"))
+        results.append(CheckResult("conditional_technical_values_linked_to_mplus_final_assemblies", len(final_overlap) == expected_mplus_promoted, f"overlap={final_overlap} expected_count={expected_mplus_promoted}"))
+        results.append(CheckResult("conditional_technical_values_linked_to_mplus_final_set_details", len(detail_overlap) == expected_mplus_promoted, f"overlap={detail_overlap} expected_count={expected_mplus_promoted}"))
 
 
     if "Article_Variants" in required_sheets or "Article_Variants" in xls.sheet_names:
@@ -770,6 +810,31 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
             filled = int((~_empty_series(easyflow, field)).sum())
             results.append(CheckResult(f"final_assemblies_easyflow_empty:{field}", filled == 0, f"actual_filled={filled} expected_filled=0"))
 
+        mplus = final_assemblies[final_families.eq("showerdrain_mplus")]
+        mplus_flow_filled = int((~_empty_series(mplus, "flow_rate_lps")).sum())
+        results.append(CheckResult("final_assemblies_mplus_flow_rate_lps_empty", mplus_flow_filled == 0, f"actual_filled={mplus_flow_filled} expected_filled=0"))
+        for field in ["channel_body_id", "drain_body_id", "grate_id", "source_url_channel_body", "source_url_drain_body", "source_url_grate"]:
+            blank = int(_norm_series(mplus, field).eq("").sum())
+            results.append(CheckResult(f"final_assemblies_mplus_link:{field}", blank == 0, f"actual_blank={blank} expected_blank=0"))
+        mplus_family_bad = int((~_string_series_eq(mplus, "product_family", "showerdrain_mplus")).sum())
+        mplus_family_alias_bad = int((~_string_series_eq(mplus, "family", "showerdrain_mplus")).sum())
+        mplus_assembled_marker_bad = int((~_bool_series_eq(mplus, "assembled_from_bom", True)).sum())
+        mplus_flow_status_bad = int((~_string_series_eq(mplus, "flow_rate_status", "conditional")).sum())
+        mplus_status_bad = int((~_string_series_eq(mplus, "data_quality_status", "conditional_parameter_available_production_blocked")).sum())
+        mplus_benchmark_bad = int((~_bool_series_eq(mplus, "ready_for_benchmark", False)).sum())
+        mplus_customer_bad = int((~_bool_series_eq(mplus, "ready_for_customer_view", False)).sum())
+        mplus_blocked_bad = int((~_norm_series(mplus, "blocked_reason").str.lower().str.contains(MPLUS_BLOCKING_REASON_SNIPPET, regex=False)).sum())
+        mplus_note_bad = int((~_norm_series(mplus, "source_status_note").str.contains(MPLUS_PRODUCTION_STATUS_NOTE_SNIPPET, regex=False)).sum())
+        results.append(CheckResult("final_assemblies_mplus_product_family", mplus_family_bad == 0, f"actual_bad={mplus_family_bad} expected=showerdrain_mplus"))
+        results.append(CheckResult("final_assemblies_mplus_family", mplus_family_alias_bad == 0, f"actual_bad={mplus_family_alias_bad} expected=showerdrain_mplus"))
+        results.append(CheckResult("final_assemblies_mplus_assembled_from_bom", mplus_assembled_marker_bad == 0, f"actual_bad={mplus_assembled_marker_bad} expected=true"))
+        results.append(CheckResult("final_assemblies_mplus_flow_rate_status", mplus_flow_status_bad == 0, f"actual_bad={mplus_flow_status_bad} expected=conditional"))
+        results.append(CheckResult("final_assemblies_mplus_data_quality_status", mplus_status_bad == 0, f"actual_bad={mplus_status_bad} expected=conditional_parameter_available_production_blocked"))
+        results.append(CheckResult("final_assemblies_mplus_ready_for_benchmark_false", mplus_benchmark_bad == 0, f"actual_bad={mplus_benchmark_bad} expected=false"))
+        results.append(CheckResult("final_assemblies_mplus_ready_for_customer_view_false", mplus_customer_bad == 0, f"actual_bad={mplus_customer_bad} expected=false"))
+        results.append(CheckResult("final_assemblies_mplus_blocked_reason", mplus_blocked_bad == 0, f"actual_bad={mplus_blocked_bad} expected_snippet={MPLUS_BLOCKING_REASON_SNIPPET}"))
+        results.append(CheckResult("final_assemblies_mplus_source_status_note", mplus_note_bad == 0, f"actual_bad={mplus_note_bad} expected_snippet={MPLUS_PRODUCTION_STATUS_NOTE_SNIPPET}"))
+
     if final_set_details is not None:
         missing_columns = [
             col for col in FINAL_SET_DETAILS_REQUIRED_COLUMNS
@@ -815,8 +880,10 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
                 ))
 
         easyflow_mask = detail_families.eq("easyflow")
+        mplus_detail_mask = detail_families.eq("showerdrain_mplus")
         easyflow = final_set_details[easyflow_mask]
-        non_easyflow = final_set_details[~easyflow_mask]
+        mplus_details = final_set_details[mplus_detail_mask]
+        non_easyflow = final_set_details[~easyflow_mask & ~mplus_detail_mask]
         easyflow_status_bad = int((~_string_series_eq(easyflow, "data_quality_status", "partial")).sum())
         easyflow_benchmark_bad = int((~_bool_series_eq(easyflow, "ready_for_benchmark", False)).sum())
         easyflow_customer_bad = int((~_bool_series_eq(easyflow, "ready_for_customer_view", False)).sum())
@@ -838,6 +905,15 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
         results.append(CheckResult("final_set_details_non_easyflow_ready_for_customer_view_true", non_easyflow_customer_bad == 0, f"actual_bad={non_easyflow_customer_bad} expected_bad=0"))
         results.append(CheckResult("final_set_details_non_easyflow_blocked_reason_empty", non_easyflow_blocked_filled == 0, f"actual_filled={non_easyflow_blocked_filled} expected_filled=0"))
         results.append(CheckResult("final_set_details_non_easyflow_article_variant_status", non_easyflow_variant_bad == 0, f"actual_bad={non_easyflow_variant_bad} expected=not_required"))
+
+        mplus_detail_status_bad = int((~_string_series_eq(mplus_details, "data_quality_status", "conditional_parameter_available_production_blocked")).sum())
+        mplus_detail_benchmark_bad = int((~_bool_series_eq(mplus_details, "ready_for_benchmark", False)).sum())
+        mplus_detail_customer_bad = int((~_bool_series_eq(mplus_details, "ready_for_customer_view", False)).sum())
+        mplus_detail_blocked_bad = int((~_norm_series(mplus_details, "blocked_reason").str.lower().str.contains(MPLUS_BLOCKING_REASON_SNIPPET, regex=False)).sum())
+        results.append(CheckResult("final_set_details_mplus_status_conditional_blocked", mplus_detail_status_bad == 0, f"actual_bad={mplus_detail_status_bad} expected=conditional_parameter_available_production_blocked"))
+        results.append(CheckResult("final_set_details_mplus_ready_for_benchmark_false", mplus_detail_benchmark_bad == 0, f"actual_bad={mplus_detail_benchmark_bad} expected=false"))
+        results.append(CheckResult("final_set_details_mplus_ready_for_customer_view_false", mplus_detail_customer_bad == 0, f"actual_bad={mplus_detail_customer_bad} expected=false"))
+        results.append(CheckResult("final_set_details_mplus_blocked_reason", mplus_detail_blocked_bad == 0, f"actual_bad={mplus_detail_blocked_bad} expected_snippet={MPLUS_BLOCKING_REASON_SNIPPET}"))
 
     cmp_product_ids = _norm_series(comparison, "product_id").str.lower()
     for prefix, expected in EXPECTED_ASSEMBLED_PREFIX_COUNTS.items():
@@ -896,6 +972,7 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
             results.append(CheckResult(f"cplus_value:{pid}:{field}", passed, f"actual={actual} expected={expected}"))
 
     all_passed = all(r.passed for r in results)
+    xls.close()
     return all_passed, results
 
 

@@ -4,6 +4,7 @@ from src.excel_export import (
     _extract_conditional_technical_values,
     _extract_final_assemblies,
     _extract_final_set_details,
+    _append_mplus_final_assembly_rows,
     _extract_mplus_compound_mappings,
 )
 
@@ -106,10 +107,76 @@ def test_conditional_rows_preserve_mapping_links_evidence_and_blocking_status():
         assert row.ready_for_customer_view is False
         assert row.blocking_reason == "blocked_pending_conditional_parameter_scoring"
         assert "implement scoring/export handling for conditional parameter values" in row.recommended_next_action
-        assert "diagnostic/conditional-parameter-only" in row.production_status_note
+        assert "conditional flow values available in Conditional_Technical_Values" in row.production_status_note
 
 
-def test_mplus_production_outputs_stay_absent_and_default_flow_stays_empty():
+def test_mplus_final_assembly_rows_are_generated_but_blocked():
+    mappings = _mplus_mapping_rows()
+    products, comparison = _append_mplus_final_assembly_rows(pd.DataFrame(), pd.DataFrame(), mappings)
+    final_assemblies = _extract_final_assemblies(products)
+    final_set_details = _extract_final_set_details(final_assemblies, pd.DataFrame(), pd.DataFrame())
+    conditional = _extract_conditional_technical_values(mappings)
+
+    assert len(products) == 4
+    assert len(comparison) == 4
+    assert len(final_assemblies) == 4
+    assert len(final_set_details) == 4
+    assert products["product_id"].str.startswith("aco-assembled-showerdrain-mplus-").all()
+    assert final_assemblies["assembled_family"].eq("showerdrain_mplus").all()
+
+    for field in ["channel_body_id", "drain_body_id", "grate_id", "source_url_channel_body", "source_url_drain_body", "source_url_grate"]:
+        assert products[field].fillna("").ne("").all()
+        assert final_assemblies[field].fillna("").ne("").all()
+
+    assert products["flow_rate_lps"].fillna("").eq("").all()
+    assert comparison["flow_rate_lps"].fillna("").eq("").all()
+    assert final_assemblies["flow_rate_lps"].fillna("").eq("").all()
+    assert products["flow_rate_status"].eq("conditional").all()
+    assert final_assemblies["flow_rate_status"].eq("conditional").all()
+    assert products["ready_for_benchmark"].eq(False).all()
+    assert products["ready_for_customer_view"].eq(False).all()
+    assert final_set_details["ready_for_benchmark"].eq(False).all()
+    assert final_set_details["ready_for_customer_view"].eq(False).all()
+    assert final_set_details["blocked_reason"].eq("blocked_pending_conditional_parameter_scoring").all()
+    assert set(conditional["set_id"]) == set(mappings["set_id"])
+
+
+def test_existing_mplus_rows_are_normalized_to_blocked_metadata():
+    mappings = _mplus_mapping_rows()
+    products, comparison = _append_mplus_final_assembly_rows(pd.DataFrame(), pd.DataFrame(), mappings)
+    products["ready_for_benchmark"] = True
+    products["ready_for_customer_view"] = True
+    products["assembled_from_bom"] = "false"
+    products["family"] = ""
+    comparison["ready_for_benchmark"] = True
+    comparison["ready_for_customer_view"] = True
+    comparison["assembled_from_bom"] = "false"
+    comparison["family"] = ""
+
+    products, comparison = _append_mplus_final_assembly_rows(products, comparison, mappings)
+    final_assemblies = _extract_final_assemblies(products)
+    final_set_details = _extract_final_set_details(final_assemblies, pd.DataFrame(), pd.DataFrame())
+
+    assert products["product_family"].eq("showerdrain_mplus").all()
+    assert products["family"].eq("showerdrain_mplus").all()
+    assert products["assembled_from_bom"].eq(True).all()
+    assert products["flow_rate_status"].eq("conditional").all()
+    assert products["ready_for_benchmark"].eq(False).all()
+    assert products["ready_for_customer_view"].eq(False).all()
+    assert comparison["product_family"].eq("showerdrain_mplus").all()
+    assert comparison["family"].eq("showerdrain_mplus").all()
+    assert comparison["assembled_from_bom"].eq(True).all()
+    assert comparison["ready_for_benchmark"].eq(False).all()
+    assert comparison["ready_for_customer_view"].eq(False).all()
+    assert final_assemblies["ready_for_benchmark"].eq(False).all()
+    assert final_assemblies["ready_for_customer_view"].eq(False).all()
+    assert final_assemblies["data_quality_status"].eq("conditional_parameter_available_production_blocked").all()
+    assert final_assemblies["blocked_reason"].eq("blocked_pending_conditional_parameter_scoring").all()
+    assert final_set_details["ready_for_benchmark"].eq(False).all()
+    assert final_set_details["ready_for_customer_view"].eq(False).all()
+
+
+def test_mplus_default_flow_stays_empty_while_final_rows_are_blocked():
     mappings = _mplus_mapping_rows()
     products = pd.DataFrame(
         [
@@ -134,7 +201,8 @@ def test_mplus_production_outputs_stay_absent_and_default_flow_stays_empty():
 
     assert (mappings["selected_default_flow_rate_lps"].fillna("") == "").all()
     assert (mappings["flow_rate_lps"].fillna("") == "").all()
-    assert not products["product_family"].fillna("").str.contains("mplus").any()
+    assert (mappings["selected_default_flow_rate_lps"].fillna("") == "").all()
+    assert (mappings["flow_rate_lps"].fillna("") == "").all()
     assert not final_assemblies["product_id"].fillna("").str.contains("showerdrain-mplus").any()
     assert final_set_details.empty or not final_set_details["assembled_product_id"].fillna("").str.contains("showerdrain-mplus").any()
     assert not set(conditional["set_id"]) & set(products["product_id"])
