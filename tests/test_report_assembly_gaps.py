@@ -17,7 +17,7 @@ def _mplus_compound_mappings_dataframe():
             "safe_to_generate": False,
             "ready_for_benchmark": False,
             "ready_for_customer_view": False,
-            "blocking_reason": "benchmark policy for multi-head-condition flow values not yet accepted",
+            "blocking_reason": "blocked_pending_conditional_parameter_scoring",
         }
         for article in ("9010.81.20", "9010.81.21", "9010.81.22", "9010.81.23")
     ])
@@ -144,7 +144,7 @@ def test_build_report_accounts_for_mplus_proposal_only_mappings(capsys):
 
     assert report.sheet_counts["Mplus_Compound_Mappings"] == 4
     assert mplus.current_assembled_count == 0
-    assert mplus.status == "blocked_proposal_only_flow_policy"
+    assert mplus.status == "blocked_pending_conditional_parameter_scoring"
     assert mplus.proposal_only_mapping_count == 4
     assert mplus.proposal_assembly_model == "channel_body_x_drain_body_x_grate"
     assert mplus.proposal_safe_to_generate_count == 0
@@ -153,8 +153,8 @@ def test_build_report_accounts_for_mplus_proposal_only_mappings(capsys):
     assert mplus.proposal_flow_rate_lps_10mm_head == "0.4"
     assert mplus.proposal_flow_rate_lps_20mm_head == "0.46"
     assert mplus.proposal_selected_default_flow_rate_lps == ""
-    assert mplus.proposal_blocking_reason == "benchmark policy for multi-head-condition flow values not yet accepted"
-    assert mplus.next_required_action == "accept benchmark policy for multi-head-condition flow values before generating M+ production assemblies"
+    assert mplus.proposal_blocking_reason == "blocked_pending_conditional_parameter_scoring"
+    assert mplus.next_required_action == "implement scoring/export handling for conditional parameter values before production M+ assemblies"
     assert "showerdrain_mplus" not in report.ready_candidate_families
     assert report.proposal_only_mapping_families == ("showerdrain_mplus",)
     assert by_family["showerdrain_cplus"].status == "blocked_no_compatible_grate_evidence"
@@ -163,14 +163,14 @@ def test_build_report_accounts_for_mplus_proposal_only_mappings(capsys):
     mod.print_report(report)
     out = capsys.readouterr().out
     assert "- Mplus_Compound_Mappings: 4" in out
-    assert "showerdrain_mplus | 0 | 0 | 0 | 0 | 0 | 0 | blocked_proposal_only_flow_policy | 0 | 4 | accept benchmark policy" in out
+    assert "showerdrain_mplus | 0 | 0 | 0 | 0 | 0 | 0 | blocked_pending_conditional_parameter_scoring | 0 | 4 | implement scoring/export handling for conditional parameter values" in out
     assert "Ready candidate families:\n- none" in out
     assert "Missing component IDs by family" in out
     assert "Diagnostic unmatched component IDs by family" in out
     assert "not the XLSX validator aco_dangling_component_id check" in out
     assert "Dangling component IDs by family" not in out
     assert "Proposal-only diagnostic mappings:" in out
-    assert "- showerdrain_mplus: 4 mappings, safe_to_generate=0, blocked=4, reason=benchmark policy for multi-head-condition flow values not yet accepted" in out
+    assert "- showerdrain_mplus: 4 mappings, safe_to_generate=0, blocked=4, reason=blocked_pending_conditional_parameter_scoring" in out
     assert "assembly_model=channel_body_x_drain_body_x_grate" in out
     assert "flow_policy=split_fields_only" in out
     assert "flow_rate_lps_10mm_head=0.4" in out
@@ -221,7 +221,7 @@ def test_build_report_accounts_for_eplus_proposal_only_mappings(capsys):
     assert eplus.next_required_action == "collect explicit article-level E+ base-to-grate compatibility before production generation"
     assert "showerdrain_eplus" not in report.ready_candidate_families
     assert report.proposal_only_mapping_families == ("showerdrain_mplus", "showerdrain_eplus")
-    assert by_family["showerdrain_mplus"].status == "blocked_proposal_only_flow_policy"
+    assert by_family["showerdrain_mplus"].status == "blocked_pending_conditional_parameter_scoring"
     assert by_family["showerdrain_cplus"].status == "blocked_no_compatible_grate_evidence"
     assert by_family["showerdrain_cplus"].next_required_action == "find explicit C+ compatible grate evidence / article matrix"
 
@@ -234,7 +234,7 @@ def test_build_report_accounts_for_eplus_proposal_only_mappings(capsys):
     assert "Diagnostic unmatched component IDs by family" in out
     assert "not the XLSX validator aco_dangling_component_id check" in out
     assert "Dangling component IDs by family" not in out
-    assert "- showerdrain_mplus: 4 mappings, safe_to_generate=0, blocked=4, reason=benchmark policy for multi-head-condition flow values not yet accepted" in out
+    assert "- showerdrain_mplus: 4 mappings, safe_to_generate=0, blocked=4, reason=blocked_pending_conditional_parameter_scoring" in out
     assert "- showerdrain_eplus: 3 mappings, safe_to_generate=0, blocked=3, reason=no explicit article-level base-to-grate compatibility matrix" in out
     assert "assembly_model=base_x_grate" in out
     assert "article_level_compatibility_found=False" in out

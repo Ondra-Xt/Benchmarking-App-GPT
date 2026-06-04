@@ -10,6 +10,7 @@ from src import pipeline
 from src.config import default_config
 from src.connectors import aco
 from src.excel_export import (
+    _extract_conditional_technical_values,
     _extract_final_assemblies,
     _extract_final_set_details,
     _extract_mplus_compound_mappings,
@@ -18,9 +19,9 @@ from tools import report_mplus_flow_rate_policy as flow_policy
 
 EXPECTED_MPLUS_DRAIN_ARTICLES = ("9010.81.20", "9010.81.21", "9010.81.22", "9010.81.23")
 EXPECTED_PROPOSAL_COUNT = 4
-READINESS_STATUS_BLOCKED_POLICY = "blocked_policy_not_accepted"
+READINESS_STATUS_BLOCKED_POLICY = "blocked_pending_conditional_parameter_scoring"
 BLOCKING_REASON = flow_policy.BLOCKING_REASON
-NEXT_REQUIRED_ACTION = "accept benchmark policy for multi-head-condition flow values before production M+ assemblies"
+NEXT_REQUIRED_ACTION = "implement scoring/export handling for conditional parameter values before production M+ assemblies"
 PRODUCTION_BEHAVIOR_CHANGED = False
 
 # Intentionally empty until a future policy patch explicitly accepts a canonical
@@ -78,6 +79,7 @@ class MPlusMappingReadinessRow:
 class MPlusProductionReadinessGateReport:
     input_frame_counts: dict[str, int]
     proposal_mapping_count: int
+    conditional_technical_value_count: int
     conditions: tuple[GateCondition, ...]
     per_mapping_rows: tuple[MPlusMappingReadinessRow, ...]
     risk_checks: tuple[RiskCheck, ...]
@@ -168,14 +170,21 @@ def build_readiness_gate_report(
     final_assemblies: pd.DataFrame,
     final_set_details: pd.DataFrame,
     mplus_mappings: pd.DataFrame,
+    conditional_technical_values: pd.DataFrame | None = None,
 ) -> MPlusProductionReadinessGateReport:
     """Build a read-only production-readiness gate from diagnostic M+ rows."""
     proposal_df = _proposal_rows(mplus_mappings)
+    conditional_df = (
+        _extract_conditional_technical_values(proposal_df)
+        if conditional_technical_values is None
+        else conditional_technical_values.copy(deep=True)
+    )
     set_ids = tuple(_series(proposal_df, "set_id"))
     set_id_set = {value for value in set_ids if value}
     products_overlap = tuple(sorted(set_id_set & _id_set(products, "product_id")))
     final_assemblies_overlap = tuple(sorted(set_id_set & _id_set(final_assemblies, "product_id")))
     final_set_details_overlap = tuple(sorted(set_id_set & _id_set(final_set_details, "set_id", "assembled_product_id")))
+    conditional_overlap = tuple(sorted(set_id_set & _id_set(conditional_df, "set_id")))
     url_set_ids = tuple(sorted(value for value in set_id_set if _has_url(value)))
 
     missing_counts = {
@@ -195,6 +204,7 @@ def build_readiness_gate_report(
         GateCondition("no proposed set_id overlaps Products.product_id", not products_overlap, _join(products_overlap), "none"),
         GateCondition("no proposed set_id overlaps Final_Assemblies.product_id", not final_assemblies_overlap, _join(final_assemblies_overlap), "none"),
         GateCondition("no proposed set_id overlaps Final_Set_Details.set_id or assembled_product_id", not final_set_details_overlap, _join(final_set_details_overlap), "none"),
+        GateCondition("conditional technical values exist for all M+ proposal mappings", len(conditional_df) == len(proposal_df) * 2 and set(conditional_overlap) == set_id_set, f"rows={len(conditional_df)} linked_set_ids={len(set(conditional_overlap))}", f"{len(proposal_df) * 2} rows linked to {len(proposal_df)} set_ids"),
         GateCondition("no proposed set_id contains http or https", not url_set_ids, _join(url_set_ids), "none"),
         GateCondition("all rows have channel_body_id", missing_counts["channel_body_id"] == 0, str(missing_counts["channel_body_id"]), "0 missing"),
         GateCondition("all rows have drain_body_id", missing_counts["drain_body_id"] == 0, str(missing_counts["drain_body_id"]), "0 missing"),
@@ -239,6 +249,7 @@ def build_readiness_gate_report(
         _risk_pass_empty("M+ diagnostic set IDs in Products.product_id", products_overlap),
         _risk_pass_empty("M+ diagnostic set IDs in Final_Assemblies.product_id", final_assemblies_overlap),
         _risk_pass_empty("M+ diagnostic set IDs in Final_Set_Details", final_set_details_overlap),
+        RiskCheck("conditional technical values exported", len(conditional_df) == len(proposal_df) * 2, f"rows={len(conditional_df)} expected={len(proposal_df) * 2}"),
         _risk_pass_empty("URL-bearing set IDs", url_set_ids),
         RiskCheck("missing channel body ID", missing_counts["channel_body_id"] == 0, str(missing_counts["channel_body_id"])),
         RiskCheck("missing drain body ID", missing_counts["drain_body_id"] == 0, str(missing_counts["drain_body_id"])),
@@ -263,8 +274,10 @@ def build_readiness_gate_report(
             "Final_Assemblies": len(final_assemblies),
             "Final_Set_Details": len(final_set_details),
             "Mplus_Compound_Mappings": len(proposal_df),
+            "Conditional_Technical_Values": len(conditional_df),
         },
         proposal_mapping_count=len(proposal_df),
+        conditional_technical_value_count=len(conditional_df),
         conditions=conditions,
         per_mapping_rows=tuple(per_mapping_rows),
         risk_checks=risk_checks,
@@ -292,6 +305,7 @@ def build_current_report() -> MPlusProductionReadinessGateReport:
         final_assemblies.copy(deep=True),
         final_set_details.copy(deep=True),
     )
+    conditional_technical_values = _extract_conditional_technical_values(mplus_mappings.copy(deep=True))
     return build_readiness_gate_report(
         candidates_all.copy(deep=True),
         products.copy(deep=True),
@@ -301,6 +315,7 @@ def build_current_report() -> MPlusProductionReadinessGateReport:
         final_assemblies.copy(deep=True),
         final_set_details.copy(deep=True),
         mplus_mappings.copy(deep=True),
+        conditional_technical_values.copy(deep=True),
     )
 
 
@@ -321,6 +336,7 @@ def print_report(report: MPlusProductionReadinessGateReport) -> None:
         print(f"- {name} = {count}")
 
     print(f"\nM+ proposal mapping count = {report.proposal_mapping_count}")
+    print(f"M+ conditional technical value count = {report.conditional_technical_value_count}")
 
     print("\nReadiness gate condition table:")
     print("| condition | status | actual | required |")

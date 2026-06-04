@@ -13,7 +13,7 @@ from src.excel_export import _extract_final_assemblies, _extract_final_set_detai
 from tools import diagnose_mplus_flow_rate_sources as flow_sources
 from tools import report_mplus_compound_assembly_mapping as compound_mapping
 
-BLOCKING_REASON = "benchmark policy for multi-head-condition flow values not yet accepted"
+BLOCKING_REASON = "blocked_pending_conditional_parameter_scoring"
 RECOMMENDED_POLICY = "split_fields_only"
 PRODUCTION_BEHAVIOR_CHANGED = False
 
@@ -136,17 +136,17 @@ def build_policy_options(
         PolicyOption(
             policy="split_fields_only",
             selected_flow_rate_lps="",
-            data_quality_status_impact="preserves separate diagnostic flow_rate_lps_10mm_head and flow_rate_lps_20mm_head evidence",
+            data_quality_status_impact="preserves condition-specific diagnostic flow_rate_lps values in Conditional_Technical_Values",
             benchmark_impact="no benchmark/scoring impact because Products.flow_rate_lps remains unset",
             risk_level="low",
             production_safe=False,
-            reason="diagnostic/reporting-only exposure avoids silently selecting one head condition for production Products.",
+            reason="diagnostic/conditional-parameter-only exposure avoids silently selecting one head condition for production Products.",
         ),
         PolicyOption(
             policy="keep_unset",
             selected_flow_rate_lps="",
             data_quality_status_impact="keeps M+ flow_rate_lps missing until an explicit policy is accepted",
-            benchmark_impact="no benchmark/scoring impact because M+ remains blocked for missing flow_rate_lps",
+            benchmark_impact="no benchmark/scoring impact because conditional parameter scoring is not implemented",
             risk_level="low",
             production_safe=True,
             reason="safest baseline-preserving option; no production data write or generation change.",

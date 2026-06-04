@@ -33,7 +33,7 @@ def _mplus_rows():
                 "safe_to_generate": False,
                 "ready_for_benchmark": False,
                 "ready_for_customer_view": False,
-                "blocking_reason": "benchmark policy for multi-head-condition flow values not yet accepted",
+                "blocking_reason": "blocked_pending_conditional_parameter_scoring",
             }
         )
     return pd.DataFrame(rows)
@@ -64,12 +64,14 @@ def test_build_readiness_gate_blocks_current_policy_only_state():
         "Final_Assemblies": 28,
         "Final_Set_Details": 28,
         "Mplus_Compound_Mappings": 4,
+        "Conditional_Technical_Values": 8,
     }
     assert report.proposal_mapping_count == 4
+    assert report.conditional_technical_value_count == 8
     assert report.production_ready is False
-    assert report.readiness_status == "blocked_policy_not_accepted"
-    assert report.blocking_reason == "benchmark policy for multi-head-condition flow values not yet accepted"
-    assert report.next_required_action == "accept benchmark policy for multi-head-condition flow values before production M+ assemblies"
+    assert report.readiness_status == "blocked_pending_conditional_parameter_scoring"
+    assert report.blocking_reason == "blocked_pending_conditional_parameter_scoring"
+    assert report.next_required_action == "implement scoring/export handling for conditional parameter values before production M+ assemblies"
     assert report.safe_to_generate_count == 0
     assert report.blocked_count == 4
 
@@ -86,6 +88,7 @@ def test_build_readiness_gate_blocks_current_policy_only_state():
     assert conditions["flow_policy is accepted for production"].passed is False
     assert conditions["selected_default_flow_rate_lps is non-empty only after policy acceptance"].passed is True
     assert conditions["safe_to_generate is True only after all required fields and policy are complete"].passed is True
+    assert conditions["conditional technical values exist for all M+ proposal mappings"].passed is True
 
     assert {row.drain_body_article_number for row in report.per_mapping_rows} == set(mod.EXPECTED_MPLUS_DRAIN_ARTICLES)
     assert all(row.flow_rate_lps == "" for row in report.per_mapping_rows)
@@ -94,7 +97,7 @@ def test_build_readiness_gate_blocks_current_policy_only_state():
     assert all(row.flow_rate_lps_20mm_head == "0.46" for row in report.per_mapping_rows)
     assert all(row.flow_policy == "split_fields_only" for row in report.per_mapping_rows)
     assert all(row.safe_to_generate is False for row in report.per_mapping_rows)
-    assert all(row.readiness_status == "blocked_policy_not_accepted" for row in report.per_mapping_rows)
+    assert all(row.readiness_status == "blocked_pending_conditional_parameter_scoring" for row in report.per_mapping_rows)
 
 
 def test_risk_checks_detect_overlaps_urls_and_unaccepted_policy_violations():
@@ -174,13 +177,14 @@ def test_print_report_includes_required_sections(capsys):
     assert "Input frame counts" in out
     assert "Products = 46" in out
     assert "M+ proposal mapping count = 4" in out
+    assert "M+ conditional technical value count = 8" in out
     assert "Readiness gate condition table" in out
     assert "Per-mapping readiness rows" in out
     assert "production_ready = False" in out
-    assert "readiness_status = blocked_policy_not_accepted" in out
+    assert "readiness_status = blocked_pending_conditional_parameter_scoring" in out
     assert "safe_to_generate = 0" in out
     assert "blocked = 4" in out
-    assert "benchmark policy for multi-head-condition flow values not yet accepted" in out
-    assert "accept benchmark policy for multi-head-condition flow values before production M+ assemblies" in out
+    assert "blocked_pending_conditional_parameter_scoring" in out
+    assert "implement scoring/export handling for conditional parameter values before production M+ assemblies" in out
     assert "Risk checks" in out
     assert "production behavior changed: no" in out

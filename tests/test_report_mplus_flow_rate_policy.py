@@ -93,7 +93,7 @@ def test_build_policy_report_recommends_diagnostic_split_fields_without_product_
     assert report.proposed_conservative_candidate == "0.4"
     assert report.proposed_high_head_candidate == "0.46"
     assert report.safe_to_write_products_flow_rate_lps is False
-    assert report.blocking_reason == "benchmark policy for multi-head-condition flow values not yet accepted"
+    assert report.blocking_reason == "blocked_pending_conditional_parameter_scoring"
     assert report.production_behavior_changed is False
     assert report.mapping_summary.article_level_drain_bodies == 4
     assert report.mapping_summary.proposed_mplus_compound_mappings == 4
