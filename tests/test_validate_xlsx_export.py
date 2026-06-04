@@ -109,7 +109,7 @@ def _mplus_compound_mappings_dataframe():
             "ready_for_customer_view": False,
             "blocking_reason": "blocked_pending_conditional_parameter_scoring",
             "recommended_next_action": "implement scoring/export handling for conditional parameter values before production M+ assemblies",
-            "production_status_note": "diagnostic/conditional-parameter-only; conditional flow data available; no Products/BOM/assembly generation change",
+            "production_status_note": "conditional flow values available in Conditional_Technical_Values; scenario scoring not implemented",
         })
     return pd.DataFrame(rows)
 
@@ -150,7 +150,7 @@ def _conditional_technical_values_dataframe():
                 "ready_for_customer_view": False,
                 "blocking_reason": "blocked_pending_conditional_parameter_scoring",
                 "recommended_next_action": "implement scoring/export handling for conditional parameter values before production M+ assemblies",
-                "production_status_note": "diagnostic/conditional-parameter-only; conditional flow data available; no Products/BOM/assembly generation change",
+                "production_status_note": "conditional flow values available in Conditional_Technical_Values; scenario scoring not implemented",
             })
     return pd.DataFrame(rows)
 
@@ -327,13 +327,13 @@ def test_default_baseline_counts_updated():
     mod = _load_validator_module()
     assert mod.EXPECTED_SHEET_COUNTS["Candidates_All"] == 118
     assert mod.EXPECTED_SHEET_COUNTS["Components"] == 100
-    assert mod.EXPECTED_SHEET_COUNTS["Final_Assemblies"] == 28
-    assert mod.EXPECTED_SHEET_COUNTS["Final_Set_Details"] == 28
+    assert mod.EXPECTED_SHEET_COUNTS["Final_Assemblies"] == 32
+    assert mod.EXPECTED_SHEET_COUNTS["Final_Set_Details"] == 32
     assert mod.EXPECTED_SHEET_COUNTS["Mplus_Compound_Mappings"] == 4
     assert mod.EXPECTED_SHEET_COUNTS["Eplus_Proposal_Mappings"] == 3
     assert mod.EXPECTED_SHEET_COUNTS["Conditional_Technical_Values"] == 8
     assert mod.EXPECTED_SHEET_COUNTS["Article_Variants"] == 76
-    assert mod.EXPECTED_FINAL_SET_DETAILS_ROW_COUNT == 28
+    assert mod.EXPECTED_FINAL_SET_DETAILS_ROW_COUNT == 32
 
 
 def test_pass_workbook_exits_0(tmp_path):
@@ -480,22 +480,24 @@ def test_compatible_grate_metadata_missing_no_explicit_matrix_sentence_fails(tmp
 
 def test_final_assemblies_baseline_expectations():
     mod = _load_validator_module()
-    assert mod.EXPECTED_SHEET_COUNTS["Final_Assemblies"] == 28
-    assert mod.EXPECTED_SHEET_COUNTS["Final_Set_Details"] == 28
+    assert mod.EXPECTED_SHEET_COUNTS["Final_Assemblies"] == 32
+    assert mod.EXPECTED_SHEET_COUNTS["Final_Set_Details"] == 32
     assert mod.EXPECTED_SHEET_COUNTS["Mplus_Compound_Mappings"] == 4
     assert mod.EXPECTED_SHEET_COUNTS["Eplus_Proposal_Mappings"] == 3
     assert mod.EXPECTED_SHEET_COUNTS["Conditional_Technical_Values"] == 8
     assert mod.EXPECTED_SHEET_COUNTS["Article_Variants"] == 76
-    assert mod.EXPECTED_FINAL_SET_DETAILS_ROW_COUNT == 28
+    assert mod.EXPECTED_FINAL_SET_DETAILS_ROW_COUNT == 32
     assert mod.EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS == {
         "easyflow": 2,
         "easyflowplus": 6,
         "showerdrain_c": 4,
         "showerdrain_splus": 16,
+        "showerdrain_mplus": 4,
     }
     assert mod.EXPECTED_FINAL_ASSEMBLIES_STATUS_COUNTS == {
         "complete": 26,
         "partial": 2,
+        "conditional_parameter_available_production_blocked": 4,
         "missing": 0,
     }
 

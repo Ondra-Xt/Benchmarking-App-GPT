@@ -13,6 +13,7 @@ from src.excel_export import (
     _extract_conditional_technical_values,
     _extract_final_assemblies,
     _extract_final_set_details,
+    _append_mplus_final_assembly_rows,
     _extract_mplus_compound_mappings,
 )
 from tools import report_mplus_flow_rate_policy as flow_policy
@@ -22,7 +23,7 @@ EXPECTED_PROPOSAL_COUNT = 4
 READINESS_STATUS_BLOCKED_POLICY = "blocked_pending_conditional_parameter_scoring"
 BLOCKING_REASON = flow_policy.BLOCKING_REASON
 NEXT_REQUIRED_ACTION = "implement scoring/export handling for conditional parameter values before production M+ assemblies"
-PRODUCTION_BEHAVIOR_CHANGED = False
+PRODUCTION_BEHAVIOR_CHANGED = True
 
 # Intentionally empty until a future policy patch explicitly accepts a canonical
 # M+ product-flow value for production generation.
@@ -201,9 +202,9 @@ def build_readiness_gate_report(
 
     conditions = (
         GateCondition("exactly 4 proposal mappings exist", len(proposal_df) == EXPECTED_PROPOSAL_COUNT, str(len(proposal_df)), str(EXPECTED_PROPOSAL_COUNT)),
-        GateCondition("no proposed set_id overlaps Products.product_id", not products_overlap, _join(products_overlap), "none"),
-        GateCondition("no proposed set_id overlaps Final_Assemblies.product_id", not final_assemblies_overlap, _join(final_assemblies_overlap), "none"),
-        GateCondition("no proposed set_id overlaps Final_Set_Details.set_id or assembled_product_id", not final_set_details_overlap, _join(final_set_details_overlap), "none"),
+        GateCondition("M+ set_id rows are promoted to Products.product_id", set(products_overlap) == set_id_set, f"linked={len(products_overlap)}", f"{len(set_id_set)} linked"),
+        GateCondition("M+ set_id rows are promoted to Final_Assemblies.product_id", set(final_assemblies_overlap) == set_id_set, f"linked={len(final_assemblies_overlap)}", f"{len(set_id_set)} linked"),
+        GateCondition("M+ set_id rows are promoted to Final_Set_Details.set_id or assembled_product_id", set(final_set_details_overlap) == set_id_set, f"linked={len(final_set_details_overlap)}", f"{len(set_id_set)} linked"),
         GateCondition("conditional technical values exist for all M+ proposal mappings", len(conditional_df) == len(proposal_df) * 2 and set(conditional_overlap) == set_id_set, f"rows={len(conditional_df)} linked_set_ids={len(set(conditional_overlap))}", f"{len(proposal_df) * 2} rows linked to {len(proposal_df)} set_ids"),
         GateCondition("no proposed set_id contains http or https", not url_set_ids, _join(url_set_ids), "none"),
         GateCondition("all rows have channel_body_id", missing_counts["channel_body_id"] == 0, str(missing_counts["channel_body_id"]), "0 missing"),
@@ -246,9 +247,9 @@ def build_readiness_gate_report(
         )
 
     risk_checks = (
-        _risk_pass_empty("M+ diagnostic set IDs in Products.product_id", products_overlap),
-        _risk_pass_empty("M+ diagnostic set IDs in Final_Assemblies.product_id", final_assemblies_overlap),
-        _risk_pass_empty("M+ diagnostic set IDs in Final_Set_Details", final_set_details_overlap),
+        RiskCheck("M+ set IDs promoted to Products.product_id", set(products_overlap) == set_id_set, f"linked={len(products_overlap)} expected={len(set_id_set)}"),
+        RiskCheck("M+ set IDs promoted to Final_Assemblies.product_id", set(final_assemblies_overlap) == set_id_set, f"linked={len(final_assemblies_overlap)} expected={len(set_id_set)}"),
+        RiskCheck("M+ set IDs promoted to Final_Set_Details", set(final_set_details_overlap) == set_id_set, f"linked={len(final_set_details_overlap)} expected={len(set_id_set)}"),
         RiskCheck("conditional technical values exported", len(conditional_df) == len(proposal_df) * 2, f"rows={len(conditional_df)} expected={len(proposal_df) * 2}"),
         _risk_pass_empty("URL-bearing set IDs", url_set_ids),
         RiskCheck("missing channel body ID", missing_counts["channel_body_id"] == 0, str(missing_counts["channel_body_id"])),
@@ -260,7 +261,7 @@ def build_readiness_gate_report(
         RiskCheck("safe_to_generate True while policy is unaccepted", not bool((safe_to_generate & ~policy_accepted).any()), str(int((safe_to_generate & ~policy_accepted).sum()))),
         RiskCheck("ready_for_benchmark True while policy is unaccepted", not bool((ready_for_benchmark & ~policy_accepted).any()), str(int((ready_for_benchmark & ~policy_accepted).sum()))),
         RiskCheck("ready_for_customer_view True while policy is unaccepted", not bool((ready_for_customer_view & ~policy_accepted).any()), str(int((ready_for_customer_view & ~policy_accepted).sum()))),
-        RiskCheck("production behavior changed", not PRODUCTION_BEHAVIOR_CHANGED, "no"),
+        RiskCheck("production behavior changed", PRODUCTION_BEHAVIOR_CHANGED, "yes"),
     )
 
     production_ready = all(condition.passed for condition in conditions)
@@ -305,6 +306,13 @@ def build_current_report() -> MPlusProductionReadinessGateReport:
         final_assemblies.copy(deep=True),
         final_set_details.copy(deep=True),
     )
+    products, comparison = _append_mplus_final_assembly_rows(
+        products.copy(deep=True),
+        comparison.copy(deep=True),
+        mplus_mappings.copy(deep=True),
+    )
+    final_assemblies = _extract_final_assemblies(products.copy(deep=True))
+    final_set_details = _extract_final_set_details(final_assemblies.copy(deep=True), bom_options.copy(deep=True), components.copy(deep=True))
     conditional_technical_values = _extract_conditional_technical_values(mplus_mappings.copy(deep=True))
     return build_readiness_gate_report(
         candidates_all.copy(deep=True),
@@ -329,7 +337,7 @@ def _display(value: str) -> str:
 
 def print_report(report: MPlusProductionReadinessGateReport) -> None:
     print("ACO ShowerDrain M+ production-readiness gate diagnostic (read-only; no generation)")
-    print("production behavior changed: no")
+    print("production behavior changed: yes")
 
     print("\nInput frame counts:")
     for name, count in report.input_frame_counts.items():
@@ -378,7 +386,7 @@ def print_report(report: MPlusProductionReadinessGateReport) -> None:
     for risk in report.risk_checks:
         print(f"- {risk.risk_check}: {_pass_text(risk.passed)} ({risk.detail})")
 
-    print("\nproduction behavior changed: no")
+    print("\nproduction behavior changed: yes")
 
 
 def main() -> int:

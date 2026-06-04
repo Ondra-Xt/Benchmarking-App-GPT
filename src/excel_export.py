@@ -255,8 +255,10 @@ MPLUS_RECOMMENDED_NEXT_ACTION = (
     "implement scoring/export handling for conditional parameter values before production M+ assemblies"
 )
 MPLUS_PRODUCTION_STATUS_NOTE = (
-    "diagnostic/conditional-parameter-only; conditional flow data available; no Products/BOM/assembly generation change"
+    "conditional flow values available in Conditional_Technical_Values; scenario scoring not implemented"
 )
+MPLUS_FINAL_DATA_QUALITY_STATUS = "conditional_parameter_available_production_blocked"
+MPLUS_FLOW_RATE_STATUS = "conditional"
 MPLUS_BLOCKING_REASON = "blocked_pending_conditional_parameter_scoring"
 
 CONDITIONAL_TECHNICAL_VALUES_COLUMNS = [
@@ -314,6 +316,8 @@ MPLUS_CONDITIONAL_FLOW_VARIANTS = (
 
 def _assembled_family(product_id: Any) -> str:
     pid = str(product_id or "")
+    if pid.startswith("aco-assembled-showerdrain-mplus-"):
+        return "showerdrain_mplus"
     if pid.startswith("aco-assembled-easyflowplus-"):
         return "easyflowplus"
     if pid.startswith("aco-assembled-easyflow-"):
@@ -333,7 +337,9 @@ def _missing_final_assembly_technical_fields(row: pd.Series) -> list[str]:
     ]
 
 
-def _final_assembly_data_quality_status(missing_fields: list[str]) -> str:
+def _final_assembly_data_quality_status(missing_fields: list[str], family: str = "") -> str:
+    if family == "showerdrain_mplus":
+        return MPLUS_FINAL_DATA_QUALITY_STATUS
     if not missing_fields:
         return "complete"
     if len(missing_fields) == len(FINAL_ASSEMBLIES_REQUIRED_TECHNICAL_FIELDS):
@@ -342,6 +348,8 @@ def _final_assembly_data_quality_status(missing_fields: list[str]) -> str:
 
 
 def _final_assembly_source_status_note(family: str, missing_fields: list[str]) -> str:
+    if family == "showerdrain_mplus":
+        return MPLUS_PRODUCTION_STATUS_NOTE
     if not missing_fields:
         return "complete technical data"
     if family == "easyflow" and EASYFLOW_AMBIGUOUS_TECHNICAL_FIELDS.issubset(set(missing_fields)):
@@ -359,6 +367,7 @@ def _parse_final_set_parts(product_id: Any, family: str) -> tuple[str, str]:
         "easyflow": "aco-assembled-easyflow-",
         "showerdrain_c": "aco-assembled-showerdrain-c-",
         "showerdrain_splus": "aco-assembled-showerdrain-splus-",
+        "showerdrain_mplus": "aco-assembled-showerdrain-mplus-",
     }
     prefix = family_prefixes.get(str(family or ""), ASSEMBLED_PREFIX)
     remainder = pid[len(prefix):] if pid.startswith(prefix) else pid[len(ASSEMBLED_PREFIX):]
@@ -449,6 +458,22 @@ def _extract_final_set_details(
         data_quality_status = str(assembly.get("data_quality_status") or "").strip().lower()
         is_complete = data_quality_status == "complete"
         is_easyflow_partial = assembled_family == "easyflow" and data_quality_status == "partial"
+        is_mplus_conditional = assembled_family == "showerdrain_mplus"
+        def _assembly_bool(value: Any, default: bool) -> bool:
+            if value is None or _is_nan(value):
+                return default
+            text = str(value).strip().lower()
+            if text in {"true", "1", "yes", "y", "ja"}:
+                return True
+            if text in {"false", "0", "no", "n", "nein"}:
+                return False
+            return default
+
+        ready_for_benchmark = _assembly_bool(assembly.get("ready_for_benchmark", None), is_complete)
+        ready_for_customer_view = _assembly_bool(assembly.get("ready_for_customer_view", None), is_complete)
+        if is_mplus_conditional:
+            ready_for_benchmark = False
+            ready_for_customer_view = False
 
         rows.append({
             "set_id": assembled_product_id,
@@ -469,11 +494,11 @@ def _extract_final_set_details(
             "missing_technical_fields": assembly.get("missing_technical_fields", ""),
             "data_quality_status": data_quality_status,
             "source_status_note": assembly.get("source_status_note", ""),
-            "ready_for_benchmark": is_complete,
-            "ready_for_customer_view": is_complete,
-            "blocked_reason": FINAL_SET_DETAILS_EASYFLOW_BLOCKED_REASON if is_easyflow_partial else "",
-            "article_variant_status": "multiple_candidate_articles" if is_easyflow_partial else "not_required",
-            "article_variant_note": FINAL_SET_DETAILS_EASYFLOW_ARTICLE_NOTE if is_easyflow_partial else FINAL_SET_DETAILS_NON_EASYFLOW_ARTICLE_NOTE,
+            "ready_for_benchmark": ready_for_benchmark,
+            "ready_for_customer_view": ready_for_customer_view,
+            "blocked_reason": MPLUS_BLOCKING_REASON if is_mplus_conditional else (FINAL_SET_DETAILS_EASYFLOW_BLOCKED_REASON if is_easyflow_partial else ""),
+            "article_variant_status": "conditional_parameter_available" if is_mplus_conditional else ("multiple_candidate_articles" if is_easyflow_partial else "not_required"),
+            "article_variant_note": MPLUS_PRODUCTION_STATUS_NOTE if is_mplus_conditional else (FINAL_SET_DETAILS_EASYFLOW_ARTICLE_NOTE if is_easyflow_partial else FINAL_SET_DETAILS_NON_EASYFLOW_ARTICLE_NOTE),
             "product_url": assembly.get("product_url", ""),
             "source_url": assembly.get("source_url", ""),
             "sources": assembly.get("sources", ""),
@@ -512,7 +537,13 @@ def _extract_final_assemblies(products_df: pd.DataFrame) -> pd.DataFrame:
         _missing_final_assembly_technical_fields,
         axis=1,
     )
-    statuses = missing_by_row.map(_final_assembly_data_quality_status)
+    statuses = pd.Series(
+        [
+            _final_assembly_data_quality_status(missing_fields, family)
+            for family, missing_fields in zip(families, missing_by_row)
+        ],
+        index=final_assemblies.index,
+    )
 
     final_assemblies["is_complete_technical_data"] = statuses.eq("complete")
     final_assemblies["missing_technical_fields"] = missing_by_row.map(",".join)
@@ -521,6 +552,27 @@ def _extract_final_assemblies(products_df: pd.DataFrame) -> pd.DataFrame:
         _final_assembly_source_status_note(family, missing_fields)
         for family, missing_fields in zip(families, missing_by_row)
     ]
+
+    mplus_mask = families.eq("showerdrain_mplus")
+    if bool(mplus_mask.any()):
+        for column, value in {
+            "product_family": "showerdrain_mplus",
+            "family": "showerdrain_mplus",
+            "assembled_from_bom": "true",
+            "system_role": "assembled_system",
+            "flow_rate_lps": "",
+            "flow_rate_status": MPLUS_FLOW_RATE_STATUS,
+            "is_complete_technical_data": False,
+            "missing_technical_fields": "flow_rate_lps",
+            "data_quality_status": MPLUS_FINAL_DATA_QUALITY_STATUS,
+            "ready_for_benchmark": False,
+            "ready_for_customer_view": False,
+            "blocked_reason": MPLUS_BLOCKING_REASON,
+            "source_status_note": MPLUS_PRODUCTION_STATUS_NOTE,
+        }.items():
+            if column not in final_assemblies.columns:
+                final_assemblies[column] = ""
+            final_assemblies.loc[mplus_mask, column] = value
 
     return final_assemblies
 
@@ -976,10 +1028,18 @@ def _mplus_cell(value: Any, fallback: Any = "") -> Any:
     return value if _present(value) else fallback
 
 
+def _mplus_assembled_product_id(channel_body_id: Any, drain_body_id: Any, grate_id: Any) -> str:
+    return (
+        f"aco-assembled-showerdrain-mplus-{channel_body_id}__{drain_body_id}__{grate_id}"
+        .lower()
+        .replace(" ", "-")
+    )
+
+
 def _fallback_mplus_mapping_value(article_number: str, field: str) -> str:
     drain_id = f"aco-{article_number.replace('.', '')}"
     values = {
-        "set_id": f"diagnostic-mplus-{MPLUS_CHANNEL_BODY_ID}__{drain_id}__{MPLUS_GRATE_ID}",
+        "set_id": _mplus_assembled_product_id(MPLUS_CHANNEL_BODY_ID, drain_id, MPLUS_GRATE_ID),
         "product_family": "showerdrain_mplus",
         "assembly_model": "channel_body_x_drain_body_x_grate",
         "channel_body_id": MPLUS_CHANNEL_BODY_ID,
@@ -1129,13 +1189,159 @@ def _extract_mplus_compound_mappings(
     return pd.DataFrame(rows, columns=MPLUS_COMPOUND_MAPPING_COLUMNS)
 
 
+
+
+
+def _has_aco_export_context(*dfs: pd.DataFrame) -> bool:
+    for df in dfs:
+        if df is None or df.empty or "manufacturer" not in df.columns:
+            continue
+        manufacturers = df.get("manufacturer", pd.Series([""] * len(df), index=df.index)).fillna("").astype(str).str.strip().str.lower()
+        if manufacturers.eq("aco").any():
+            return True
+    return False
+
+def _append_mplus_final_assembly_rows(
+    products_df: pd.DataFrame,
+    comparison_df: pd.DataFrame,
+    mplus_compound_mappings_df: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Promote M+ compound mappings into blocked final assembled Product rows.
+
+    Flow-rate values are deliberately not copied into scalar flow_rate_lps.  The
+    two condition-specific observations remain in Conditional_Technical_Values.
+    """
+    products_df = pd.DataFrame() if products_df is None else products_df.copy()
+    comparison_df = pd.DataFrame() if comparison_df is None else comparison_df.copy()
+    if mplus_compound_mappings_df is None or mplus_compound_mappings_df.empty:
+        return products_df, comparison_df
+
+    existing_product_ids = set(products_df["product_id"].fillna("").astype(str).str.strip()) if "product_id" in products_df.columns else set()
+    existing_comparison_ids = set(comparison_df["product_id"].fillna("").astype(str).str.strip()) if "product_id" in comparison_df.columns else set()
+
+    product_rows: list[dict[str, Any]] = []
+    comparison_rows: list[dict[str, Any]] = []
+    for _, mapping in mplus_compound_mappings_df.iterrows():
+        channel_body_id = str(mapping.get("channel_body_id") or "").strip()
+        drain_body_id = str(mapping.get("drain_body_id") or "").strip()
+        grate_id = str(mapping.get("grate_id") or "").strip()
+        if not (channel_body_id and drain_body_id and grate_id):
+            continue
+        assembled_id = _mplus_assembled_product_id(channel_body_id, drain_body_id, grate_id)
+        if not assembled_id:
+            continue
+        article = str(mapping.get("drain_body_article_number") or "").strip()
+        name = f"ACO ShowerDrain M+ assembled set {article}".strip()
+        product_row = {
+            "manufacturer": "aco",
+            "product_id": assembled_id,
+            "product_name": name,
+            "candidate_type": "drain",
+            "product_family": "showerdrain_mplus",
+            "family": "showerdrain_mplus",
+            "complete_system": "yes",
+            "system_role": "assembled_system",
+            "promote_to_product": "yes",
+            "promotion_reason": "assembled_from_mplus_compound_mapping",
+            "why_not_product_reason": "",
+            "assembly_reason": "aco_mplus_channel_body_x_drain_body_x_grate",
+            "assembly_model": "channel_body_x_drain_body_x_grate",
+            "assembled_from_bom": "true",
+            "channel_body_id": mapping.get("channel_body_id", ""),
+            "drain_body_id": mapping.get("drain_body_id", ""),
+            "grate_id": mapping.get("grate_id", ""),
+            "channel_body_article_number": mapping.get("channel_body_article_number", ""),
+            "drain_body_article_number": mapping.get("drain_body_article_number", ""),
+            "grate_article_number": mapping.get("grate_article_number", ""),
+            "source_url_channel_body": mapping.get("source_url_channel_body", ""),
+            "source_url_drain_body": mapping.get("source_url_drain_body", ""),
+            "source_url_grate": mapping.get("source_url_grate", ""),
+            "base_product_id": mapping.get("channel_body_id", ""),
+            "drain_body_component_id": mapping.get("drain_body_id", ""),
+            "grate_component_id": mapping.get("grate_id", ""),
+            "matched_component_ids": ",".join(
+                str(mapping.get(k) or "")
+                for k in ("channel_body_id", "drain_body_id", "grate_id")
+                if str(mapping.get(k) or "").strip()
+            ),
+            "flow_rate_lps": "",
+            "flow_rate_status": MPLUS_FLOW_RATE_STATUS,
+            "water_seal_mm": mapping.get("water_seal_mm", ""),
+            "outlet_dn": mapping.get("outlet_dn", ""),
+            "height_adj_min_mm": mapping.get("height_adj_min_mm", ""),
+            "height_adj_max_mm": mapping.get("height_adj_max_mm", ""),
+            "is_complete_technical_data": False,
+            "missing_technical_fields": "flow_rate_lps",
+            "data_quality_status": MPLUS_FINAL_DATA_QUALITY_STATUS,
+            "ready_for_benchmark": False,
+            "ready_for_customer_view": False,
+            "blocked_reason": MPLUS_BLOCKING_REASON,
+            "source_status_note": MPLUS_PRODUCTION_STATUS_NOTE,
+            "product_url": mapping.get("source_url_channel_body", ""),
+            "source_url": mapping.get("source_url_channel_body", ""),
+            "sources": ",".join(
+                str(mapping.get(k) or "")
+                for k in ("source_url_channel_body", "source_url_drain_body", "source_url_grate")
+                if str(mapping.get(k) or "").strip()
+            ),
+        }
+        if assembled_id in existing_product_ids and "product_id" in products_df.columns:
+            product_mask = products_df["product_id"].fillna("").astype(str).str.strip().eq(assembled_id)
+            for column, value in product_row.items():
+                if column not in products_df.columns:
+                    products_df[column] = ""
+                products_df.loc[product_mask, column] = value
+        else:
+            product_rows.append(product_row)
+            existing_product_ids.add(assembled_id)
+
+        comparison_row = {
+                "manufacturer": "aco",
+                "product_id": assembled_id,
+                "product_name": name,
+                "candidate_type": "drain",
+                "product_family": "showerdrain_mplus",
+                "family": "showerdrain_mplus",
+                "complete_system": "yes",
+                "system_role": "assembled_system",
+                "promote_to_product": "yes",
+                "promotion_reason": "assembled_from_mplus_compound_mapping",
+                "why_not_product_reason": "",
+                "assembled_from_bom": "true",
+                "matched_component_ids": product_row["matched_component_ids"],
+                "flow_rate_lps": "",
+                "flow_rate_status": MPLUS_FLOW_RATE_STATUS,
+                "water_seal_mm": mapping.get("water_seal_mm", ""),
+                "outlet_dn": mapping.get("outlet_dn", ""),
+                "height_adj_min_mm": mapping.get("height_adj_min_mm", ""),
+                "height_adj_max_mm": mapping.get("height_adj_max_mm", ""),
+                "ready_for_benchmark": False,
+                "ready_for_customer_view": False,
+                "blocked_reason": MPLUS_BLOCKING_REASON,
+                "data_quality_status": MPLUS_FINAL_DATA_QUALITY_STATUS,
+            }
+        if assembled_id in existing_comparison_ids and "product_id" in comparison_df.columns:
+            comparison_mask = comparison_df["product_id"].fillna("").astype(str).str.strip().eq(assembled_id)
+            for column, value in comparison_row.items():
+                if column not in comparison_df.columns:
+                    comparison_df[column] = ""
+                comparison_df.loc[comparison_mask, column] = value
+        else:
+            comparison_rows.append(comparison_row)
+            existing_comparison_ids.add(assembled_id)
+
+    if product_rows:
+        products_df = pd.concat([products_df, pd.DataFrame(product_rows)], ignore_index=True, sort=False)
+    if comparison_rows:
+        comparison_df = pd.concat([comparison_df, pd.DataFrame(comparison_rows)], ignore_index=True, sort=False)
+    return products_df, comparison_df
+
 def _extract_conditional_technical_values(mplus_compound_mappings_df: pd.DataFrame) -> pd.DataFrame:
     """Return diagnostic-only condition-specific technical values for proposal rows.
 
     M+ flow-rate values are source-backed at different head-water levels.  This
     sheet preserves those variants without selecting a production default or
-    feeding the values into Products.flow_rate_lps, scoring, BOM generation, or
-    final assembly generation.
+    feeding the values into Products.flow_rate_lps, scoring, or BOM generation.
     """
     rows: list[dict[str, Any]] = []
     if mplus_compound_mappings_df is None or mplus_compound_mappings_df.empty:
@@ -1288,17 +1494,25 @@ def export_excel(
         for _, row in df.iterrows():
             ws.append([_to_excel_cell(v) for v in row.tolist()])
 
-    final_assemblies_df = _extract_final_assemblies(products_df)
-    final_set_details_df = _extract_final_set_details(final_assemblies_df, bom_options_df, components_df)
+    initial_final_assemblies_df = _extract_final_assemblies(products_df)
+    initial_final_set_details_df = _extract_final_set_details(initial_final_assemblies_df, bom_options_df, components_df)
     mplus_compound_mappings_df = _extract_mplus_compound_mappings(
         registry_df,
         products_df,
         comparison_df,
         components_df,
         bom_options_df,
-        final_assemblies_df,
-        final_set_details_df,
+        initial_final_assemblies_df,
+        initial_final_set_details_df,
     )
+    if _has_aco_export_context(registry_df, products_df, comparison_df, components_df, bom_options_df):
+        products_df, comparison_df = _append_mplus_final_assembly_rows(
+            products_df,
+            comparison_df,
+            mplus_compound_mappings_df,
+        )
+    final_assemblies_df = _extract_final_assemblies(products_df)
+    final_set_details_df = _extract_final_set_details(final_assemblies_df, bom_options_df, components_df)
     eplus_proposal_mappings_df = _extract_eplus_proposal_mappings(
         products_df,
         final_assemblies_df,
