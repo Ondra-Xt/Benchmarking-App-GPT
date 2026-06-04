@@ -785,7 +785,7 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
             results.append(CheckResult(f"final_assemblies_mplus_link:{field}", blank == 0, f"actual_blank={blank} expected_blank=0"))
         mplus_family_bad = int((~_string_series_eq(mplus, "product_family", "showerdrain_mplus")).sum())
         mplus_family_alias_bad = int((~_string_series_eq(mplus, "family", "showerdrain_mplus")).sum())
-        mplus_assembled_marker_bad = int((~_string_series_eq(mplus, "assembled_from_bom", "true")).sum())
+        mplus_assembled_marker_bad = int((~_bool_series_eq(mplus, "assembled_from_bom", True)).sum())
         mplus_flow_status_bad = int((~_string_series_eq(mplus, "flow_rate_status", "conditional")).sum())
         mplus_status_bad = int((~_string_series_eq(mplus, "data_quality_status", "conditional_parameter_available_production_blocked")).sum())
         mplus_benchmark_bad = int((~_bool_series_eq(mplus, "ready_for_benchmark", False)).sum())
