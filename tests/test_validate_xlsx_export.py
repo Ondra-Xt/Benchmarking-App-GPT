@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 
@@ -292,6 +293,157 @@ def _base_dataframes():
         for _, row in final.iterrows()
     ])
     return data
+
+
+def _mplus_final_assembly_dataframe(ready_value):
+    rows = []
+    for _, mapping in _mplus_compound_mappings_dataframe().iterrows():
+        assembled_id = mapping["set_id"].replace("diagnostic-mplus-", "aco-assembled-showerdrain-mplus-")
+        rows.append({
+            "manufacturer": "aco",
+            "product_id": assembled_id,
+            "assembled_family": "showerdrain_mplus",
+            "product_family": "showerdrain_mplus",
+            "family": "showerdrain_mplus",
+            "product_name": "ACO ShowerDrain M+ assembled set",
+            "system_role": "assembled_system",
+            "assembled_from_bom": True,
+            "channel_body_id": mapping["channel_body_id"],
+            "drain_body_id": mapping["drain_body_id"],
+            "grate_id": mapping["grate_id"],
+            "source_url_channel_body": mapping["source_url_channel_body"],
+            "source_url_drain_body": mapping["source_url_drain_body"],
+            "source_url_grate": mapping["source_url_grate"],
+            "water_seal_mm": mapping["water_seal_mm"],
+            "outlet_dn": mapping["outlet_dn"],
+            "height_adj_min_mm": mapping["height_adj_min_mm"],
+            "height_adj_max_mm": mapping["height_adj_max_mm"],
+            "flow_rate_lps": "",
+            "flow_rate_status": "conditional",
+            "is_complete_technical_data": False,
+            "missing_technical_fields": "flow_rate_lps",
+            "data_quality_status": "conditional_parameter_available_production_blocked",
+            "ready_for_benchmark": ready_value,
+            "ready_for_customer_view": ready_value,
+            "blocked_reason": "blocked_pending_conditional_parameter_scoring",
+            "source_status_note": "conditional flow values available in Conditional_Technical_Values; scenario scoring not implemented",
+        })
+    return pd.DataFrame(rows)
+
+
+def _mplus_final_set_details_dataframe(final_assemblies: pd.DataFrame, ready_value=False):
+    return pd.DataFrame([
+        {
+            "set_id": row["product_id"],
+            "assembled_product_id": row["product_id"],
+            "assembled_family": "showerdrain_mplus",
+            "manufacturer": "aco",
+            "product_name": row["product_name"],
+            "base_product_id": row["channel_body_id"],
+            "component_id": row["drain_body_id"],
+            "component_role": "",
+            "component_family": "",
+            "flow_rate_lps": "",
+            "water_seal_mm": row["water_seal_mm"],
+            "outlet_dn": row["outlet_dn"],
+            "height_adj_min_mm": row["height_adj_min_mm"],
+            "height_adj_max_mm": row["height_adj_max_mm"],
+            "is_complete_technical_data": False,
+            "missing_technical_fields": "flow_rate_lps",
+            "data_quality_status": "conditional_parameter_available_production_blocked",
+            "source_status_note": row["source_status_note"],
+            "ready_for_benchmark": ready_value,
+            "ready_for_customer_view": ready_value,
+            "blocked_reason": "blocked_pending_conditional_parameter_scoring",
+            "article_variant_status": "conditional_parameter_available",
+            "article_variant_note": row["source_status_note"],
+            "product_url": "",
+            "source_url": "",
+            "sources": "",
+        }
+        for _, row in final_assemblies.iterrows()
+    ])
+
+
+def _mplus_only_dataframes(ready_value=0.0):
+    final_assemblies = _mplus_final_assembly_dataframe(ready_value)
+    products = final_assemblies.drop(columns=["assembled_family"]).copy()
+    comparison = products.copy()
+    mplus_mappings = _mplus_compound_mappings_dataframe()
+    mplus_mappings["set_id"] = final_assemblies["product_id"].tolist()
+    conditional_values = _conditional_technical_values_dataframe()
+    set_id_map = dict(zip(_mplus_compound_mappings_dataframe()["set_id"], final_assemblies["product_id"]))
+    conditional_values["set_id"] = conditional_values["set_id"].map(set_id_map)
+    return {
+        "Products": products,
+        "Comparison": comparison,
+        "Scoring_Field_Coverage": products[["manufacturer", "product_id"]].copy(),
+        "Candidates_All": pd.DataFrame(),
+        "Components": pd.DataFrame(),
+        "BOM_Options": pd.DataFrame(),
+        "Mplus_Compound_Mappings": mplus_mappings,
+        "Eplus_Proposal_Mappings": _eplus_proposal_mappings_dataframe(),
+        "Conditional_Technical_Values": conditional_values,
+        "Article_Variants": pd.DataFrame(columns=[
+            "manufacturer",
+            "base_product_id",
+            "article_number",
+            "variant_type",
+            "product_family",
+            "source_url",
+            "water_seal_mm",
+            "outlet_dn",
+            "flow_rate_lps",
+            "height_adj_min_mm",
+            "height_adj_max_mm",
+            "cutout_mm",
+            "side_inlet",
+            "row_text",
+            "attribution_status",
+            "why_not_promoted",
+        ]),
+        "Final_Assemblies": final_assemblies,
+        "Final_Set_Details": _mplus_final_set_details_dataframe(final_assemblies, False),
+    }
+
+
+def _patch_mplus_only_expectations(mod):
+    mod.EXPECTED_SHEET_COUNTS = {
+        "Products": 4,
+        "Comparison": 4,
+        "Scoring_Field_Coverage": 4,
+        "Candidates_All": 0,
+        "Components": 0,
+        "BOM_Options": 0,
+        "Final_Assemblies": 4,
+        "Final_Set_Details": 4,
+        "Mplus_Compound_Mappings": 4,
+        "Eplus_Proposal_Mappings": 3,
+        "Conditional_Technical_Values": 8,
+        "Article_Variants": 0,
+    }
+    mod.COMPONENTS_MIN_ROWS = 0
+    mod.EXPECTED_BOM_OPTION_TYPE_COUNTS = {"optional_accessory": 0, "compatible_grate": 0}
+    mod.EXPECTED_ASSEMBLED_PREFIX_COUNTS = {
+        "aco-assembled-showerdrain-splus": 0,
+        "aco-assembled-showerdrain-c": 0,
+        "aco-assembled-showerdrain-mplus": 4,
+        "aco-assembled-showerdrain-eplus": 0,
+        "aco-assembled-showerdrain-b": 0,
+        "aco-assembled-showerdrain-cplus": 0,
+    }
+    mod.EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS = {"showerdrain_mplus": 4}
+    mod.EXPECTED_FINAL_ASSEMBLIES_STATUS_COUNTS = {
+        "complete": 0,
+        "partial": 0,
+        "conditional_parameter_available_production_blocked": 4,
+        "missing": 0,
+    }
+    mod.EXPECTED_FINAL_SET_DETAILS_ROW_COUNT = 4
+    mod.EXPECTED_FINAL_SET_DETAILS_FAMILY_COUNTS = {"showerdrain_mplus": 4}
+    mod.EXPECTED_FINAL_SET_DETAILS_READY_COUNTS = {True: 0, False: 4}
+    mod.CPLUS_EXPECTED = {}
+    mod.EASYFLOW_WS50_DN50_EXPECTED_ARTICLES = set()
 
 def _result_for(results, name):
     return next(r for r in results if r.name == name)
@@ -672,3 +824,47 @@ def test_mplus_compound_mappings_validation_passes_expected_diagnostic_rows(tmp_
     assert _result_for(results, "mplus_compound_mappings_empty:selected_default_flow_rate_lps").passed
     assert _result_for(results, "conditional_technical_values_mplus_row_count").passed
     assert _result_for(results, "conditional_technical_values_two_flow_rows_per_mplus_set").passed
+
+
+def test_bool_series_eq_accepts_pandas_numeric_false_and_rejects_numeric_true():
+    mod = _load_validator_module()
+    false_values = [False, np.bool_(False), "False", "false", "FALSE", "0", 0, 0.0, np.int64(0), np.float64(0.0)]
+    true_values = [True, np.bool_(True), "True", "true", "TRUE", "1", 1, 1.0, np.int64(1), np.float64(1.0)]
+    missing_values = [None, "", np.nan]
+    df = pd.DataFrame({"value": false_values + true_values + missing_values})
+
+    is_false = mod._bool_series_eq(df, "value", False)
+    is_true = mod._bool_series_eq(df, "value", True)
+
+    assert is_false.iloc[:len(false_values)].all()
+    assert not is_false.iloc[len(false_values):].any()
+    assert is_true.iloc[len(false_values):len(false_values) + len(true_values)].all()
+    assert not is_true.iloc[:len(false_values)].any()
+    assert not is_true.iloc[-len(missing_values):].any()
+    assert not is_false.iloc[-len(missing_values):].any()
+
+
+def test_mplus_final_assemblies_numeric_zero_readiness_passes_validator(tmp_path):
+    mod = _load_validator_module()
+    _patch_mplus_only_expectations(mod)
+    path = tmp_path / "mplus_numeric_zero_ready.xlsx"
+    _write_xlsx(path, _mplus_only_dataframes(ready_value=0.0))
+
+    passed, results = mod.validate_xlsx(str(path))
+
+    assert passed
+    assert _result_for(results, "final_assemblies_mplus_ready_for_benchmark_false").passed
+    assert _result_for(results, "final_assemblies_mplus_ready_for_customer_view_false").passed
+
+
+def test_mplus_final_assemblies_numeric_one_readiness_fails_validator(tmp_path):
+    mod = _load_validator_module()
+    _patch_mplus_only_expectations(mod)
+    path = tmp_path / "mplus_numeric_one_ready.xlsx"
+    _write_xlsx(path, _mplus_only_dataframes(ready_value=1.0))
+
+    passed, results = mod.validate_xlsx(str(path))
+
+    assert not passed
+    assert not _result_for(results, "final_assemblies_mplus_ready_for_benchmark_false").passed
+    assert not _result_for(results, "final_assemblies_mplus_ready_for_customer_view_false").passed

@@ -1,7 +1,7 @@
 import argparse
 import sys
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import Any, List, Tuple
 
 import pandas as pd
 
@@ -319,12 +319,44 @@ def _string_series_eq(df: pd.DataFrame, col: str, expected: str) -> pd.Series:
     return df[col].fillna("").astype(str).str.strip().eq(expected)
 
 
+def _coerce_bool_like(value: Any) -> bool | None:
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if hasattr(value, "item") and callable(getattr(value, "item")):
+        try:
+            value = value.item()
+        except (TypeError, ValueError):
+            pass
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+        return None
+    text = str(value).strip().lower()
+    if text == "":
+        return None
+    if text in {"true", "1", "1.0", "yes", "y"}:
+        return True
+    if text in {"false", "0", "0.0", "no", "n"}:
+        return False
+    return None
+
+
 def _bool_series_eq(df: pd.DataFrame, col: str, expected: bool) -> pd.Series:
     if col not in df.columns:
         return pd.Series([False] * len(df), index=df.index)
-    normalized = df[col].fillna("").astype(str).str.strip().str.lower()
-    expected_values = {"true", "1", "yes"} if expected else {"false", "0", "no"}
-    return normalized.isin(expected_values)
+    return pd.Series(
+        [_coerce_bool_like(value) is expected for value in df[col]],
+        index=df.index,
+    )
 
 
 def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
