@@ -122,9 +122,9 @@ def test_risk_checks_detect_overlaps_urls_and_unaccepted_policy_violations():
     )
 
     risks = {risk.risk_check: risk for risk in report.risk_checks}
-    assert risks["M+ diagnostic set IDs in Products.product_id"].passed is False
-    assert risks["M+ diagnostic set IDs in Final_Assemblies.product_id"].passed is False
-    assert risks["M+ diagnostic set IDs in Final_Set_Details"].passed is False
+    assert risks["M+ set IDs promoted to Products.product_id"].passed is False
+    assert risks["M+ set IDs promoted to Final_Assemblies.product_id"].passed is False
+    assert risks["M+ set IDs promoted to Final_Set_Details"].passed is False
     assert risks["URL-bearing set IDs"].passed is False
     assert risks["missing channel body ID"].passed is False
     assert risks["missing drain body ID"].passed is False
@@ -165,7 +165,7 @@ def test_build_current_report_runs_discovery_pipeline_and_export_diagnostic(monk
     assert report.input_frame_counts["Candidates_All"] == 1
     assert report.input_frame_counts["Mplus_Compound_Mappings"] == 4
     assert report.production_ready is False
-    assert report.production_behavior_changed is False
+    assert report.production_behavior_changed is True
 
 
 def test_print_report_includes_required_sections(capsys):
@@ -187,4 +187,4 @@ def test_print_report_includes_required_sections(capsys):
     assert "blocked_pending_conditional_parameter_scoring" in out
     assert "implement scoring/export handling for conditional parameter values before production M+ assemblies" in out
     assert "Risk checks" in out
-    assert "production behavior changed: no" in out
+    assert "production behavior changed: yes" in out

@@ -303,7 +303,7 @@ class PipelineExportTests(unittest.TestCase):
             self.assertEqual(set(conditional_df["condition_value"]), {10, 20})
             self.assertEqual(set(conditional_df["value"]), {0.4, 0.46})
             self.assertEqual(conditional_df.groupby("set_id").size().to_dict(), {set_id: 2 for set_id in df["set_id"]})
-            self.assertTrue(conditional_df["production_status_note"].str.contains("diagnostic/conditional-parameter-only").all())
+            self.assertTrue(conditional_df["production_status_note"].str.contains("conditional flow values available in Conditional_Technical_Values").all())
             eplus_rows = self._sheet_rows(out, "Eplus_Proposal_Mappings")
             eplus_df = pd.DataFrame(eplus_rows[1:], columns=eplus_rows[0])
             self.assertEqual(len(eplus_df), 3)
@@ -321,9 +321,9 @@ class PipelineExportTests(unittest.TestCase):
             self.assertEqual(set(eplus_df["safe_to_generate"]), {False})
             self.assertEqual(set(eplus_df["ready_for_benchmark"]), {False})
             self.assertEqual(set(eplus_df["ready_for_customer_view"]), {False})
-            self.assertEqual(len(self._sheet_rows(out, "Products")) - 1, 1)
-            self.assertEqual(len(self._sheet_rows(out, "Final_Assemblies")) - 1, 0)
-            self.assertEqual(len(self._sheet_rows(out, "Final_Set_Details")) - 1, 0)
+            self.assertEqual(len(self._sheet_rows(out, "Products")) - 1, 5)
+            self.assertEqual(len(self._sheet_rows(out, "Final_Assemblies")) - 1, 4)
+            self.assertEqual(len(self._sheet_rows(out, "Final_Set_Details")) - 1, 4)
 
     def test_article_variant_products_flag_defaults_to_disabled(self):
         registry = pd.DataFrame([
@@ -1657,6 +1657,72 @@ class PipelineExportTests(unittest.TestCase):
         self.assertTrue(excluded.empty)
         self.assertTrue(bom.empty)
 
+
+    def test_exported_xlsx_mplus_final_assemblies_are_blocked_and_validate(self):
+        from tools import validate_xlsx_export
+
+        with tempfile.TemporaryDirectory() as td:
+            template = Path(td) / "template.xlsx"
+            out = Path(td) / "mplus_export.xlsx"
+            self._make_template(template)
+
+            products = pd.DataFrame([{"manufacturer": "aco", "product_id": "aco-regular-product"}])
+            export_excel(template, out, default_config(), products_df=products, comparison_df=products)
+
+            final_assemblies = pd.read_excel(out, sheet_name="Final_Assemblies")
+            mplus = final_assemblies[
+                final_assemblies["product_id"].fillna("").astype(str).str.startswith("aco-assembled-showerdrain-mplus-")
+            ]
+            self.assertEqual(len(mplus), 4)
+            self.assertTrue(mplus["assembled_from_bom"].eq(True).all())
+            self.assertTrue(mplus["ready_for_benchmark"].eq(False).all())
+            self.assertTrue(mplus["ready_for_customer_view"].eq(False).all())
+            self.assertTrue((mplus["flow_rate_lps"].isna() | mplus["flow_rate_lps"].fillna("").eq("")).all())
+            self.assertTrue(mplus["flow_rate_status"].eq("conditional").all())
+            self.assertTrue(mplus["data_quality_status"].eq("conditional_parameter_available_production_blocked").all())
+            self.assertTrue(mplus["blocked_reason"].str.contains("blocked_pending_conditional_parameter_scoring").all())
+
+            counts = {
+                "Products": 5,
+                "Comparison": 5,
+                "Scoring_Field_Coverage": 5,
+                "Candidates_All": 0,
+                "Components": 0,
+                "BOM_Options": 0,
+                "Final_Assemblies": 4,
+                "Final_Set_Details": 4,
+                "Mplus_Compound_Mappings": 4,
+                "Eplus_Proposal_Mappings": 3,
+                "Conditional_Technical_Values": 8,
+                "Article_Variants": 0,
+            }
+            with (
+                patch.object(validate_xlsx_export, "EXPECTED_SHEET_COUNTS", counts),
+                patch.object(validate_xlsx_export, "COMPONENTS_MIN_ROWS", 0),
+                patch.object(validate_xlsx_export, "EXPECTED_BOM_OPTION_TYPE_COUNTS", {"optional_accessory": 0, "compatible_grate": 0}),
+                patch.object(validate_xlsx_export, "EXPECTED_ASSEMBLED_PREFIX_COUNTS", {
+                    "aco-assembled-showerdrain-splus": 0,
+                    "aco-assembled-showerdrain-c": 0,
+                    "aco-assembled-showerdrain-mplus": 4,
+                    "aco-assembled-showerdrain-eplus": 0,
+                    "aco-assembled-showerdrain-b": 0,
+                    "aco-assembled-showerdrain-cplus": 0,
+                }),
+                patch.object(validate_xlsx_export, "EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS", {"showerdrain_mplus": 4}),
+                patch.object(validate_xlsx_export, "EXPECTED_FINAL_ASSEMBLIES_STATUS_COUNTS", {
+                    "complete": 0,
+                    "partial": 0,
+                    "conditional_parameter_available_production_blocked": 4,
+                    "missing": 0,
+                }),
+                patch.object(validate_xlsx_export, "EXPECTED_FINAL_SET_DETAILS_ROW_COUNT", 4),
+                patch.object(validate_xlsx_export, "EXPECTED_FINAL_SET_DETAILS_FAMILY_COUNTS", {"showerdrain_mplus": 4}),
+                patch.object(validate_xlsx_export, "EXPECTED_FINAL_SET_DETAILS_READY_COUNTS", {True: 0, False: 4}),
+                patch.object(validate_xlsx_export, "CPLUS_EXPECTED", {}),
+                patch.object(validate_xlsx_export, "EASYFLOW_WS50_DN50_EXPECTED_ARTICLES", set()),
+            ):
+                self.assertEqual(validate_xlsx_export.main([str(out)]), 0)
+
     def test_export_writes_final_assemblies_sheet_from_products_only(self):
         with tempfile.TemporaryDirectory() as td:
             template = Path(td) / "template.xlsx"
@@ -1737,9 +1803,9 @@ class PipelineExportTests(unittest.TestCase):
             product_rows = self._sheet_rows(out, "Products")
             final_rows = self._sheet_rows(out, "Final_Assemblies")
             detail_rows = self._sheet_rows(out, "Final_Set_Details")
-            self.assertEqual(len(product_rows) - 1, len(products))
-            self.assertEqual(len(final_rows) - 1, 5)
-            self.assertEqual(len(detail_rows) - 1, 5)
+            self.assertEqual(len(product_rows) - 1, len(products) + 4)
+            self.assertEqual(len(final_rows) - 1, 9)
+            self.assertEqual(len(detail_rows) - 1, 9)
 
             headers = list(final_rows[0])
             self.assertIn("assembled_family", headers)
@@ -1753,7 +1819,7 @@ class PipelineExportTests(unittest.TestCase):
             final_df = pd.DataFrame(final_rows[1:], columns=headers)
             self.assertEqual(
                 final_df["assembled_family"].tolist(),
-                ["easyflow", "easyflowplus", "showerdrain_c", "showerdrain_splus", "unknown"],
+                ["easyflow", "easyflowplus", "showerdrain_c", "showerdrain_splus", "unknown", "showerdrain_mplus", "showerdrain_mplus", "showerdrain_mplus", "showerdrain_mplus"],
             )
             self.assertNotIn("aco-regular-product", set(final_df["product_id"]))
 
@@ -1782,7 +1848,7 @@ class PipelineExportTests(unittest.TestCase):
             detail_headers = list(detail_rows[0])
             detail_df = pd.DataFrame(detail_rows[1:], columns=detail_headers)
             self.assertEqual(set(detail_df["assembled_product_id"]), set(final_df["product_id"]))
-            self.assertEqual(detail_df["ready_for_benchmark"].value_counts().to_dict(), {True: 4, False: 1})
+            self.assertEqual(detail_df["ready_for_benchmark"].value_counts().to_dict(), {True: 4, False: 5})
             detail_easyflow = detail_df[detail_df["assembled_family"] == "easyflow"].iloc[0]
             self.assertEqual(detail_easyflow["set_id"], detail_easyflow["assembled_product_id"])
             self.assertEqual(detail_easyflow["ready_for_benchmark"], False)
@@ -1792,11 +1858,23 @@ class PipelineExportTests(unittest.TestCase):
                 "flow/height ambiguous at current article/variant granularity",
             )
             self.assertEqual(detail_easyflow["article_variant_status"], "multiple_candidate_articles")
-            complete_detail_rows = detail_df[detail_df["assembled_family"] != "easyflow"]
+            complete_detail_rows = detail_df[detail_df["assembled_family"].isin(["easyflowplus", "showerdrain_c", "showerdrain_splus", "unknown"])]
             self.assertTrue((complete_detail_rows["ready_for_benchmark"] == True).all())
             self.assertTrue((complete_detail_rows["ready_for_customer_view"] == True).all())
             self.assertTrue((complete_detail_rows["article_variant_status"] == "not_required").all())
             self.assertTrue((complete_detail_rows["blocked_reason"].fillna("") == "").all())
+            mplus_rows = final_df[final_df["assembled_family"] == "showerdrain_mplus"]
+            self.assertTrue((mplus_rows["ready_for_benchmark"] == False).all())
+            self.assertTrue((mplus_rows["ready_for_customer_view"] == False).all())
+            self.assertTrue((mplus_rows["product_family"] == "showerdrain_mplus").all())
+            self.assertTrue((mplus_rows["family"] == "showerdrain_mplus").all())
+            self.assertTrue((mplus_rows["assembled_from_bom"] == "true").all())
+            self.assertTrue((mplus_rows["flow_rate_status"] == "conditional").all())
+            self.assertTrue((mplus_rows["flow_rate_lps"].fillna("") == "").all())
+            mplus_detail_rows = detail_df[detail_df["assembled_family"] == "showerdrain_mplus"]
+            self.assertTrue((mplus_detail_rows["ready_for_benchmark"] == False).all())
+            self.assertTrue((mplus_detail_rows["ready_for_customer_view"] == False).all())
+            self.assertTrue((mplus_detail_rows["blocked_reason"] == "blocked_pending_conditional_parameter_scoring").all())
 
 if __name__ == "__main__":
     unittest.main()
