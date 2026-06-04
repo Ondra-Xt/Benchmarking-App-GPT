@@ -495,7 +495,11 @@ def print_report(report: AssemblyGapReport) -> None:
     else:
         print("- none")
 
-    print("\nDangling component IDs by family:")
+    print("\nDiagnostic unmatched component IDs by family:")
+    print(
+        "Note: diagnostic-only component-table IDs not matched to compatible_grate BOM evidence; "
+        "this is not the XLSX validator aco_dangling_component_id check."
+    )
     if report.dangling_components:
         for family, ids in report.dangling_components.items():
             print(f"- {family}: {', '.join(ids)}")

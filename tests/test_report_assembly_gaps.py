@@ -165,6 +165,10 @@ def test_build_report_accounts_for_mplus_proposal_only_mappings(capsys):
     assert "- Mplus_Compound_Mappings: 4" in out
     assert "showerdrain_mplus | 0 | 0 | 0 | 0 | 0 | 0 | blocked_proposal_only_flow_policy | 0 | 4 | accept benchmark policy" in out
     assert "Ready candidate families:\n- none" in out
+    assert "Missing component IDs by family" in out
+    assert "Diagnostic unmatched component IDs by family" in out
+    assert "not the XLSX validator aco_dangling_component_id check" in out
+    assert "Dangling component IDs by family" not in out
     assert "Proposal-only diagnostic mappings:" in out
     assert "- showerdrain_mplus: 4 mappings, safe_to_generate=0, blocked=4, reason=benchmark policy for multi-head-condition flow values not yet accepted" in out
     assert "assembly_model=channel_body_x_drain_body_x_grate" in out
@@ -226,6 +230,10 @@ def test_build_report_accounts_for_eplus_proposal_only_mappings(capsys):
     assert "- Eplus_Proposal_Mappings: 3" in out
     assert "showerdrain_eplus | 0 | 0 | 0 | 0 | 0 | 0 | blocked_proposal_only_compatibility_evidence | 0 | 3 | collect explicit article-level E+ base-to-grate compatibility" in out
     assert "Ready candidate families:\n- none" in out
+    assert "Missing component IDs by family" in out
+    assert "Diagnostic unmatched component IDs by family" in out
+    assert "not the XLSX validator aco_dangling_component_id check" in out
+    assert "Dangling component IDs by family" not in out
     assert "- showerdrain_mplus: 4 mappings, safe_to_generate=0, blocked=4, reason=benchmark policy for multi-head-condition flow values not yet accepted" in out
     assert "- showerdrain_eplus: 3 mappings, safe_to_generate=0, blocked=3, reason=no explicit article-level base-to-grate compatibility matrix" in out
     assert "assembly_model=base_x_grate" in out
