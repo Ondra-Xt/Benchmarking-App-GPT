@@ -144,3 +144,158 @@ def test_diagnostic_mappings_do_not_create_production_cplus_assemblies_or_change
     assert by_family["showerdrain_cplus"].status == "blocked_proposal_only_compatibility_evidence"
     assert by_family["showerdrain_cplus"].proposal_only_mapping_count == 2
     assert by_family["showerdrain_cplus"].proposal_safe_to_generate_count == 0
+
+
+def test_candidate_grate_filter_excludes_assembled_body_and_nan_rows():
+    evidence = [
+        mod.CandidateEvidence(
+            "9010.88.61",
+            "aco-assembled-showerdrain-c-standard__aco-90108861",
+            "https://www.aco.example/showerdrain-c/design-roste-aus-geschliffenem-edelstahl/",
+            "Design-Rost Wave 9010.88.61",
+            "ambiguous",
+            "ambiguous",
+        ),
+        mod.CandidateEvidence(
+            "9010.85.24",
+            "aco-90108524",
+            "https://www.aco.example/showerdrain-c/design-roste-aus-geschliffenem-edelstahl/",
+            "Rinnenkörper ACO ShowerDrain C 9010.85.24",
+            "ambiguous",
+            "ambiguous",
+        ),
+        mod.CandidateEvidence(
+            "nan",
+            "aco-90108899",
+            "https://www.aco.example/showerdrain-c/design-roste-aus-geschliffenem-edelstahl/",
+            "Design-Rost Artikel nan",
+            "ambiguous",
+            "ambiguous",
+        ),
+        mod.CandidateEvidence(
+            "9010.88.61",
+            "aco-90108861",
+            "https://www.aco.example/showerdrain-c/design-roste-aus-geschliffenem-edelstahl/",
+            "Design-Rost Wave 9010.88.61",
+            "ambiguous",
+            "ambiguous",
+        ),
+        mod.CandidateEvidence(
+            "9010.88.62",
+            "",
+            "https://www.aco.example/showerdrain-c/design-roste-aus-geschliffenem-edelstahl/",
+            "Wave 9010.88.62",
+            "ambiguous",
+            "ambiguous",
+        ),
+    ]
+
+    rows = mod._candidate_grate_rows(evidence)
+
+    assert [(row.product_id, row.article_number) for row in rows] == [
+        ("aco-90108861", "9010.88.61"),
+        ("", "9010.88.62"),
+    ]
+
+
+def test_candidate_rows_from_frames_keeps_only_plausible_design_grates():
+    frames = [
+        pd.DataFrame([
+            {
+                "product_id": "aco-assembled-showerdrain-c-standard__aco-90108861",
+                "article_no": "9010.88.61",
+                "system_role": "grate",
+                "product_name": "Assembled ShowerDrain C with Design-Rost",
+                "source_url": "https://www.aco.example/showerdrain-c/design-roste-aus-geschliffenem-edelstahl/",
+            },
+            {
+                "product_id": "aco-90108534",
+                "article_no": "9010.85.34",
+                "system_role": "body",
+                "product_name": "Rinnenkörper ACO ShowerDrain C",
+                "source_url": "https://www.aco.example/showerdrain-c/design-roste-aus-geschliffenem-edelstahl/",
+            },
+            {
+                "product_id": "aco-90108862",
+                "article_no": "nan",
+                "system_role": "grate",
+                "product_name": "Design-Rost with missing article attribution",
+                "source_url": "https://www.aco.example/showerdrain-c/design-roste-aus-geschliffenem-edelstahl/",
+            },
+            {
+                "product_id": "aco-90108863",
+                "article_no": "9010.88.63",
+                "system_role": "grate",
+                "product_name": "Design-Rost Wave",
+                "source_url": "https://www.aco.example/showerdrain-c/design-roste-aus-geschliffenem-edelstahl/",
+            },
+        ])
+    ]
+
+    candidates = mod._candidate_rows_from_frames(frames)
+
+    assert set(candidates) == {"aco-90108863"}
+    assert candidates["aco-90108863"]["article_number"] == "9010.88.63"
+
+
+def test_find_candidate_evidence_filters_source_rows_to_design_grate_articles(monkeypatch):
+    html = """
+    <html><body><table>
+      <tr><td>Design-Rost Wave</td><td>9010.88.61</td></tr>
+      <tr><td>Design-Rost Square</td><td>9010.88.62</td></tr>
+      <tr><td>Rinnenkörper ShowerDrain C body</td><td>9010.85.24</td></tr>
+      <tr><td>Assembled ShowerDrain C set</td><td>9010.85.34</td></tr>
+      <tr><td>Design-Rost broken attribution</td><td>nan</td></tr>
+    </table></body></html>
+    """
+
+    def fake_get(url, timeout=35):
+        return 200, url, html, None
+
+    monkeypatch.setattr(mod.aco, "_safe_get_text", fake_get)
+
+    _inspections, evidence = mod.find_candidate_evidence([
+        "https://www.aco.example/showerdrain-c/design-roste-aus-geschliffenem-edelstahl/"
+    ])
+    rows = mod._candidate_grate_rows(evidence)
+
+    assert [row.article_number for row in rows] == ["9010.88.61", "9010.88.62"]
+    assert all(row.evidence_type == "ambiguous" for row in rows)
+    assert not any(row.article_number.startswith("9010.85") for row in rows)
+    assert not any(row.article_number == "nan" for row in rows)
+
+
+def test_expected_showerdrain_c_design_grate_articles_remain_included():
+    expected_articles = {
+        "9010.88.61",
+        "9010.88.62",
+        "9010.88.63",
+        "9010.88.64",
+        "9010.88.66",
+        "9010.88.68",
+        "9010.88.69",
+        "9010.88.70",
+        "9010.88.71",
+        "9010.88.73",
+        "9010.88.89",
+        "9010.88.90",
+        "9010.88.91",
+        "9010.88.92",
+        "9010.88.94",
+    }
+    evidence = [
+        mod.CandidateEvidence(
+            article,
+            f"aco-{article.replace('.', '')}",
+            "https://www.aco.example/showerdrain-c/design-roste-aus-geschliffenem-edelstahl/",
+            f"Design-Rost candidate {article}",
+            "ambiguous",
+            "ambiguous",
+        )
+        for article in sorted(expected_articles)
+    ]
+
+    rows = mod._candidate_grate_rows(evidence)
+
+    assert {row.article_number for row in rows} == expected_articles
+    assert all(row.evidence_type == "ambiguous" for row in rows)

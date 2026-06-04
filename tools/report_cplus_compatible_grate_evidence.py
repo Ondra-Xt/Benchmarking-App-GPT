@@ -54,6 +54,10 @@ GRATE_TERMS_RE = re.compile(r"\b(?:design[- ]?rost|rost|roste|abdeckung|grate|co
 COMPAT_TERMS_RE = re.compile(r"\b(?:compatible|kompatibel|passend|vhodn|určen|použit|výběr|zu|für|for)\b", re.IGNORECASE)
 CPLUS_RE = re.compile(r"(?:ShowerDrain\s*C\+|\bC\+\b|cplus)", re.IGNORECASE)
 ARTICLE_RE = re.compile(r"\b(?:\d{4}\.\d{2}\.\d{2}|\d{8})\b")
+INVALID_ARTICLE_VALUES = {"", "nan", "none", "null", "na", "n/a", "<na>"}
+DESIGN_GRATE_ARTICLE_RE = re.compile(r"^9010\.88\.\d{2}$")
+BODY_BASE_ARTICLE_RE = re.compile(r"^9010\.85\.\d{2}$")
+ACO_ARTICLE_PRODUCT_ID_RE = re.compile(r"^aco-(\d{8})$")
 SOURCE_HINT_RE = re.compile(r"(?:showerdrain[-_ ]?c\+|showerdrain[-_ ]?cplus|showerdrain[-_ ]?c|design[-_ ]?rost|grate|rost|abdeckung)", re.IGNORECASE)
 DEFAULT_RELEVANT_SOURCE_MARKERS = (
     "showerdrain-cplus",
@@ -144,6 +148,69 @@ def _norm(df: pd.DataFrame | None, col: str) -> pd.Series:
 
 def _clean_text(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _normalize_article_number(value: Any) -> str:
+    article = _clean_text(value)
+    if article.lower() in INVALID_ARTICLE_VALUES:
+        return ""
+    match = ARTICLE_RE.search(article)
+    if not match:
+        return ""
+    token = match.group(0)
+    digits = re.sub(r"\D+", "", token)
+    if len(digits) != 8:
+        return ""
+    return f"{digits[:4]}.{digits[4:6]}.{digits[6:]}"
+
+
+def _article_from_product_id(product_id: Any) -> str:
+    match = ACO_ARTICLE_PRODUCT_ID_RE.match(_clean_text(product_id).lower())
+    if not match:
+        return ""
+    digits = match.group(1)
+    return f"{digits[:4]}.{digits[4:6]}.{digits[6:]}"
+
+
+def _is_design_grate_article(article_number: Any) -> bool:
+    return bool(DESIGN_GRATE_ARTICLE_RE.match(_normalize_article_number(article_number)))
+
+
+def _is_body_base_article(article_number: Any) -> bool:
+    return bool(BODY_BASE_ARTICLE_RE.match(_normalize_article_number(article_number)))
+
+
+def _has_design_grate_context(row_text: Any, source_url: Any) -> bool:
+    haystack = f"{_clean_text(row_text)} {_clean_text(source_url)}"
+    lower = haystack.lower()
+    return "design-roste" in lower or "designrost" in lower or "design-rost" in lower or bool(GRATE_TERMS_RE.search(haystack))
+
+
+def _is_plausible_design_grate_candidate(product_id: Any, article_number: Any, row_text: Any = "", source_url: Any = "") -> bool:
+    product_id_text = _clean_text(product_id)
+    product_id_lower = product_id_text.lower()
+    if product_id_lower.startswith("aco-assembled-"):
+        return False
+
+    raw_article = _clean_text(article_number)
+    normalized_from_field = _normalize_article_number(raw_article)
+    if raw_article and not normalized_from_field:
+        return False
+    normalized_article = normalized_from_field or _article_from_product_id(product_id_text)
+    if not normalized_article:
+        return False
+    if _is_body_base_article(normalized_article):
+        return False
+    if not _is_design_grate_article(normalized_article):
+        return False
+
+    # Article-only rows are allowed only when they come from a clear design-grate context.
+    if not product_id_text:
+        return _has_design_grate_context(row_text, source_url)
+
+    if product_id_lower.startswith("aco-901085"):
+        return False
+    return _has_design_grate_context(row_text, source_url) or product_id_lower.startswith("aco-901088")
 
 
 def _canonical_url(url: str) -> str:
@@ -256,17 +323,23 @@ def _cplus_rows_by_sheet(
     }
 
 
-def _fixture_text_for_url(url: str) -> tuple[str, str]:
+def _fixture_html_for_url(url: str) -> tuple[str, str]:
     for marker, rel_path in FIXTURE_SOURCE_MAP.items():
         if marker in url.lower():
             path = Path(__file__).resolve().parents[1] / rel_path
             if path.exists():
-                html = path.read_text(encoding="utf-8", errors="ignore")
-                soup = BeautifulSoup(html, "lxml")
-                for tag in soup(("script", "style", "noscript")):
-                    tag.decompose()
-                return _clean_text(soup.get_text(" ")), "ok_fixture"
+                return path.read_text(encoding="utf-8", errors="ignore"), "ok_fixture"
     return "", ""
+
+
+def _fixture_text_for_url(url: str) -> tuple[str, str]:
+    html, status = _fixture_html_for_url(url)
+    if not html:
+        return "", ""
+    soup = BeautifulSoup(html, "lxml")
+    for tag in soup(("script", "style", "noscript")):
+        tag.decompose()
+    return _clean_text(soup.get_text(" ")), status
 
 
 def _fallback_products_and_components(products: pd.DataFrame, components: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -356,17 +429,25 @@ def _fetch_source_rows(url: str) -> tuple[list[str], str]:
         return [], status
     rows: list[str] = []
     if not url.lower().split("?", 1)[0].endswith(".pdf"):
+        html = ""
         try:
             status_code, _final_url, html, _err = aco._safe_get_text(url, timeout=35)
-            if status_code == 200 and html:
-                soup = BeautifulSoup(html, "lxml")
-                for tag_name in ("tr", "li", "p", "h1", "h2", "h3", "div"):
-                    for tag in soup.find_all(tag_name):
-                        row_text = _clean_text(tag.get_text(" "))
-                        if row_text and any(term.lower() in row_text.lower() for term in EVIDENCE_TERMS):
-                            rows.append(row_text)
+            if status_code != 200:
+                html = ""
         except Exception:
-            pass
+            html = ""
+        if not html:
+            html, _fixture_status = _fixture_html_for_url(url)
+        if html:
+            soup = BeautifulSoup(html, "lxml")
+            for tag_name in ("tr", "li", "p", "h1", "h2", "h3"):
+                for tag in soup.find_all(tag_name):
+                    row_text = _clean_text(tag.get_text(" "))
+                    if not row_text:
+                        continue
+                    row_lower = row_text.lower()
+                    if any(term.lower() in row_lower for term in EVIDENCE_TERMS) or ARTICLE_RE.search(row_text):
+                        rows.append(row_text)
     if not rows:
         for match in re.finditer(r".{0,140}(?:ShowerDrain\s*C\+|\bC\+\b|cplus|kompatibel|compatible|Design[- ]?Rost|Rost|Abdeckung|grate).{0,140}", text, re.IGNORECASE):
             rows.append(_clean_text(match.group(0)))
@@ -378,7 +459,7 @@ def _fetch_source_rows(url: str) -> tuple[list[str], str]:
             continue
         seen.add(key)
         deduped.append(row)
-        if len(deduped) >= 40:
+        if len(deduped) >= 160:
             break
     return deduped, status
 
@@ -392,19 +473,25 @@ def _candidate_rows_from_frames(frames: Iterable[pd.DataFrame]) -> dict[str, dic
             row_text = " ".join(_clean_text(row.get(col, "")) for col in df.columns)
             if not (GRATE_TERMS_RE.search(row_text) or str(row.get("system_role", "")).lower() == "grate"):
                 continue
-            article_number = _clean_text(row.get("article_number", "") or row.get("article_no", ""))
+            raw_article = _clean_text(row.get("article_number", "") or row.get("article_no", ""))
+            article_number = _normalize_article_number(raw_article)
+            if raw_article and not article_number:
+                continue
             if not article_number:
                 match = ARTICLE_RE.search(row_text)
-                article_number = match.group(0) if match else ""
+                article_number = _normalize_article_number(match.group(0)) if match else ""
             product_id = _clean_text(row.get("product_id", ""))
             source_urls: set[str] = set()
             for col in ("source_url", "product_url", "sources", "url"):
                 source_urls.update(_urls_from_value(row.get(col, "")))
+            source_url = sorted(source_urls)[0] if source_urls else ""
+            if not _is_plausible_design_grate_candidate(product_id, article_number, row_text, source_url):
+                continue
             key = product_id or article_number or row_text[:80]
             candidates.setdefault(key, {
                 "article_number": article_number,
                 "product_id": product_id,
-                "source_url": sorted(source_urls)[0] if source_urls else "",
+                "source_url": source_url,
                 "row_text": row_text,
             })
     return candidates
@@ -413,7 +500,7 @@ def _candidate_rows_from_frames(frames: Iterable[pd.DataFrame]) -> dict[str, dic
 def _classify(row_text: str, source_url: str, has_candidate_article: bool) -> tuple[str, str]:
     text = _clean_text(row_text)
     mentions_cplus = bool(CPLUS_RE.search(f"{source_url} {text}"))
-    mentions_grate = bool(GRATE_TERMS_RE.search(text))
+    mentions_grate = bool(GRATE_TERMS_RE.search(text)) or _has_design_grate_context(text, source_url)
     mentions_compat = bool(COMPAT_TERMS_RE.search(text))
     mentions_article = bool(ARTICLE_RE.search(text)) or has_candidate_article
     url_is_c_family = "showerdrain-c/" in source_url.lower() and "cplus" not in source_url.lower() and "c+" not in source_url.lower()
@@ -440,16 +527,20 @@ def find_candidate_evidence(source_urls: Iterable[str], *frames: pd.DataFrame) -
         matched = tuple(row[:320] for row in rows[:10])
         inspections.append(SourceInspection(source_url=url, status=status, matched_snippets=matched))
         for row_text in rows:
-            article_numbers = ARTICLE_RE.findall(row_text) or [""]
+            article_numbers = tuple(dict.fromkeys(_normalize_article_number(value) for value in ARTICLE_RE.findall(row_text)))
             for article_number in article_numbers:
+                if not article_number:
+                    continue
                 product_id = ""
                 for candidate in frame_candidates.values():
                     cand_article = candidate.get("article_number", "")
-                    if article_number and cand_article and re.sub(r"\D+", "", cand_article) == re.sub(r"\D+", "", article_number):
+                    if cand_article and re.sub(r"\D+", "", cand_article) == re.sub(r"\D+", "", article_number):
                         product_id = candidate.get("product_id", "")
                         break
-                evidence_type, confidence = _classify(row_text, url, bool(article_number))
-                key = (article_number, url, evidence_type)
+                if not _is_plausible_design_grate_candidate(product_id, article_number, row_text, url):
+                    continue
+                evidence_type, confidence = _classify(row_text, url, True)
+                key = (article_number, product_id, url, evidence_type)
                 if key in seen_evidence:
                     continue
                 seen_evidence.add(key)
@@ -464,10 +555,13 @@ def find_candidate_evidence(source_urls: Iterable[str], *frames: pd.DataFrame) -
 
     # Include grate candidate rows from dataframes even when source pages did not expose row text.
     for candidate in frame_candidates.values():
+        if not _is_plausible_design_grate_candidate(candidate.get("product_id", ""), candidate.get("article_number", ""), candidate.get("row_text", ""), candidate.get("source_url", "")):
+            continue
         evidence_type, confidence = _classify(candidate.get("row_text", ""), candidate.get("source_url", ""), bool(candidate.get("article_number", "")))
-        key = (candidate.get("article_number", ""), candidate.get("source_url", ""), candidate.get("product_id", ""))
+        key = (candidate.get("article_number", ""), candidate.get("product_id", ""), candidate.get("source_url", ""), evidence_type)
         if key in seen_evidence:
             continue
+        seen_evidence.add(key)
         evidence.append(CandidateEvidence(
             article_number=candidate.get("article_number", ""),
             product_id=candidate.get("product_id", ""),
@@ -559,7 +653,7 @@ def _candidate_grate_rows(candidate_evidence: Iterable[CandidateEvidence]) -> tu
         report_type = _report_evidence_type(ev.evidence_type)
         if report_type in {"insufficient", "missing"}:
             continue
-        if not (_clean_text(ev.product_id) or _clean_text(ev.article_number)):
+        if not _is_plausible_design_grate_candidate(ev.product_id, ev.article_number, ev.row_text, ev.source_url):
             continue
         key = (ev.product_id, ev.article_number, ev.source_url)
         if key in seen:
@@ -658,13 +752,14 @@ def run_diagnostic(*, include_broad_sources: bool = False) -> CPlusCompatibleGra
 
 
 def _evidence_counts(diag: CPlusCompatibleGrateDiagnostic) -> tuple[int, int, int]:
+    grate_rows = _candidate_grate_rows(diag.candidate_evidence)
     explicit_count = sum(
         1
-        for ev in diag.candidate_evidence
+        for ev in grate_rows
         if ev.evidence_type == "explicit_article_matrix" and ev.compatibility_confidence == "explicit"
     )
-    ambiguous_count = sum(1 for ev in diag.candidate_evidence if ev.evidence_type == "ambiguous")
-    absent_count = sum(1 for ev in diag.candidate_evidence if ev.evidence_type == "absent")
+    ambiguous_count = sum(1 for ev in grate_rows if ev.evidence_type == "ambiguous")
+    absent_count = max(0, len(diag.candidate_evidence) - len(grate_rows))
     return explicit_count, ambiguous_count, absent_count
 
 
@@ -697,27 +792,28 @@ def print_diagnostic(diag: CPlusCompatibleGrateDiagnostic, *, verbose: bool = Fa
     print(f"- ambiguous ShowerDrain C-only grate rows: {ambiguous_count}")
     print(f"- absent/irrelevant candidate rows: {absent_count}")
 
+    plausible_grate_rows = _candidate_grate_rows(diag.candidate_evidence)
     explicit_rows = [
         ev
-        for ev in diag.candidate_evidence
+        for ev in plausible_grate_rows
         if ev.evidence_type == "explicit_article_matrix" and ev.compatibility_confidence == "explicit"
     ]
     if explicit_rows:
         print("\nExplicit C+ compatible grate rows:")
         for ev in explicit_rows:
             print(f"- article_number: {ev.article_number or '(none)'}")
-            print(f"  product_id: {ev.product_id or '(none)'}")
+            print(f"  product_id: {ev.product_id or '(article-only)'}")
             print(f"  source_url: {ev.source_url or '(none)'}")
             print(f"  evidence_snippet: {ev.row_text}")
             print(f"  evidence_type: {ev.evidence_type}")
             print(f"  compatibility_confidence: {ev.compatibility_confidence}")
 
-    ambiguous_rows = [ev for ev in diag.candidate_evidence if ev.evidence_type == "ambiguous"]
+    ambiguous_rows = [ev for ev in plausible_grate_rows if ev.evidence_type == "ambiguous"]
     if ambiguous_rows:
         print("\nAmbiguous ShowerDrain C-only grate rows:")
         for ev in ambiguous_rows:
             print(f"- article_number: {ev.article_number or '(none)'}")
-            print(f"  product_id: {ev.product_id or '(none)'}")
+            print(f"  product_id: {ev.product_id or '(article-only)'}")
             print(f"  source_url: {ev.source_url or '(none)'}")
             print(f"  evidence_type: {ev.evidence_type}")
             print(f"  compatibility_confidence: {ev.compatibility_confidence}")
@@ -738,7 +834,7 @@ def print_diagnostic(diag: CPlusCompatibleGrateDiagnostic, *, verbose: bool = Fa
     grates = _candidate_grate_rows(diag.candidate_evidence)
     if grates:
         for ev in grates:
-            print(f"- grate_id: {ev.product_id or '(none)'} | article: {ev.article_number or '(none)'} | evidence={_report_evidence_type(ev.evidence_type)} | confidence={_report_confidence(ev.evidence_type, ev.compatibility_confidence)}")
+            print(f"- grate_id: {ev.product_id or '(article-only)'} | article: {ev.article_number or '(none)'} | evidence={_report_evidence_type(ev.evidence_type)} | confidence={_report_confidence(ev.evidence_type, ev.compatibility_confidence)}")
     else:
         print("- none")
 
@@ -746,7 +842,7 @@ def print_diagnostic(diag: CPlusCompatibleGrateDiagnostic, *, verbose: bool = Fa
     if diag.diagnostic_mappings:
         for mapping in diag.diagnostic_mappings:
             print(
-                f"- {mapping.set_id}: base={mapping.base_id}, grate={mapping.grate_id or '(missing)'}, "
+                f"- {mapping.set_id}: base={mapping.base_id}, grate={mapping.grate_id or f'(article-only {mapping.grate_article_number})' if mapping.grate_article_number else '(missing)'}, "
                 f"evidence={mapping.compatibility_evidence_type}, confidence={mapping.compatibility_confidence}, "
                 f"safe_to_generate={mapping.safe_to_generate}, ready_for_benchmark={mapping.ready_for_benchmark}, "
                 f"ready_for_customer_view={mapping.ready_for_customer_view}"
