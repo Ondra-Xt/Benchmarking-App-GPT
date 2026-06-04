@@ -377,6 +377,12 @@ def build_report(
     cplus_compatible_grate_evidence = pd.DataFrame() if cplus_compatible_grate_evidence is None else cplus_compatible_grate_evidence.copy()
     proposal_mappings = _proposal_mapping_summaries(mplus_compound_mappings, eplus_proposal_mappings, cplus_compatible_grate_evidence)
     proposal_by_family = {summary.family: summary for summary in proposal_mappings}
+    if not mplus_compound_mappings.empty:
+        products, _comparison_unused = excel_export._append_mplus_final_assembly_rows(
+            products,
+            pd.DataFrame(),
+            mplus_compound_mappings,
+        )
 
     if final_assemblies.empty:
         final_assemblies = excel_export._extract_final_assemblies(products)
