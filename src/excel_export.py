@@ -558,7 +558,7 @@ def _extract_final_assemblies(products_df: pd.DataFrame) -> pd.DataFrame:
         for column, value in {
             "product_family": "showerdrain_mplus",
             "family": "showerdrain_mplus",
-            "assembled_from_bom": "true",
+            "assembled_from_bom": True,
             "system_role": "assembled_system",
             "flow_rate_lps": "",
             "flow_rate_status": MPLUS_FLOW_RATE_STATUS,
@@ -572,6 +572,8 @@ def _extract_final_assemblies(products_df: pd.DataFrame) -> pd.DataFrame:
         }.items():
             if column not in final_assemblies.columns:
                 final_assemblies[column] = ""
+            elif isinstance(value, bool):
+                final_assemblies[column] = final_assemblies[column].astype(object)
             final_assemblies.loc[mplus_mask, column] = value
 
     return final_assemblies
@@ -1246,7 +1248,7 @@ def _append_mplus_final_assembly_rows(
             "why_not_product_reason": "",
             "assembly_reason": "aco_mplus_channel_body_x_drain_body_x_grate",
             "assembly_model": "channel_body_x_drain_body_x_grate",
-            "assembled_from_bom": "true",
+            "assembled_from_bom": True,
             "channel_body_id": mapping.get("channel_body_id", ""),
             "drain_body_id": mapping.get("drain_body_id", ""),
             "grate_id": mapping.get("grate_id", ""),
@@ -1290,6 +1292,8 @@ def _append_mplus_final_assembly_rows(
             for column, value in product_row.items():
                 if column not in products_df.columns:
                     products_df[column] = ""
+                elif isinstance(value, bool):
+                    products_df[column] = products_df[column].astype(object)
                 products_df.loc[product_mask, column] = value
         else:
             product_rows.append(product_row)
@@ -1307,7 +1311,7 @@ def _append_mplus_final_assembly_rows(
                 "promote_to_product": "yes",
                 "promotion_reason": "assembled_from_mplus_compound_mapping",
                 "why_not_product_reason": "",
-                "assembled_from_bom": "true",
+                "assembled_from_bom": True,
                 "matched_component_ids": product_row["matched_component_ids"],
                 "flow_rate_lps": "",
                 "flow_rate_status": MPLUS_FLOW_RATE_STATUS,
@@ -1325,6 +1329,8 @@ def _append_mplus_final_assembly_rows(
             for column, value in comparison_row.items():
                 if column not in comparison_df.columns:
                     comparison_df[column] = ""
+                elif isinstance(value, bool):
+                    comparison_df[column] = comparison_df[column].astype(object)
                 comparison_df.loc[comparison_mask, column] = value
         else:
             comparison_rows.append(comparison_row)
@@ -1540,4 +1546,7 @@ def export_excel(
     write_df("Scoring_Field_Coverage", _scoring_field_coverage(products_df, comparison_df))
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-    wb.save(out_path)
+    try:
+        wb.save(out_path)
+    finally:
+        wb.close()

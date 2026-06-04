@@ -345,6 +345,7 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
         detail_sheet_exists = "Final_Set_Details" in xls.sheet_names
         results.append(CheckResult("final_set_details_sheet_exists", detail_sheet_exists, f"present={detail_sheet_exists}"))
     if missing:
+        xls.close()
         return False, results
 
     for s in OPTIONAL_SHEETS:
@@ -939,6 +940,7 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
             results.append(CheckResult(f"cplus_value:{pid}:{field}", passed, f"actual={actual} expected={expected}"))
 
     all_passed = all(r.passed for r in results)
+    xls.close()
     return all_passed, results
 
 

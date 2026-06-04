@@ -90,12 +90,18 @@ class PipelineExportTests(unittest.TestCase):
             x = wb.create_sheet(name)
             x.append(["old"])
             x.append(["stale"])
-        wb.save(path)
+        try:
+            wb.save(path)
+        finally:
+            wb.close()
 
     def _sheet_rows(self, path: Path, sheet: str):
-        wb = openpyxl.load_workbook(path)
-        ws = wb[sheet]
-        return list(ws.iter_rows(values_only=True))
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        try:
+            ws = wb[sheet]
+            return list(ws.iter_rows(values_only=True))
+        finally:
+            wb.close()
 
     def test_export_overwrites_candidates_all_with_latest_registry_only(self):
         with tempfile.TemporaryDirectory() as td:
@@ -278,14 +284,17 @@ class PipelineExportTests(unittest.TestCase):
             ):
                 export_excel(template, out, default_config(), products_df=products, comparison_df=products)
 
-            wb = openpyxl.load_workbook(out)
-            self.assertIn("Mplus_Compound_Mappings", wb.sheetnames)
-            self.assertLess(wb.sheetnames.index("Final_Set_Details"), wb.sheetnames.index("Mplus_Compound_Mappings"))
-            self.assertLess(wb.sheetnames.index("Mplus_Compound_Mappings"), wb.sheetnames.index("Eplus_Proposal_Mappings"))
-            self.assertIn("Conditional_Technical_Values", wb.sheetnames)
-            self.assertLess(wb.sheetnames.index("Eplus_Proposal_Mappings"), wb.sheetnames.index("Conditional_Technical_Values"))
-            self.assertLess(wb.sheetnames.index("Conditional_Technical_Values"), wb.sheetnames.index("Components"))
-            self.assertLess(wb.sheetnames.index("Conditional_Technical_Values"), wb.sheetnames.index("Article_Variants"))
+            wb = openpyxl.load_workbook(out, read_only=True, data_only=True)
+            try:
+                self.assertIn("Mplus_Compound_Mappings", wb.sheetnames)
+                self.assertLess(wb.sheetnames.index("Final_Set_Details"), wb.sheetnames.index("Mplus_Compound_Mappings"))
+                self.assertLess(wb.sheetnames.index("Mplus_Compound_Mappings"), wb.sheetnames.index("Eplus_Proposal_Mappings"))
+                self.assertIn("Conditional_Technical_Values", wb.sheetnames)
+                self.assertLess(wb.sheetnames.index("Eplus_Proposal_Mappings"), wb.sheetnames.index("Conditional_Technical_Values"))
+                self.assertLess(wb.sheetnames.index("Conditional_Technical_Values"), wb.sheetnames.index("Components"))
+                self.assertLess(wb.sheetnames.index("Conditional_Technical_Values"), wb.sheetnames.index("Article_Variants"))
+            finally:
+                wb.close()
 
             rows = self._sheet_rows(out, "Mplus_Compound_Mappings")
             df = pd.DataFrame(rows[1:], columns=rows[0])
@@ -1669,7 +1678,8 @@ class PipelineExportTests(unittest.TestCase):
             products = pd.DataFrame([{"manufacturer": "aco", "product_id": "aco-regular-product"}])
             export_excel(template, out, default_config(), products_df=products, comparison_df=products)
 
-            final_assemblies = pd.read_excel(out, sheet_name="Final_Assemblies")
+            with pd.ExcelFile(out, engine="openpyxl") as xls:
+                final_assemblies = pd.read_excel(xls, sheet_name="Final_Assemblies")
             mplus = final_assemblies[
                 final_assemblies["product_id"].fillna("").astype(str).str.startswith("aco-assembled-showerdrain-mplus-")
             ]
@@ -1681,6 +1691,34 @@ class PipelineExportTests(unittest.TestCase):
             self.assertTrue(mplus["flow_rate_status"].eq("conditional").all())
             self.assertTrue(mplus["data_quality_status"].eq("conditional_parameter_available_production_blocked").all())
             self.assertTrue(mplus["blocked_reason"].str.contains("blocked_pending_conditional_parameter_scoring").all())
+
+            wb = openpyxl.load_workbook(out, read_only=True, data_only=True)
+            try:
+                ws = wb["Final_Assemblies"]
+                headers = [cell.value for cell in next(ws.iter_rows(min_row=1, max_row=1))]
+                indexes = {name: headers.index(name) for name in [
+                    "product_id",
+                    "assembled_from_bom",
+                    "ready_for_benchmark",
+                    "ready_for_customer_view",
+                    "flow_rate_status",
+                    "data_quality_status",
+                ]}
+                raw_mplus_rows = []
+                for row in ws.iter_rows(min_row=2, values_only=True):
+                    product_id = str(row[indexes["product_id"]] or "")
+                    if product_id.startswith("aco-assembled-showerdrain-mplus-"):
+                        raw_mplus_rows.append({name: row[index] for name, index in indexes.items()})
+            finally:
+                wb.close()
+            print("M+ Final_Assemblies raw workbook values:", raw_mplus_rows)
+            self.assertEqual(len(raw_mplus_rows), 4)
+            for raw_row in raw_mplus_rows:
+                self.assertIs(raw_row["assembled_from_bom"], True)
+                self.assertIs(raw_row["ready_for_benchmark"], False)
+                self.assertIs(raw_row["ready_for_customer_view"], False)
+                self.assertEqual(raw_row["flow_rate_status"], "conditional")
+                self.assertEqual(raw_row["data_quality_status"], "conditional_parameter_available_production_blocked")
 
             counts = {
                 "Products": 5,
@@ -1794,11 +1832,14 @@ class PipelineExportTests(unittest.TestCase):
 
             export_excel(template, out, default_config(), products_df=products, comparison_df=products)
 
-            wb = openpyxl.load_workbook(out)
-            self.assertIn("Final_Assemblies", wb.sheetnames)
-            self.assertIn("Final_Set_Details", wb.sheetnames)
-            self.assertIn("Products", wb.sheetnames)
-            self.assertIn("Comparison", wb.sheetnames)
+            wb = openpyxl.load_workbook(out, read_only=True, data_only=True)
+            try:
+                self.assertIn("Final_Assemblies", wb.sheetnames)
+                self.assertIn("Final_Set_Details", wb.sheetnames)
+                self.assertIn("Products", wb.sheetnames)
+                self.assertIn("Comparison", wb.sheetnames)
+            finally:
+                wb.close()
 
             product_rows = self._sheet_rows(out, "Products")
             final_rows = self._sheet_rows(out, "Final_Assemblies")
@@ -1868,7 +1909,7 @@ class PipelineExportTests(unittest.TestCase):
             self.assertTrue((mplus_rows["ready_for_customer_view"] == False).all())
             self.assertTrue((mplus_rows["product_family"] == "showerdrain_mplus").all())
             self.assertTrue((mplus_rows["family"] == "showerdrain_mplus").all())
-            self.assertTrue((mplus_rows["assembled_from_bom"] == "true").all())
+            self.assertTrue((mplus_rows["assembled_from_bom"] == True).all())
             self.assertTrue((mplus_rows["flow_rate_status"] == "conditional").all())
             self.assertTrue((mplus_rows["flow_rate_lps"].fillna("") == "").all())
             mplus_detail_rows = detail_df[detail_df["assembled_family"] == "showerdrain_mplus"]
