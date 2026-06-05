@@ -20,6 +20,9 @@ EXPECTED_SHEET_COUNTS = {
     "Eplus_Proposal_Mappings": 3,
     "Conditional_Technical_Values": 8,
     "Article_Variants": 76,
+    "Scoring_Scenarios": 3,
+    "Comparison_flow_head_10mm": 50,
+    "Comparison_flow_head_20mm": 50,
 }
 COMPONENTS_MIN_ROWS = 1
 EXPECTED_BOM_OPTION_TYPE_COUNTS = {
@@ -116,8 +119,47 @@ REQUIRED_SHEETS = [
     "Eplus_Proposal_Mappings",
     "Conditional_Technical_Values",
     "Article_Variants",
+    "Scoring_Scenarios",
+    "Comparison_flow_head_10mm",
+    "Comparison_flow_head_20mm",
 ]
 OPTIONAL_SHEETS = ["Evidence"]
+
+SCORING_SCENARIOS_REQUIRED_COLUMNS = [
+    "scenario_id",
+    "scenario_label",
+    "parameter_name",
+    "condition_type",
+    "condition_value",
+    "condition_unit",
+    "policy",
+    "is_default",
+    "scoring_enabled",
+    "customer_view_enabled",
+    "notes",
+]
+REQUIRED_SCENARIO_IDS = {"no_scenario_selected", "flow_head_10mm", "flow_head_20mm"}
+SCENARIO_COMPARISON_REQUIRED_COLUMNS = [
+    "product_id",
+    "manufacturer",
+    "product_name",
+    "product_family",
+    "scenario_id",
+    "flow_rate_lps",
+    "flow_rate_resolution_status",
+    "flow_rate_resolution_source",
+    "flow_rate_condition_type",
+    "flow_rate_condition_value",
+    "flow_rate_condition_unit",
+    "flow_rate_condition_label",
+    "scenario_ready_for_benchmark",
+    "scenario_blocked_reason",
+    "scenario_scoring_note",
+]
+SCENARIO_SHEETS = {
+    "Comparison_flow_head_10mm": ("flow_head_10mm", 0.40),
+    "Comparison_flow_head_20mm": ("flow_head_20mm", 0.46),
+}
 
 MPLUS_COMPOUND_MAPPINGS_REQUIRED_COLUMNS = [
     "set_id",
@@ -363,7 +405,7 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
     results: List[CheckResult] = []
     xls = pd.ExcelFile(path, engine="openpyxl")
 
-    required_sheets = [s for s in REQUIRED_SHEETS if s in EXPECTED_SHEET_COUNTS]
+    required_sheets = [s for s in REQUIRED_SHEETS if s in EXPECTED_SHEET_COUNTS or s in {"Scoring_Scenarios", *SCENARIO_SHEETS}]
     if "Final_Assemblies" in EXPECTED_SHEET_COUNTS and "Article_Variants" not in required_sheets:
         required_sheets.append("Article_Variants")
     if "Final_Assemblies" in EXPECTED_SHEET_COUNTS and "Final_Set_Details" not in required_sheets:
@@ -423,9 +465,98 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
     )
     article_variants = sheets.get("Article_Variants", pd.DataFrame(columns=ARTICLE_VARIANTS_REQUIRED_COLUMNS))
 
+    scoring_scenarios = sheets["Scoring_Scenarios"]
+    scenario_comparisons = {name: sheets[name] for name in SCENARIO_SHEETS}
+
     for name, expected in EXPECTED_SHEET_COUNTS.items():
         actual = len(sheets[name])
         results.append(CheckResult(f"row_count:{name}", actual == expected, f"actual={actual} expected={expected}"))
+
+    scenario_columns_missing = [col for col in SCORING_SCENARIOS_REQUIRED_COLUMNS if col not in scoring_scenarios.columns]
+    results.append(CheckResult(
+        "scoring_scenarios_required_columns",
+        not scenario_columns_missing,
+        f"missing={scenario_columns_missing} expected={SCORING_SCENARIOS_REQUIRED_COLUMNS}",
+    ))
+    scenario_ids = set(_norm_series(scoring_scenarios, "scenario_id"))
+    results.append(CheckResult(
+        "scoring_scenarios_required_ids",
+        REQUIRED_SCENARIO_IDS.issubset(scenario_ids),
+        f"actual={sorted(scenario_ids)} expected={sorted(REQUIRED_SCENARIO_IDS)}",
+    ))
+    default_rows = scoring_scenarios[_bool_series_eq(scoring_scenarios, "is_default", True)]
+    default_ids = set(_norm_series(default_rows, "scenario_id"))
+    results.append(CheckResult(
+        "scoring_scenarios_safe_default",
+        default_ids == {"no_scenario_selected"},
+        f"actual_default_ids={sorted(default_ids)} expected=['no_scenario_selected']",
+    ))
+
+    comparison_ids = set(_norm_series(comparison, "product_id"))
+    for sheet_name, (scenario_id, expected_flow) in SCENARIO_SHEETS.items():
+        scenario_df = scenario_comparisons[sheet_name]
+        missing_columns = [col for col in SCENARIO_COMPARISON_REQUIRED_COLUMNS if col not in scenario_df.columns]
+        results.append(CheckResult(
+            f"scenario_comparison_required_columns:{sheet_name}",
+            not missing_columns,
+            f"missing={missing_columns} expected={SCENARIO_COMPARISON_REQUIRED_COLUMNS}",
+        ))
+        results.append(CheckResult(
+            f"scenario_comparison_row_count:{sheet_name}",
+            len(scenario_df) == len(comparison),
+            f"actual={len(scenario_df)} expected={len(comparison)}",
+        ))
+        scenario_ids_actual = set(_norm_series(scenario_df, "scenario_id"))
+        results.append(CheckResult(
+            f"scenario_comparison_scenario_id:{sheet_name}",
+            scenario_ids_actual == {scenario_id},
+            f"actual={sorted(scenario_ids_actual)} expected={[scenario_id]}",
+        ))
+        scenario_product_ids = set(_norm_series(scenario_df, "product_id"))
+        results.append(CheckResult(
+            f"scenario_comparison_product_membership:{sheet_name}",
+            scenario_product_ids == comparison_ids,
+            f"missing={sorted(comparison_ids - scenario_product_ids)} extra={sorted(scenario_product_ids - comparison_ids)}",
+        ))
+        mplus_scenario = scenario_df[
+            _norm_series(scenario_df, "product_family").str.lower().eq("showerdrain_mplus")
+        ]
+        resolved_flow = pd.to_numeric(mplus_scenario.get("flow_rate_lps"), errors="coerce")
+        expected_mplus_rows = EXPECTED_ASSEMBLED_PREFIX_COUNTS.get("aco-assembled-showerdrain-mplus", 0)
+        flow_ok = len(mplus_scenario) == expected_mplus_rows and resolved_flow.notna().all() and resolved_flow.round(2).eq(expected_flow).all()
+        results.append(CheckResult(
+            f"scenario_mplus_flow:{sheet_name}",
+            flow_ok,
+            f"rows={len(mplus_scenario)} actual={resolved_flow.tolist()} expected={[expected_flow] * expected_mplus_rows}",
+        ))
+        source_bad = int((~_string_series_eq(mplus_scenario, "flow_rate_resolution_source", "Conditional_Technical_Values")).sum())
+        status_bad = int((~_string_series_eq(mplus_scenario, "flow_rate_resolution_status", "resolved_from_condition")).sum())
+        ready_bad = int((~_bool_series_eq(mplus_scenario, "scenario_ready_for_benchmark", True)).sum())
+        results.append(CheckResult(f"scenario_mplus_resolution_source:{sheet_name}", source_bad == 0, f"actual_bad={source_bad} expected=Conditional_Technical_Values"))
+        results.append(CheckResult(f"scenario_mplus_resolution_status:{sheet_name}", status_bad == 0, f"actual_bad={status_bad} expected=resolved_from_condition"))
+        results.append(CheckResult(f"scenario_mplus_ready:{sheet_name}", ready_bad == 0, f"actual_bad={ready_bad} expected=true"))
+
+    for default_sheet_name, default_df in (("Products", products), ("Comparison", comparison)):
+        default_family = _norm_series(default_df, "product_family").str.lower()
+        default_ids = _norm_series(default_df, "product_id").str.lower()
+        default_mplus = default_df[
+            default_family.eq("showerdrain_mplus")
+            | default_ids.str.startswith("aco-assembled-showerdrain-mplus-")
+        ]
+        expected_mplus_rows = EXPECTED_ASSEMBLED_PREFIX_COUNTS.get("aco-assembled-showerdrain-mplus", 0)
+        results.append(CheckResult(
+            f"default_mplus_row_count:{default_sheet_name}",
+            len(default_mplus) == expected_mplus_rows,
+            f"actual={len(default_mplus)} expected={expected_mplus_rows}",
+        ))
+        default_flow_filled = int(_norm_series(default_mplus, "flow_rate_lps").ne("").sum())
+        default_benchmark_bad = int((~_bool_series_eq(default_mplus, "ready_for_benchmark", False)).sum())
+        default_customer_bad = int((~_bool_series_eq(default_mplus, "ready_for_customer_view", False)).sum())
+        default_block_bad = int((~_norm_series(default_mplus, "blocked_reason").str.contains(MPLUS_BLOCKING_REASON_SNIPPET, regex=False)).sum())
+        results.append(CheckResult(f"default_mplus_flow_empty:{default_sheet_name}", default_flow_filled == 0, f"actual_filled={default_flow_filled} expected=0"))
+        results.append(CheckResult(f"default_mplus_ready_for_benchmark_false:{default_sheet_name}", default_benchmark_bad == 0, f"actual_bad={default_benchmark_bad} expected=false"))
+        results.append(CheckResult(f"default_mplus_ready_for_customer_view_false:{default_sheet_name}", default_customer_bad == 0, f"actual_bad={default_customer_bad} expected=false"))
+        results.append(CheckResult(f"default_mplus_blocked_reason:{default_sheet_name}", default_block_bad == 0, f"actual_bad={default_block_bad} expected_snippet={MPLUS_BLOCKING_REASON_SNIPPET}"))
 
     comp_ok = len(components) >= COMPONENTS_MIN_ROWS
     results.append(CheckResult("components_min_rows", comp_ok, f"actual={len(components)} expected>={COMPONENTS_MIN_ROWS}"))

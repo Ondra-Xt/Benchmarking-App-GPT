@@ -5,9 +5,16 @@ import pandas as pd
 
 import tools.validate_latest_xlsx_export as latest_mod
 import tools.validate_xlsx_export as validator_mod
+from src.scenario_scoring import build_scenario_comparison, scoring_scenarios_dataframe
 
 
 def _write_xlsx(path: Path, sheets: dict):
+    sheets = dict(sheets)
+    comparison = sheets.get("Comparison", pd.DataFrame())
+    conditional = sheets.get("Conditional_Technical_Values", pd.DataFrame())
+    sheets.setdefault("Scoring_Scenarios", scoring_scenarios_dataframe())
+    sheets.setdefault("Comparison_flow_head_10mm", build_scenario_comparison(comparison, conditional, "flow_head_10mm"))
+    sheets.setdefault("Comparison_flow_head_20mm", build_scenario_comparison(comparison, conditional, "flow_head_20mm"))
     with pd.ExcelWriter(path, engine="openpyxl") as writer:
         for name, df in sheets.items():
             df.to_excel(writer, sheet_name=name, index=False)

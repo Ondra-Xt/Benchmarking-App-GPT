@@ -9,6 +9,8 @@ import re
 import pandas as pd
 import openpyxl
 
+from src.scenario_scoring import build_scenario_comparison, scoring_scenarios_dataframe
+
 _ILLEGAL_EXCEL_XML_CHARS_RE = re.compile(r"[\x00-\x08\x0B-\x0C\x0E-\x1F]")
 _ILLEGAL_ESCAPED_UNICODE_RE = re.compile(r"\\u00(?:0[0-8BCEFbcef]|1[0-9A-Fa-f])")
 _EXCEL_MAX_CELL_LEN = 32767
@@ -1525,6 +1527,13 @@ def export_excel(
         final_set_details_df,
     )
     conditional_technical_values_df = _extract_conditional_technical_values(mplus_compound_mappings_df)
+    scoring_scenarios_df = scoring_scenarios_dataframe()
+    comparison_flow_head_10mm_df = build_scenario_comparison(
+        comparison_df, conditional_technical_values_df, "flow_head_10mm"
+    )
+    comparison_flow_head_20mm_df = build_scenario_comparison(
+        comparison_df, conditional_technical_values_df, "flow_head_20mm"
+    )
 
     write_df("Candidates_All", registry_df)
     write_df("Products", products_df)
@@ -1533,6 +1542,9 @@ def export_excel(
     write_df("Mplus_Compound_Mappings", mplus_compound_mappings_df)
     write_df("Eplus_Proposal_Mappings", eplus_proposal_mappings_df)
     write_df("Conditional_Technical_Values", conditional_technical_values_df)
+    write_df("Scoring_Scenarios", scoring_scenarios_df)
+    write_df("Comparison_flow_head_10mm", comparison_flow_head_10mm_df)
+    write_df("Comparison_flow_head_20mm", comparison_flow_head_20mm_df)
     write_df("Components", components_df)
     write_df("Comparison", comparison_df)
     write_df("Excluded", excluded_df)
