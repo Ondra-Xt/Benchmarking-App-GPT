@@ -290,6 +290,9 @@ class PipelineExportTests(unittest.TestCase):
                 self.assertLess(wb.sheetnames.index("Final_Set_Details"), wb.sheetnames.index("Mplus_Compound_Mappings"))
                 self.assertLess(wb.sheetnames.index("Mplus_Compound_Mappings"), wb.sheetnames.index("Eplus_Proposal_Mappings"))
                 self.assertIn("Conditional_Technical_Values", wb.sheetnames)
+                self.assertIn("Scoring_Scenarios", wb.sheetnames)
+                self.assertIn("Comparison_flow_head_10mm", wb.sheetnames)
+                self.assertIn("Comparison_flow_head_20mm", wb.sheetnames)
                 self.assertLess(wb.sheetnames.index("Eplus_Proposal_Mappings"), wb.sheetnames.index("Conditional_Technical_Values"))
                 self.assertLess(wb.sheetnames.index("Conditional_Technical_Values"), wb.sheetnames.index("Components"))
                 self.assertLess(wb.sheetnames.index("Conditional_Technical_Values"), wb.sheetnames.index("Article_Variants"))
@@ -313,6 +316,20 @@ class PipelineExportTests(unittest.TestCase):
             self.assertEqual(set(conditional_df["value"]), {0.4, 0.46})
             self.assertEqual(conditional_df.groupby("set_id").size().to_dict(), {set_id: 2 for set_id in df["set_id"]})
             self.assertTrue(conditional_df["production_status_note"].str.contains("conditional flow values available in Conditional_Technical_Values").all())
+            scenarios = pd.DataFrame(
+                self._sheet_rows(out, "Scoring_Scenarios")[1:],
+                columns=self._sheet_rows(out, "Scoring_Scenarios")[0],
+            )
+            self.assertEqual(set(scenarios["scenario_id"]), {"no_scenario_selected", "flow_head_10mm", "flow_head_20mm"})
+            self.assertEqual(scenarios.loc[scenarios["is_default"] == True, "scenario_id"].tolist(), ["no_scenario_selected"])
+            for sheet_name, expected_flow in [("Comparison_flow_head_10mm", 0.40), ("Comparison_flow_head_20mm", 0.46)]:
+                scenario_rows = self._sheet_rows(out, sheet_name)
+                scenario_df = pd.DataFrame(scenario_rows[1:], columns=scenario_rows[0])
+                mplus_scenario = scenario_df[scenario_df["product_family"] == "showerdrain_mplus"]
+                self.assertEqual(len(mplus_scenario), 4)
+                self.assertTrue(pd.to_numeric(mplus_scenario["flow_rate_lps"]).round(2).eq(expected_flow).all())
+                self.assertTrue(mplus_scenario["scenario_ready_for_benchmark"].eq(True).all())
+                self.assertTrue(mplus_scenario["flow_rate_resolution_source"].eq("Conditional_Technical_Values").all())
             eplus_rows = self._sheet_rows(out, "Eplus_Proposal_Mappings")
             eplus_df = pd.DataFrame(eplus_rows[1:], columns=eplus_rows[0])
             self.assertEqual(len(eplus_df), 3)

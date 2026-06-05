@@ -4,6 +4,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from src.scenario_scoring import build_scenario_comparison, scoring_scenarios_dataframe
+
 
 def _load_validator_module():
     spec = importlib.util.spec_from_file_location("validate_xlsx_export", "tools/validate_xlsx_export.py")
@@ -450,6 +452,18 @@ def _result_for(results, name):
 
 
 def _write_xlsx(path: Path, sheets: dict):
+    sheets = dict(sheets)
+    comparison = sheets.get("Comparison", pd.DataFrame())
+    conditional = sheets.get("Conditional_Technical_Values", pd.DataFrame())
+    sheets.setdefault("Scoring_Scenarios", scoring_scenarios_dataframe())
+    sheets.setdefault(
+        "Comparison_flow_head_10mm",
+        build_scenario_comparison(comparison, conditional, "flow_head_10mm"),
+    )
+    sheets.setdefault(
+        "Comparison_flow_head_20mm",
+        build_scenario_comparison(comparison, conditional, "flow_head_20mm"),
+    )
     with pd.ExcelWriter(path, engine="openpyxl") as writer:
         for name, df in sheets.items():
             df.to_excel(writer, sheet_name=name, index=False)
@@ -868,3 +882,23 @@ def test_mplus_final_assemblies_numeric_one_readiness_fails_validator(tmp_path):
     assert not passed
     assert not _result_for(results, "final_assemblies_mplus_ready_for_benchmark_false").passed
     assert not _result_for(results, "final_assemblies_mplus_ready_for_customer_view_false").passed
+
+
+def test_scenario_mplus_flow_validation_rejects_wrong_explicit_value(tmp_path):
+    mod = _load_validator_module()
+    _patch_mplus_only_expectations(mod)
+    data = _mplus_only_dataframes(ready_value=0.0)
+    data["Comparison_flow_head_10mm"] = build_scenario_comparison(
+        data["Comparison"], data["Conditional_Technical_Values"], "flow_head_10mm"
+    )
+    data["Comparison_flow_head_10mm"].loc[
+        data["Comparison_flow_head_10mm"]["product_family"].eq("showerdrain_mplus"),
+        "flow_rate_lps",
+    ] = 0.46
+    path = tmp_path / "wrong_scenario_flow.xlsx"
+    _write_xlsx(path, data)
+
+    passed, results = mod.validate_xlsx(str(path))
+
+    assert passed is False
+    assert not _result_for(results, "scenario_mplus_flow:Comparison_flow_head_10mm").passed
