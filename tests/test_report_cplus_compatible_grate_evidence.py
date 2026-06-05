@@ -52,10 +52,10 @@ def test_detects_candidate_grate_rows_but_keeps_proposal_only_for_family_page_ev
             (mod.SourceInspection("https://example.test/cplus/", "ok", ("ACO ShowerDrain C+ with Design-Rost",)),),
             (
                 mod.CandidateEvidence(
-                    "9010.88.01",
-                    "aco-90108801",
+                    "9010.88.61",
+                    "aco-90108861",
                     "https://example.test/cplus/",
-                    "ACO ShowerDrain C+ kompatibel mit Design-Rost 9010.88.01",
+                    "ACO ShowerDrain C+ kompatibel mit Design-Rost 9010.88.61",
                     "explicit_family_level",
                     "explicit",
                 ),
@@ -68,14 +68,14 @@ def test_detects_candidate_grate_rows_but_keeps_proposal_only_for_family_page_ev
 
     assert len(diag.diagnostic_mappings) == 2
     assert set(df["base_id"]) == set(mod.PROTECTED_CPLUS_BASE_IDS)
-    assert set(df["grate_id"]) == {"aco-90108801"}
+    assert set(df["grate_id"]) == {"aco-90108861"}
     assert set(df["compatibility_evidence_type"]) == {"page_level_family"}
     assert set(df["compatibility_confidence"]) == {"medium"}
     assert df["article_level_compatibility_found"].eq(False).all()
     assert df["safe_to_generate"].eq(False).all()
     assert df["ready_for_benchmark"].eq(False).all()
     assert df["ready_for_customer_view"].eq(False).all()
-    assert df["production_status_note"].str.contains("diagnostic/proposal-only").all()
+    assert df["production_status_note"].str.contains("diagnostic/evidence-only").all()
     assert diag.safe_to_add_compatible_grate_bom_rows is False
     assert "Do not add" in diag.recommendation
 
@@ -98,10 +98,10 @@ def test_explicit_article_evidence_is_only_case_safe_to_generate_but_still_not_r
         base_rows,
         [
             mod.CandidateEvidence(
-                "9010.88.01",
-                "aco-90108801",
+                "9010.88.61",
+                "aco-90108861",
                 "https://example.test/cplus/matrix",
-                "ACO ShowerDrain C+ compatible Design-Rost Artikel 9010.88.01",
+                "ACO ShowerDrain C+ compatible Design-Rost Artikel 9010.88.61",
                 "explicit_article_matrix",
                 "explicit",
             )
@@ -113,8 +113,39 @@ def test_explicit_article_evidence_is_only_case_safe_to_generate_but_still_not_r
     assert all(mapping.compatibility_confidence == "high" for mapping in mappings)
     assert all(mapping.article_level_compatibility_found is True for mapping in mappings)
     assert all(mapping.safe_to_generate is True for mapping in mappings)
-    assert all(mapping.ready_for_benchmark is False for mapping in mappings)
+    assert all(mapping.ready_for_benchmark is True for mapping in mappings)
     assert all(mapping.ready_for_customer_view is False for mapping in mappings)
+
+
+def test_export_matrix_detects_only_plausible_article_backed_c_grates():
+    components = pd.DataFrame([
+        {
+            "product_id": f"aco-{article.replace('.', '')}",
+            "product_family": "showerdrain_c_article_grate",
+            "system_role": "grate",
+            "article_no": article,
+            "product_name": f"Design grate {article}",
+            "source_url": "https://example.test/showerdrain-c/design-grates",
+        }
+        for article in mod.PLAUSIBLE_CPLUS_GRATE_ARTICLES
+    ] + [
+        {"product_id": "aco-90108544", "product_family": "showerdrain_c", "system_role": "base", "article_no": "9010.85.44"},
+        {"product_id": "aco-assembled-bad", "product_family": "showerdrain_c_article_grate", "system_role": "grate", "article_no": "9010.88.61"},
+        {"product_id": "aco-missing", "product_family": "showerdrain_c_article_grate", "system_role": "grate", "article_no": None},
+        {"product_id": "aco-accessory", "product_family": "showerdrain_c_article_grate", "system_role": "accessory", "article_no": "9010.88.62"},
+    ])
+
+    evidence = mod.build_export_evidence_dataframe(_protected_products(), components)
+
+    assert len(evidence) == 30
+    assert set(evidence["base_id"]) == set(mod.PROTECTED_CPLUS_BASE_IDS)
+    assert set(evidence["grate_article_number"]) == set(mod.PLAUSIBLE_CPLUS_GRATE_ARTICLES)
+    assert set(evidence["compatibility_evidence_type"]) == {"inferred_from_shared_c_grate_page"}
+    assert set(evidence["compatibility_confidence"]) == {"low"}
+    assert evidence["safe_to_generate"].eq(False).all()
+    assert evidence["ready_for_benchmark"].eq(False).all()
+    assert evidence["ready_for_customer_view"].eq(False).all()
+    assert evidence["source_text_or_reason"].str.contains("does not identify this grate article").all()
 
 
 def test_diagnostic_mappings_do_not_create_production_cplus_assemblies_or_change_counts():
@@ -122,13 +153,13 @@ def test_diagnostic_mappings_do_not_create_production_cplus_assemblies_or_change
     base_rows, _missing = mod.locate_cplus_base_rows(products)
     mappings = mod.build_diagnostic_mappings(
         base_rows,
-        [mod.CandidateEvidence("9010.88.01", "aco-90108801", "https://example.test/c", "Design-Rost passend für ShowerDrain C", "ambiguous", "ambiguous")],
+        [mod.CandidateEvidence("9010.88.61", "aco-90108861", "https://example.test/c", "Design-Rost passend für ShowerDrain C", "ambiguous", "ambiguous")],
     )
     cplus_df = pd.DataFrame([mapping.__dict__ for mapping in mappings])
     report = gaps.build_report(
         pd.DataFrame(),
         products,
-        pd.DataFrame([{"product_id": "aco-90108801", "option_family": "showerdrain_cplus"}]),
+        pd.DataFrame([{"product_id": "aco-90108861", "option_family": "showerdrain_cplus"}]),
         pd.DataFrame(),
         final_assemblies=pd.DataFrame(),
         final_set_details=pd.DataFrame(),

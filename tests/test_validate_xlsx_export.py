@@ -157,6 +157,43 @@ def _conditional_technical_values_dataframe():
             })
     return pd.DataFrame(rows)
 
+def _cplus_evidence_dataframe():
+    rows = []
+    expected = {
+        "aco-showerdrain-cplus-standard-h92": (0.91, 50, "DN50", 80, 128),
+        "aco-showerdrain-cplus-low-h69": (0.62, 25, "DN40", 57, 128),
+    }
+    for base_id, values in expected.items():
+        rows.append({
+            "set_id": f"diag-{base_id}-90108861",
+            "product_family": "showerdrain_cplus",
+            "assembly_model": "base_x_grate",
+            "base_id": base_id,
+            "base_article_number": "",
+            "base_source_url": "https://example.test/cplus",
+            "grate_id": "aco-90108861",
+            "grate_article_number": "9010.88.61",
+            "grate_source_url": "https://example.test/showerdrain-c/grates",
+            "flow_rate_lps": values[0],
+            "water_seal_mm": values[1],
+            "outlet_dn": values[2],
+            "height_adj_min_mm": values[3],
+            "height_adj_max_mm": values[4],
+            "compatibility_evidence_type": "inferred_from_shared_c_grate_page",
+            "compatibility_confidence": "low",
+            "article_level_compatibility_found": False,
+            "source_text_or_reason": "C grate article; no explicit C+ article mapping",
+            "data_quality_status": "diagnostic_evidence_only_insufficient_article_level_compatibility",
+            "safe_to_generate": False,
+            "ready_for_benchmark": False,
+            "ready_for_customer_view": False,
+            "blocking_reason": "no explicit article-level C+ base-to-grate compatibility matrix",
+            "recommended_next_action": "find explicit C+ article matrix / catalog table",
+            "production_status_note": "diagnostic/evidence-only; proposal-only; no Products, BOM, assembly generation, benchmark, customer-view, or scoring change",
+        })
+    return pd.DataFrame(rows)
+
+
 def _base_dataframes():
     products = pd.DataFrame([
         {"manufacturer": "aco", "product_id": "aco-showerdrain-cplus-standard-h92", "system_role": "drain_unit", "flow_rate_lps": 0.91, "water_seal_mm": 50, "outlet_dn": "DN50", "height_adj_min_mm": 80, "height_adj_max_mm": 128},
@@ -174,6 +211,7 @@ def _base_dataframes():
         }]),
         "Mplus_Compound_Mappings": _mplus_compound_mappings_dataframe(),
         "Eplus_Proposal_Mappings": _eplus_proposal_mappings_dataframe(),
+        "Cplus_Compatible_Grate_Evidence": _cplus_evidence_dataframe(),
         "Conditional_Technical_Values": _conditional_technical_values_dataframe(),
         "Article_Variants": pd.DataFrame([
             {
@@ -385,6 +423,7 @@ def _mplus_only_dataframes(ready_value=0.0):
         "BOM_Options": pd.DataFrame(),
         "Mplus_Compound_Mappings": mplus_mappings,
         "Eplus_Proposal_Mappings": _eplus_proposal_mappings_dataframe(),
+        "Cplus_Compatible_Grate_Evidence": pd.DataFrame(columns=_cplus_evidence_dataframe().columns),
         "Conditional_Technical_Values": conditional_values,
         "Article_Variants": pd.DataFrame(columns=[
             "manufacturer",

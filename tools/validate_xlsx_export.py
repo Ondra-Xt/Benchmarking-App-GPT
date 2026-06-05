@@ -117,6 +117,7 @@ REQUIRED_SHEETS = [
     "Final_Set_Details",
     "Mplus_Compound_Mappings",
     "Eplus_Proposal_Mappings",
+    "Cplus_Compatible_Grate_Evidence",
     "Conditional_Technical_Values",
     "Article_Variants",
     "Scoring_Scenarios",
@@ -124,6 +125,24 @@ REQUIRED_SHEETS = [
     "Comparison_flow_head_20mm",
 ]
 OPTIONAL_SHEETS = ["Evidence"]
+
+CPLUS_COMPATIBLE_GRATE_EVIDENCE_REQUIRED_COLUMNS = [
+    "set_id", "product_family", "assembly_model", "base_id", "base_article_number",
+    "base_source_url", "grate_id", "grate_article_number", "grate_source_url",
+    "flow_rate_lps", "water_seal_mm", "outlet_dn", "height_adj_min_mm",
+    "height_adj_max_mm", "compatibility_evidence_type", "compatibility_confidence",
+    "article_level_compatibility_found", "source_text_or_reason", "data_quality_status",
+    "safe_to_generate", "ready_for_benchmark", "ready_for_customer_view",
+    "blocking_reason", "recommended_next_action", "production_status_note",
+]
+CPLUS_ALLOWED_BASE_IDS = {
+    "aco-showerdrain-cplus-standard-h92",
+    "aco-showerdrain-cplus-low-h69",
+}
+CPLUS_EXPLICIT_EVIDENCE_TYPES = {"article_level_explicit", "article_level_table"}
+CPLUS_DIAGNOSTIC_PRODUCTION_NOTE_SNIPPET = "diagnostic/evidence-only"
+CPLUS_GRATE_ARTICLE_RE = r"^9010\.88\.\d{2}$"
+
 
 SCORING_SCENARIOS_REQUIRED_COLUMNS = [
     "scenario_id",
@@ -410,6 +429,8 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
         required_sheets.append("Article_Variants")
     if "Final_Assemblies" in EXPECTED_SHEET_COUNTS and "Final_Set_Details" not in required_sheets:
         required_sheets.append("Final_Set_Details")
+    if "Cplus_Compatible_Grate_Evidence" not in required_sheets:
+        required_sheets.append("Cplus_Compatible_Grate_Evidence")
     missing = [s for s in required_sheets if s not in xls.sheet_names]
     results.append(CheckResult("required_sheets", not missing, f"missing={missing} expected={required_sheets}"))
     if "Final_Assemblies" in required_sheets:
@@ -436,6 +457,7 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
     )
     final_assemblies = sheets.get("Final_Assemblies")
     final_set_details = sheets.get("Final_Set_Details")
+    cplus_evidence = sheets.get("Cplus_Compatible_Grate_Evidence", pd.DataFrame())
     mplus_compound_mappings = (
         sheets.get("Mplus_Compound_Mappings")
         if "Mplus_Compound_Mappings" in sheets
@@ -471,6 +493,58 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
     for name, expected in EXPECTED_SHEET_COUNTS.items():
         actual = len(sheets[name])
         results.append(CheckResult(f"row_count:{name}", actual == expected, f"actual={actual} expected={expected}"))
+
+    cplus_missing_columns = [
+        col for col in CPLUS_COMPATIBLE_GRATE_EVIDENCE_REQUIRED_COLUMNS if col not in cplus_evidence.columns
+    ]
+    results.append(CheckResult(
+        "cplus_evidence_required_columns",
+        not cplus_missing_columns,
+        f"missing={cplus_missing_columns} expected={CPLUS_COMPATIBLE_GRATE_EVIDENCE_REQUIRED_COLUMNS}",
+    ))
+    if not cplus_missing_columns:
+        set_ids = _norm_series(cplus_evidence, "set_id")
+        base_ids = _norm_series(cplus_evidence, "base_id")
+        evidence_types = _norm_series(cplus_evidence, "compatibility_evidence_type")
+        articles = _norm_series(cplus_evidence, "grate_article_number")
+        non_explicit = ~evidence_types.isin(CPLUS_EXPLICIT_EVIDENCE_TYPES)
+        results.append(CheckResult("cplus_evidence_set_id_nonempty", set_ids.ne("").all(), f"empty={int(set_ids.eq('').sum())}"))
+        results.append(CheckResult("cplus_evidence_set_id_no_url", ~set_ids.str.contains(r"https?://", case=False, regex=True).any(), "set_id must not contain URLs"))
+        results.append(CheckResult("cplus_evidence_base_ids", base_ids.isin(CPLUS_ALLOWED_BASE_IDS).all(), f"actual={sorted(set(base_ids))}"))
+        expected_bases_present = (set(base_ids) == CPLUS_ALLOWED_BASE_IDS) if CPLUS_EXPECTED else True
+        results.append(CheckResult("cplus_evidence_two_protected_bases", expected_bases_present, f"actual={sorted(set(base_ids))} expected={sorted(CPLUS_ALLOWED_BASE_IDS)}"))
+        grate_ids = _norm_series(cplus_evidence, "grate_id")
+        self_reference = base_ids.eq(grate_ids) & grate_ids.ne("")
+        results.append(CheckResult("cplus_evidence_no_self_reference", ~self_reference.any(), f"invalid_rows={list(cplus_evidence.index[self_reference])}"))
+        family_ok = _norm_series(cplus_evidence, "product_family").eq("showerdrain_cplus")
+        results.append(CheckResult("cplus_evidence_family_scope", family_ok.all(), f"invalid_rows={list(cplus_evidence.index[~family_ok])}"))
+        plausible_articles = articles.eq("") | articles.str.match(CPLUS_GRATE_ARTICLE_RE)
+        results.append(CheckResult("cplus_evidence_plausible_grate_articles", plausible_articles.all(), f"invalid={sorted(set(articles[~plausible_articles]))}"))
+        hydraulic_ok = pd.Series(True, index=cplus_evidence.index)
+        for base_id, expected in CPLUS_EXPECTED.items():
+            rows = cplus_evidence[base_ids.eq(base_id)]
+            row_ok = pd.Series(True, index=rows.index)
+            for field, value in expected.items():
+                if isinstance(value, str):
+                    row_ok &= _string_series_eq(rows, field, value)
+                else:
+                    row_ok &= _numeric_series_eq(rows, field, value)
+            hydraulic_ok.loc[rows.index] = row_ok
+        results.append(CheckResult("cplus_evidence_protected_hydraulics", hydraulic_ok.all(), f"invalid_rows={list(cplus_evidence.index[~hydraulic_ok])}"))
+        safe = pd.Series([_coerce_bool_like(v) for v in cplus_evidence["safe_to_generate"]], index=cplus_evidence.index)
+        ready = pd.Series([_coerce_bool_like(v) for v in cplus_evidence["ready_for_benchmark"]], index=cplus_evidence.index)
+        customer = pd.Series([_coerce_bool_like(v) for v in cplus_evidence["ready_for_customer_view"]], index=cplus_evidence.index)
+        results.append(CheckResult("cplus_evidence_non_explicit_not_safe", (~non_explicit | safe.eq(False)).all(), f"invalid_rows={list(cplus_evidence.index[non_explicit & ~safe.eq(False)])}"))
+        results.append(CheckResult("cplus_evidence_non_explicit_not_benchmark_ready", (~non_explicit | ready.eq(False)).all(), f"invalid_rows={list(cplus_evidence.index[non_explicit & ~ready.eq(False)])}"))
+        results.append(CheckResult("cplus_evidence_customer_view_disabled", customer.eq(False).all(), f"invalid_rows={list(cplus_evidence.index[~customer.eq(False)])}"))
+        notes = _norm_series(cplus_evidence, "production_status_note").str.lower()
+        no_production = final_assemblies is None or not _norm_series(final_assemblies, "product_id").str.contains("cplus", case=False, regex=False).any()
+        note_ok = notes.str.contains(CPLUS_DIAGNOSTIC_PRODUCTION_NOTE_SNIPPET, regex=False).all() if no_production else True
+        results.append(CheckResult("cplus_evidence_diagnostic_only_note", bool(note_ok), f"no_production={no_production}"))
+        final_ids = set(_norm_series(final_assemblies, "product_id")) if final_assemblies is not None else set()
+        detail_set_ids = set(_norm_series(final_set_details, "set_id")) if final_set_details is not None else set()
+        overlap = (set(set_ids) & final_ids) | (set(set_ids) & detail_set_ids)
+        results.append(CheckResult("cplus_evidence_no_production_overlap", not overlap, f"overlap={sorted(overlap)}"))
 
     scenario_columns_missing = [col for col in SCORING_SCENARIOS_REQUIRED_COLUMNS if col not in scoring_scenarios.columns]
     results.append(CheckResult(

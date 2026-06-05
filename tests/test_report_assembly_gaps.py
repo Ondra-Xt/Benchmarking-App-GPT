@@ -177,7 +177,7 @@ def test_build_report_accounts_for_mplus_proposal_only_mappings(capsys):
     assert "flow_rate_lps_10mm_head=0.4" in out
     assert "flow_rate_lps_20mm_head=0.46" in out
     assert "selected_default_flow_rate_lps=empty" in out
-    assert "Production behavior changed: yes" in out
+    assert "Production behavior changed: no" in out
 
 
 def test_build_report_accounts_for_eplus_proposal_only_mappings(capsys):
@@ -240,7 +240,7 @@ def test_build_report_accounts_for_eplus_proposal_only_mappings(capsys):
     assert "assembly_model=base_x_grate" in out
     assert "article_level_compatibility_found=False" in out
     assert "data_quality_status=proposal_only_partial" in out
-    assert "Production behavior changed: yes" in out
+    assert "Production behavior changed: no" in out
 
 
 def test_build_report_blocks_article_variant_ambiguity_and_prints(monkeypatch, capsys):
@@ -266,7 +266,7 @@ def test_build_report_blocks_article_variant_ambiguity_and_prints(monkeypatch, c
     out = capsys.readouterr().out
     assert "ACO assembly gap diagnostic" in out
     assert "showerdrain_cplus | 0 | 1 | 1 | 1 | 1 | 0 | blocked_article_variant_ambiguous" in out
-    assert "Production behavior changed: yes" in out
+    assert "Production behavior changed: no" in out
 
 
 def test_main_runs_discovery_and_pipeline_without_writing_xlsx(monkeypatch, capsys):

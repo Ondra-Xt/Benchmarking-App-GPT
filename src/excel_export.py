@@ -1423,6 +1423,7 @@ def export_excel(
     - Source_Checks
     - Mplus_Compound_Mappings
     - Eplus_Proposal_Mappings
+    - Cplus_Compatible_Grate_Evidence
     - Article_Variants
     - Final_Scoring_Weights
     - Legacy_Equivalence_Weights
@@ -1527,6 +1528,10 @@ def export_excel(
         final_set_details_df,
     )
     conditional_technical_values_df = _extract_conditional_technical_values(mplus_compound_mappings_df)
+    # Imported lazily to avoid coupling the core exporter to the report CLI at module import time.
+    from tools.report_cplus_compatible_grate_evidence import build_export_evidence_dataframe
+
+    cplus_compatible_grate_evidence_df = build_export_evidence_dataframe(products_df, components_df)
     scoring_scenarios_df = scoring_scenarios_dataframe()
     comparison_flow_head_10mm_df = build_scenario_comparison(
         comparison_df, conditional_technical_values_df, "flow_head_10mm"
@@ -1541,6 +1546,7 @@ def export_excel(
     write_df("Final_Set_Details", final_set_details_df)
     write_df("Mplus_Compound_Mappings", mplus_compound_mappings_df)
     write_df("Eplus_Proposal_Mappings", eplus_proposal_mappings_df)
+    write_df("Cplus_Compatible_Grate_Evidence", cplus_compatible_grate_evidence_df)
     write_df("Conditional_Technical_Values", conditional_technical_values_df)
     write_df("Scoring_Scenarios", scoring_scenarios_df)
     write_df("Comparison_flow_head_10mm", comparison_flow_head_10mm_df)
