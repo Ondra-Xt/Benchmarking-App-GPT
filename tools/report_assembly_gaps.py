@@ -534,7 +534,7 @@ def print_report(report: AssemblyGapReport) -> None:
         else:
             print(f"- {blocked.family}: {blocked.next_required_action}")
 
-    print("\nProduction behavior changed: yes (report reflects blocked M+ final assembly output; no BOM, scoring, connector, or customer-ready behavior changes)")
+    print("\nProduction behavior changed: no (C+ evidence remains diagnostic-only; no BOM, assembly, scoring, connector, or customer-ready behavior changes)")
 
 
 def main() -> int:
@@ -557,6 +557,8 @@ def main() -> int:
         final_assemblies,
         final_set_details,
     )
+    from tools.report_cplus_compatible_grate_evidence import build_export_evidence_dataframe
+    cplus_compatible_grate_evidence = build_export_evidence_dataframe(products, components)
     report = build_report(
         registry,
         products,
@@ -566,6 +568,7 @@ def main() -> int:
         final_set_details=final_set_details,
         mplus_compound_mappings=mplus_compound_mappings,
         eplus_proposal_mappings=eplus_proposal_mappings,
+        cplus_compatible_grate_evidence=cplus_compatible_grate_evidence,
     )
     print_report(report)
     return 0

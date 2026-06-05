@@ -72,6 +72,12 @@ DEFAULT_EXCLUDED_SOURCE_MARKERS = (
     "showerpoint",
 )
 RECOMMENDED_NEXT_ACTION = "find explicit C+ article matrix / catalog table"
+PLAUSIBLE_CPLUS_GRATE_ARTICLES = (
+    "9010.88.61", "9010.88.62", "9010.88.63", "9010.88.64", "9010.88.66",
+    "9010.88.68", "9010.88.69", "9010.88.70", "9010.88.71", "9010.88.73",
+    "9010.88.89", "9010.88.90", "9010.88.91", "9010.88.92", "9010.88.94",
+)
+PLAUSIBLE_CPLUS_GRATE_ARTICLE_SET = set(PLAUSIBLE_CPLUS_GRATE_ARTICLES)
 
 
 @dataclass(frozen=True)
@@ -110,6 +116,7 @@ class CPlusDiagnosticMapping:
     compatibility_evidence_type: str
     compatibility_confidence: str
     article_level_compatibility_found: bool
+    source_text_or_reason: str
     data_quality_status: str
     missing_evidence: str
     safe_to_generate: bool
@@ -307,7 +314,7 @@ def _fallback_products_and_components(products: pd.DataFrame, components: pd.Dat
 
     component_ids = set(_norm(components, "product_id"))
     fallback_components = []
-    for article in ("9010.88.66", "9010.88.94"):
+    for article in PLAUSIBLE_CPLUS_GRATE_ARTICLES:
         digits = re.sub(r"\D+", "", article)
         pid = f"aco-{digits}"
         if pid in component_ids:
@@ -529,15 +536,16 @@ def build_diagnostic(
 def _report_evidence_type(raw_type: str) -> str:
     return {
         "explicit_article_matrix": "article_level_explicit",
+        "article_level_table": "article_level_table",
         "explicit_family_level": "page_level_family",
-        "implicit_family_level": "inferred_from_family_page",
+        "implicit_family_level": "page_level_shared_c_cplus",
         "ambiguous": "inferred_from_shared_c_grate_page",
         "absent": "insufficient",
     }.get(raw_type, "missing")
 
 
 def _report_confidence(raw_type: str, raw_confidence: str) -> str:
-    if raw_type == "explicit_article_matrix" and raw_confidence == "explicit":
+    if raw_type in {"explicit_article_matrix", "article_level_table"} and raw_confidence == "explicit":
         return "high"
     if raw_type == "explicit_family_level":
         return "medium"
@@ -559,9 +567,15 @@ def _candidate_grate_rows(candidate_evidence: Iterable[CandidateEvidence]) -> tu
         report_type = _report_evidence_type(ev.evidence_type)
         if report_type in {"insufficient", "missing"}:
             continue
-        if not (_clean_text(ev.product_id) or _clean_text(ev.article_number)):
+        article = _clean_text(ev.article_number)
+        product_id = _clean_text(ev.product_id)
+        if article not in PLAUSIBLE_CPLUS_GRATE_ARTICLE_SET:
             continue
-        key = (ev.product_id, ev.article_number, ev.source_url)
+        if not product_id or product_id.lower() == "nan" or product_id.startswith("aco-assembled-"):
+            continue
+        if "9010.85." in article:
+            continue
+        key = (product_id, article, ev.source_url)
         if key in seen:
             continue
         seen.add(key)
@@ -576,7 +590,7 @@ def build_diagnostic_mappings(
     """Build diagnostic-only base × grate proposal rows without production side effects."""
     mappings: list[CPlusDiagnosticMapping] = []
     grate_rows = _candidate_grate_rows(candidate_evidence)
-    production_note = "diagnostic/proposal-only; no Products, BOM, assembly generation, benchmark, customer-view, or scoring change"
+    production_note = "diagnostic/evidence-only; proposal-only; no Products, BOM, assembly generation, benchmark, customer-view, or scoring change"
     for base_id in PROTECTED_CPLUS_BASE_IDS:
         base = base_rows.get(base_id, {})
         candidates = grate_rows or (None,)
@@ -585,7 +599,7 @@ def build_diagnostic_mappings(
             raw_confidence = ev.compatibility_confidence if ev else "missing"
             evidence_type = _report_evidence_type(raw_type)
             confidence = _report_confidence(raw_type, raw_confidence)
-            article_level = evidence_type == "article_level_explicit"
+            article_level = evidence_type in {"article_level_explicit", "article_level_table"}
             grate_id = _clean_text(ev.product_id if ev else "")
             grate_article = _clean_text(ev.article_number if ev else "")
             grate_source = _clean_text(ev.source_url if ev else "")
@@ -593,6 +607,9 @@ def build_diagnostic_mappings(
             missing_evidence = "" if article_level else "explicit article-level C+ base-to-grate compatibility matrix"
             if evidence_type == "missing":
                 missing_evidence = "candidate C+ compatible grate/design row and explicit article-level C+ base-to-grate compatibility matrix"
+            technical_complete = all(_clean_text(base.get(field, "")) for field in TECHNICAL_FIELDS)
+            structurally_valid = bool(grate_id and grate_article and grate_id != base_id and article_level)
+            ready_for_benchmark = bool(article_level and technical_complete and structurally_valid)
             mappings.append(CPlusDiagnosticMapping(
                 set_id=f"diag-cplus-{_slug(base_id)}__{_slug(set_suffix)}",
                 product_family="showerdrain_cplus",
@@ -611,16 +628,53 @@ def build_diagnostic_mappings(
                 compatibility_evidence_type=evidence_type,
                 compatibility_confidence=confidence,
                 article_level_compatibility_found=article_level,
-                data_quality_status="diagnostic_explicit_article" if article_level else "diagnostic_proposal_only_insufficient_evidence",
+                source_text_or_reason=_clean_text(ev.row_text if ev else "No candidate grate row was found") or missing_evidence,
+                data_quality_status="diagnostic_explicit_article" if article_level else "diagnostic_evidence_only_insufficient_article_level_compatibility",
                 missing_evidence=missing_evidence,
                 safe_to_generate=article_level,
-                ready_for_benchmark=False,
+                ready_for_benchmark=ready_for_benchmark,
                 ready_for_customer_view=False,
                 blocking_reason="" if article_level else "no explicit article-level C+ base-to-grate compatibility matrix",
                 recommended_next_action="add only explicit C+ article-level compatible_grate rows in a separate production patch" if article_level else RECOMMENDED_NEXT_ACTION,
                 production_status_note=production_note,
             ))
     return tuple(mappings)
+
+
+def build_export_evidence_dataframe(products: pd.DataFrame, components: pd.DataFrame) -> pd.DataFrame:
+    """Build the deterministic diagnostic-only XLSX matrix from exported source rows."""
+    base_rows, _missing = locate_cplus_base_rows(products)
+    evidence: list[CandidateEvidence] = []
+    for _, row in (pd.DataFrame() if components is None else components).iterrows():
+        article = _clean_text(row.get("article_number", "") or row.get("article_no", ""))
+        product_id = _clean_text(row.get("product_id", ""))
+        role = _clean_text(row.get("system_role", "")).lower()
+        family = _clean_text(row.get("product_family", "")).lower()
+        if article not in PLAUSIBLE_CPLUS_GRATE_ARTICLE_SET:
+            continue
+        if role != "grate" or family != "showerdrain_c_article_grate":
+            continue
+        if not product_id or product_id.lower() == "nan" or product_id.startswith("aco-assembled-"):
+            continue
+        source_url = _clean_text(row.get("source_url", "") or row.get("product_url", ""))
+        row_text = _clean_text(row.get("product_name", ""))
+        reason = (
+            f"{row_text}; article {article} is listed on the ACO ShowerDrain C design-grate page. "
+            "The C+ family page states that C+ is based on the C range and offers design grates, "
+            "but it does not identify this grate article as compatible with either protected C+ base article."
+        )
+        evidence.append(CandidateEvidence(
+            article_number=article,
+            product_id=product_id,
+            source_url=source_url,
+            row_text=reason,
+            evidence_type="ambiguous",
+            compatibility_confidence="ambiguous",
+        ))
+    return pd.DataFrame(
+        [mapping.__dict__ for mapping in build_diagnostic_mappings(base_rows, evidence)],
+        columns=list(CPlusDiagnosticMapping.__dataclass_fields__),
+    )
 
 
 def diagnostic_mappings_dataframe(diag: CPlusCompatibleGrateDiagnostic) -> pd.DataFrame:
