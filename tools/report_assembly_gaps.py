@@ -41,6 +41,7 @@ STATUS_ACTIONS = {
     "blocked_article_variant_ambiguous": "keep blocked because ambiguity remains; parse article table and resolve unique variant attribution",
     "blocked_pending_conditional_parameter_scoring": "implement scoring/export handling for conditional parameter values before production M+ assemblies",
     "blocked_proposal_only_compatibility_evidence": "collect explicit article-level base-to-grate compatibility before production generation",
+    "blocked_pending_cplus_production_assembly": "implement C+ production assembly generation in a separate reviewed patch",
 }
 
 
@@ -314,6 +315,8 @@ def _family_gap(
             status = "blocked_proposal_only_compatibility_evidence"
         else:
             status = "blocked_pending_conditional_parameter_scoring"
+    elif family == "showerdrain_cplus" and proposal_mapping is not None and proposal_mapping.safe_to_generate_count > 0:
+        status = "blocked_pending_cplus_production_assembly"
     elif len(bases) == 0:
         status = "blocked_no_base_rows"
     elif len(complete_bases) == 0:
@@ -557,8 +560,14 @@ def main() -> int:
         final_assemblies,
         final_set_details,
     )
-    from tools.report_cplus_compatible_grate_evidence import build_export_evidence_dataframe
-    cplus_compatible_grate_evidence = build_export_evidence_dataframe(products, components)
+    from tools.report_cplus_compatible_grate_evidence import (
+        _fallback_products_and_components,
+        build_export_evidence_dataframe,
+    )
+    # Use fallback source rows only to make the diagnostic readiness matrix complete;
+    # do not add them to production Components/BOM/assembly frames.
+    _cplus_products, cplus_source_components = _fallback_products_and_components(products, components)
+    cplus_compatible_grate_evidence = build_export_evidence_dataframe(_cplus_products, cplus_source_components)
     report = build_report(
         registry,
         products,

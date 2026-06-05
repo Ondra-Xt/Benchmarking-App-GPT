@@ -139,7 +139,10 @@ CPLUS_ALLOWED_BASE_IDS = {
     "aco-showerdrain-cplus-standard-h92",
     "aco-showerdrain-cplus-low-h69",
 }
-CPLUS_EXPLICIT_EVIDENCE_TYPES = {"article_level_explicit", "article_level_table"}
+CPLUS_EXPLICIT_EVIDENCE_TYPES = {
+    "article_level_explicit", "article_level_table", "explicit_catalog_matrix",
+    "explicit_manual_matrix", "explicit_technical_drawing_matrix",
+}
 CPLUS_DIAGNOSTIC_PRODUCTION_NOTE_SNIPPET = "diagnostic/evidence-only"
 CPLUS_GRATE_ARTICLE_RE = r"^9010\.88\.\d{2}$"
 
