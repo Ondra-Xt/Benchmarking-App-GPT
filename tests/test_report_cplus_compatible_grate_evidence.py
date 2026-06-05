@@ -140,12 +140,14 @@ def test_export_matrix_detects_only_plausible_article_backed_c_grates():
     assert len(evidence) == 30
     assert set(evidence["base_id"]) == set(mod.PROTECTED_CPLUS_BASE_IDS)
     assert set(evidence["grate_article_number"]) == set(mod.PLAUSIBLE_CPLUS_GRATE_ARTICLES)
-    assert set(evidence["compatibility_evidence_type"]) == {"inferred_from_shared_c_grate_page"}
-    assert set(evidence["compatibility_confidence"]) == {"low"}
-    assert evidence["safe_to_generate"].eq(False).all()
-    assert evidence["ready_for_benchmark"].eq(False).all()
+    assert set(evidence["compatibility_evidence_type"]) == {"explicit_catalog_matrix"}
+    assert set(evidence["compatibility_confidence"]) == {"high"}
+    assert evidence["article_level_compatibility_found"].eq(True).all()
+    assert evidence["safe_to_generate"].eq(True).all()
+    assert evidence["ready_for_benchmark"].eq(True).all()
     assert evidence["ready_for_customer_view"].eq(False).all()
-    assert evidence["source_text_or_reason"].str.contains("does not identify this grate article").all()
+    assert evidence["source_text_or_reason"].str.contains("equal nominal lengths").all()
+    assert evidence["base_article_number"].str.match(r"9010\.85\.\d{2},9010\.85\.\d{2}").all()
 
 
 def test_diagnostic_mappings_do_not_create_production_cplus_assemblies_or_change_counts():

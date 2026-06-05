@@ -511,6 +511,26 @@ def build_diagnostic(
         include_broad_sources=include_broad_sources,
     )
     inspections, candidate_evidence = find_candidate_evidence(source_urls, candidates_all, products, components, bom_options, evidence_df)
+    from tools.report_cplus_source_evidence_search import explicit_catalog_mappings
+
+    explicit_articles = {mapping.grate_article_number: mapping for mapping in explicit_catalog_mappings()}
+    catalog_rows: list[CandidateEvidence] = []
+    for frame in (components, candidates_all):
+        for _, row in frame.iterrows():
+            article = _clean_text(row.get("article_number", "") or row.get("article_no", ""))
+            product_id = _clean_text(row.get("product_id", ""))
+            mapping = explicit_articles.get(article)
+            if mapping is None or not product_id or product_id.lower() == "nan":
+                continue
+            catalog_rows.append(CandidateEvidence(
+                article_number=article,
+                product_id=product_id,
+                source_url=mapping.source_path_or_url,
+                row_text=mapping.reason,
+                evidence_type="explicit_catalog_matrix",
+                compatibility_confidence="high",
+            ))
+    candidate_evidence = tuple(catalog_rows) + candidate_evidence
     diagnostic_mappings = build_diagnostic_mappings(base_rows, candidate_evidence)
     safe = any(mapping.safe_to_generate for mapping in diagnostic_mappings)
     if safe:
@@ -537,6 +557,7 @@ def _report_evidence_type(raw_type: str) -> str:
     return {
         "explicit_article_matrix": "article_level_explicit",
         "article_level_table": "article_level_table",
+        "explicit_catalog_matrix": "explicit_catalog_matrix",
         "explicit_family_level": "page_level_family",
         "implicit_family_level": "page_level_shared_c_cplus",
         "ambiguous": "inferred_from_shared_c_grate_page",
@@ -545,7 +566,7 @@ def _report_evidence_type(raw_type: str) -> str:
 
 
 def _report_confidence(raw_type: str, raw_confidence: str) -> str:
-    if raw_type in {"explicit_article_matrix", "article_level_table"} and raw_confidence == "explicit":
+    if raw_type in {"explicit_article_matrix", "article_level_table", "explicit_catalog_matrix"} and raw_confidence in {"explicit", "high"}:
         return "high"
     if raw_type == "explicit_family_level":
         return "medium"
@@ -563,7 +584,9 @@ def _slug(value: str) -> str:
 def _candidate_grate_rows(candidate_evidence: Iterable[CandidateEvidence]) -> tuple[CandidateEvidence, ...]:
     rows: list[CandidateEvidence] = []
     seen: set[tuple[str, str, str]] = set()
-    for ev in candidate_evidence:
+    priority = {"explicit_catalog_matrix": 0, "explicit_article_matrix": 1, "article_level_table": 1}
+    ordered_evidence = sorted(candidate_evidence, key=lambda ev: priority.get(ev.evidence_type, 9))
+    for ev in ordered_evidence:
         report_type = _report_evidence_type(ev.evidence_type)
         if report_type in {"insufficient", "missing"}:
             continue
@@ -575,7 +598,7 @@ def _candidate_grate_rows(candidate_evidence: Iterable[CandidateEvidence]) -> tu
             continue
         if "9010.85." in article:
             continue
-        key = (product_id, article, ev.source_url)
+        key = (product_id, article, "")
         if key in seen:
             continue
         seen.add(key)
@@ -599,7 +622,7 @@ def build_diagnostic_mappings(
             raw_confidence = ev.compatibility_confidence if ev else "missing"
             evidence_type = _report_evidence_type(raw_type)
             confidence = _report_confidence(raw_type, raw_confidence)
-            article_level = evidence_type in {"article_level_explicit", "article_level_table"}
+            article_level = evidence_type in {"article_level_explicit", "article_level_table", "explicit_catalog_matrix"}
             grate_id = _clean_text(ev.product_id if ev else "")
             grate_article = _clean_text(ev.article_number if ev else "")
             grate_source = _clean_text(ev.source_url if ev else "")
@@ -671,10 +694,46 @@ def build_export_evidence_dataframe(products: pd.DataFrame, components: pd.DataF
             evidence_type="ambiguous",
             compatibility_confidence="ambiguous",
         ))
-    return pd.DataFrame(
+    result = pd.DataFrame(
         [mapping.__dict__ for mapping in build_diagnostic_mappings(base_rows, evidence)],
         columns=list(CPlusDiagnosticMapping.__dataclass_fields__),
     )
+    if result.empty:
+        return result
+
+    # The stored 2025 ACO catalog provides an explicit C+ body table followed by a
+    # grate table headed ShowerDrain C & C+. Upgrade only equal-length, article-backed
+    # rows; this remains diagnostic/readiness-only and creates no BOM or assembly rows.
+    from tools.report_cplus_source_evidence_search import explicit_catalog_mappings
+
+    explicit_by_key = {
+        (mapping.base_id, mapping.grate_article_number): mapping
+        for mapping in explicit_catalog_mappings()
+    }
+    for index, row in result.iterrows():
+        mapping = explicit_by_key.get((str(row["base_id"]), str(row["grate_article_number"])))
+        if mapping is None:
+            continue
+        result.at[index, "base_article_number"] = ",".join(mapping.base_article_numbers)
+        result.at[index, "grate_source_url"] = mapping.source_path_or_url
+        result.at[index, "compatibility_evidence_type"] = mapping.evidence_classification
+        result.at[index, "compatibility_confidence"] = mapping.evidence_confidence
+        result.at[index, "article_level_compatibility_found"] = True
+        result.at[index, "source_text_or_reason"] = mapping.reason
+        result.at[index, "data_quality_status"] = "explicit_source_ready_diagnostic_only"
+        result.at[index, "missing_evidence"] = ""
+        result.at[index, "safe_to_generate"] = True
+        result.at[index, "ready_for_benchmark"] = True
+        result.at[index, "ready_for_customer_view"] = False
+        result.at[index, "blocking_reason"] = ""
+        result.at[index, "recommended_next_action"] = (
+            "implement C+ production assembly generation in a separate reviewed patch"
+        )
+        result.at[index, "production_status_note"] = (
+            "diagnostic/evidence-only; explicit catalog compatibility found; "
+            "no C+ production assembly generated"
+        )
+    return result
 
 
 def diagnostic_mappings_dataframe(diag: CPlusCompatibleGrateDiagnostic) -> pd.DataFrame:
@@ -715,7 +774,7 @@ def _evidence_counts(diag: CPlusCompatibleGrateDiagnostic) -> tuple[int, int, in
     explicit_count = sum(
         1
         for ev in diag.candidate_evidence
-        if ev.evidence_type == "explicit_article_matrix" and ev.compatibility_confidence == "explicit"
+        if ev.evidence_type in {"explicit_article_matrix", "explicit_catalog_matrix"} and ev.compatibility_confidence in {"explicit", "high"}
     )
     ambiguous_count = sum(1 for ev in diag.candidate_evidence if ev.evidence_type == "ambiguous")
     absent_count = sum(1 for ev in diag.candidate_evidence if ev.evidence_type == "absent")
@@ -754,7 +813,7 @@ def print_diagnostic(diag: CPlusCompatibleGrateDiagnostic, *, verbose: bool = Fa
     explicit_rows = [
         ev
         for ev in diag.candidate_evidence
-        if ev.evidence_type == "explicit_article_matrix" and ev.compatibility_confidence == "explicit"
+        if ev.evidence_type in {"explicit_article_matrix", "explicit_catalog_matrix"} and ev.compatibility_confidence in {"explicit", "high"}
     ]
     if explicit_rows:
         print("\nExplicit C+ compatible grate rows:")
