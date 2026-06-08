@@ -534,7 +534,7 @@ def build_diagnostic(
     diagnostic_mappings = build_diagnostic_mappings(base_rows, candidate_evidence)
     safe = any(mapping.safe_to_generate for mapping in diagnostic_mappings)
     if safe:
-        recommendation = "Future compatible_grate BOM rows may be added only for the explicit article-level C+ rows listed above."
+        recommendation = "The explicit article-level C+ rows listed above are promoted and baseline-protected in production exports."
     else:
         recommendation = "Do not add C+ compatible_grate BOM rows and do not generate C+ assembled products yet; evidence is not explicit article-level C+ compatibility."
     return CPlusCompatibleGrateDiagnostic(
@@ -547,7 +547,7 @@ def build_diagnostic(
         cplus_rows_by_sheet=_cplus_rows_by_sheet(candidates_all, products, comparison, components, bom_options, final_assemblies, final_set_details),
         safe_to_add_compatible_grate_bom_rows=safe,
         recommendation=recommendation,
-        recommended_action="add only the explicit C+ article rows listed above" if safe else RECOMMENDED_NEXT_ACTION,
+        recommended_action="no action; C+ explicit catalog assemblies are baseline-protected" if safe else RECOMMENDED_NEXT_ACTION,
         include_broad_sources=include_broad_sources,
     )
 
@@ -613,7 +613,10 @@ def build_diagnostic_mappings(
     """Build diagnostic-only base × grate proposal rows without production side effects."""
     mappings: list[CPlusDiagnosticMapping] = []
     grate_rows = _candidate_grate_rows(candidate_evidence)
-    production_note = "diagnostic/evidence-only; proposal-only; no Products, BOM, assembly generation, benchmark, customer-view, or scoring change"
+    production_note = (
+        "explicit source/evidence row is promoted to production C+ BOM and final assembly; "
+        "customer view remains disabled"
+    )
     for base_id in PROTECTED_CPLUS_BASE_IDS:
         base = base_rows.get(base_id, {})
         candidates = grate_rows or (None,)
@@ -652,20 +655,23 @@ def build_diagnostic_mappings(
                 compatibility_confidence=confidence,
                 article_level_compatibility_found=article_level,
                 source_text_or_reason=_clean_text(ev.row_text if ev else "No candidate grate row was found") or missing_evidence,
-                data_quality_status="diagnostic_explicit_article" if article_level else "diagnostic_evidence_only_insufficient_article_level_compatibility",
+                data_quality_status="explicit_source_ready_production_assembly" if article_level else "diagnostic_evidence_only_insufficient_article_level_compatibility",
                 missing_evidence=missing_evidence,
                 safe_to_generate=article_level,
                 ready_for_benchmark=ready_for_benchmark,
                 ready_for_customer_view=False,
                 blocking_reason="" if article_level else "no explicit article-level C+ base-to-grate compatibility matrix",
-                recommended_next_action="add only explicit C+ article-level compatible_grate rows in a separate production patch" if article_level else RECOMMENDED_NEXT_ACTION,
-                production_status_note=production_note,
+                recommended_next_action="no action; C+ explicit catalog assemblies are baseline-protected" if article_level else RECOMMENDED_NEXT_ACTION,
+                production_status_note=(
+                    production_note if article_level else
+                    "diagnostic/evidence-only; proposal-only; no Products, BOM, assembly generation, benchmark, customer-view, or scoring change"
+                ),
             ))
     return tuple(mappings)
 
 
 def build_export_evidence_dataframe(products: pd.DataFrame, components: pd.DataFrame) -> pd.DataFrame:
-    """Build the deterministic diagnostic-only XLSX matrix from exported source rows."""
+    """Build the deterministic source/evidence matrix used by C+ production promotion."""
     base_rows, _missing = locate_cplus_base_rows(products)
     evidence: list[CandidateEvidence] = []
     for _, row in (pd.DataFrame() if components is None else components).iterrows():
@@ -703,7 +709,8 @@ def build_export_evidence_dataframe(products: pd.DataFrame, components: pd.DataF
 
     # The stored 2025 ACO catalog provides an explicit C+ body table followed by a
     # grate table headed ShowerDrain C & C+. Upgrade only equal-length, article-backed
-    # rows; this remains diagnostic/readiness-only and creates no BOM or assembly rows.
+    # rows. The exporter promotes exactly these safe rows while retaining this sheet as
+    # the immutable source/evidence matrix.
     from tools.report_cplus_source_evidence_search import explicit_catalog_mappings
 
     explicit_by_key = {
@@ -727,11 +734,11 @@ def build_export_evidence_dataframe(products: pd.DataFrame, components: pd.DataF
         result.at[index, "ready_for_customer_view"] = False
         result.at[index, "blocking_reason"] = ""
         result.at[index, "recommended_next_action"] = (
-            "implement C+ production assembly generation in a separate reviewed patch"
+            "no action; C+ explicit catalog assemblies are baseline-protected"
         )
         result.at[index, "production_status_note"] = (
-            "diagnostic/evidence-only; explicit catalog compatibility found; "
-            "no C+ production assembly generated"
+            "source/evidence row promoted to a production C+ compatible_grate BOM row "
+            "and final assembly; customer view remains disabled"
         )
     return result
 
@@ -872,15 +879,16 @@ def print_diagnostic(diag: CPlusCompatibleGrateDiagnostic, *, verbose: bool = Fa
     print("\nC+ evidence summary:")
     print(f"- explicit C+ compatible grate evidence: {explicit_count}")
     print(f"- ambiguous ShowerDrain C-only grate rows: {ambiguous_count}")
-    print(f"- safe_to_add_cplus_bom_rows: {diag.safe_to_add_compatible_grate_bom_rows}")
+    print(f"- safe_to_add_cplus_bom_rows: already_promoted" if diag.safe_to_add_compatible_grate_bom_rows else "- safe_to_add_cplus_bom_rows: False")
+    print(f"- C+ production assemblies generated: {'YES' if diag.safe_to_add_compatible_grate_bom_rows else 'NO'}")
     print(f"- recommended_action: {diag.recommended_action}")
     print("\nFinal conclusion:")
     if diag.safe_to_add_compatible_grate_bom_rows:
-        print("- explicit C+ article-level evidence was detected; add only those listed compatible_grate rows.")
+        print("- explicit C+ article-level evidence was promoted to production compatible_grate rows and final assemblies.")
     else:
         print("- do not add C+ compatible_grate BOM rows")
         print("- do not generate C+ assembled products")
-    print("Production behavior changed: no (diagnostic-only script/test patch)")
+    print("Production behavior changed: yes (30 source-backed C+ assemblies); customer-facing behavior changed: no")
 
 
 def main(argv: list[str] | None = None) -> int:

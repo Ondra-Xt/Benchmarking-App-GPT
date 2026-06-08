@@ -1938,3 +1938,303 @@ class PipelineExportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_export_promotes_exact_cplus_explicit_matrix_rows():
+    from tools.report_cplus_compatible_grate_evidence import _fallback_products_and_components
+
+    with tempfile.TemporaryDirectory() as td:
+        template = Path(td) / "template.xlsx"
+        out = Path(td) / "cplus.xlsx"
+        wb = openpyxl.Workbook()
+        wb.active.title = "Candidates_All"
+        for name in ["Excluded", "Products", "BOM_Options", "Components", "Evidence", "Comparison"]:
+            wb.create_sheet(name)
+        wb.save(template)
+        wb.close()
+
+        products, components = _fallback_products_and_components(pd.DataFrame(), pd.DataFrame())
+        export_excel(
+            template,
+            out,
+            default_config(),
+            products_df=products,
+            comparison_df=products.copy(),
+            components_df=components,
+            bom_options_df=pd.DataFrame(),
+        )
+
+        with pd.ExcelFile(out, engine="openpyxl") as xls:
+            sheets = {name: pd.read_excel(xls, sheet_name=name) for name in [
+                "Products", "Comparison", "BOM_Options", "Final_Assemblies",
+                "Final_Set_Details", "Cplus_Compatible_Grate_Evidence",
+                "Comparison_flow_head_10mm", "Comparison_flow_head_20mm",
+            ]}
+
+        prefix = "aco-assembled-showerdrain-cplus-"
+        cplus_products = sheets["Products"][sheets["Products"]["product_id"].astype(str).str.startswith(prefix)]
+        cplus_comparison = sheets["Comparison"][sheets["Comparison"]["product_id"].astype(str).str.startswith(prefix)]
+        cplus_final = sheets["Final_Assemblies"][sheets["Final_Assemblies"]["assembled_family"].eq("showerdrain_cplus")]
+        cplus_details = sheets["Final_Set_Details"][sheets["Final_Set_Details"]["assembled_family"].eq("showerdrain_cplus")]
+        cplus_bom = sheets["BOM_Options"][sheets["BOM_Options"]["product_family"].eq("showerdrain_cplus")]
+
+        assert len(cplus_products) == len(cplus_comparison) == len(cplus_final) == len(cplus_details) == 30
+        assert cplus_details["ready_for_benchmark"].eq(True).all()
+        assert cplus_details["ready_for_customer_view"].eq(False).all()
+        assert cplus_details["compatibility_evidence_type"].eq("explicit_catalog_matrix").all()
+        assert cplus_details["compatibility_confidence"].eq("high").all()
+        assert cplus_details["component_role"].eq("grate").all()
+        assert len(cplus_bom) == 30
+        assert len(sheets["Cplus_Compatible_Grate_Evidence"]) == 30
+        assert cplus_products["product_id"].is_unique
+        assert cplus_products["base_id"].ne("").all()
+        assert cplus_products["grate_id"].ne("").all()
+        assert cplus_products["compatibility_evidence_type"].eq("explicit_catalog_matrix").all()
+        assert cplus_products["compatibility_confidence"].eq("high").all()
+        assert cplus_products["ready_for_benchmark"].eq(True).all()
+        assert cplus_products["ready_for_customer_view"].eq(False).all()
+        assert cplus_products["customer_view_enabled"].eq(False).all()
+        assert cplus_products["data_quality_status"].eq("explicit_source_ready_production_assembly").all()
+        assert ~cplus_products["grate_article_number"].astype(str).str.startswith("9010.85.").any()
+        assert ~cplus_products["product_name"].astype(str).str.contains("Tile", case=False).any()
+        assert ~(cplus_products["base_id"] == cplus_products["grate_id"]).any()
+
+        standard = cplus_products[cplus_products["base_id"].eq("aco-showerdrain-cplus-standard-h92")]
+        low = cplus_products[cplus_products["base_id"].eq("aco-showerdrain-cplus-low-h69")]
+        assert len(standard) == len(low) == 15
+        assert standard["flow_rate_lps"].eq(0.91).all()
+        assert standard["water_seal_mm"].eq(50).all()
+        assert standard["outlet_dn"].eq("DN50").all()
+        assert standard["height_adj_min_mm"].eq(80).all()
+        assert standard["height_adj_max_mm"].eq(128).all()
+        assert low["flow_rate_lps"].eq(0.62).all()
+        assert low["water_seal_mm"].eq(25).all()
+        assert low["outlet_dn"].eq("DN40").all()
+        assert low["height_adj_min_mm"].eq(57).all()
+        assert low["height_adj_max_mm"].eq(128).all()
+
+        for sheet_name in ("Comparison_flow_head_10mm", "Comparison_flow_head_20mm"):
+            scenario = sheets[sheet_name][sheets[sheet_name]["product_id"].astype(str).str.startswith(prefix)]
+            assert len(scenario) == 30
+            assert scenario["flow_rate_resolution_source"].eq("scalar_unconditional").all()
+            assert scenario["flow_rate_resolution_status"].eq("resolved_from_scalar").all()
+            assert scenario["scenario_ready_for_benchmark"].eq(True).all()
+            assert scenario["scenario_blocked_reason"].isna().all() | scenario["scenario_blocked_reason"].eq("").all()
+
+
+def test_streamlit_export_entrypoint_materializes_all_excluded_cplus_components():
+    """Regression: a Products component subset must not hide Excluded grates."""
+    from src.app_export import export_streamlit_workbook
+    from tools.report_cplus_compatible_grate_evidence import _fallback_products_and_components
+
+    with tempfile.TemporaryDirectory() as td:
+        template = Path(td) / "template.xlsx"
+        out = Path(td) / "streamlit-download.xlsx"
+        wb = openpyxl.Workbook()
+        wb.active.title = "Candidates_All"
+        for name in ["Excluded", "Products", "BOM_Options", "Components", "Evidence", "Comparison"]:
+            wb.create_sheet(name)
+        wb.save(template)
+        wb.close()
+
+        base_products, grate_components = _fallback_products_and_components(
+            pd.DataFrame(), pd.DataFrame()
+        )
+        products = pd.concat([
+            base_products,
+            pd.DataFrame([{
+                "manufacturer": "aco",
+                "product_id": "aco-products-derived-component",
+                "product_name": "Products-derived component sentinel",
+                "candidate_type": "component",
+                "complete_system": "component/base-set",
+                "system_role": "base_set",
+            }]),
+        ], ignore_index=True, sort=False)
+        comparison = base_products.copy()
+        excluded = grate_components.copy()
+        excluded["why_not_product_reason"] = "cover_only_component"
+
+        export_streamlit_workbook(
+            template,
+            out,
+            default_config(),
+            registry=pd.DataFrame([{"manufacturer": "aco", "product_id": "aco-context"}]),
+            products=products,
+            comparison=comparison,
+            excluded=excluded,
+            evidence=pd.DataFrame(),
+            bom_options=pd.DataFrame(),
+        )
+
+        with pd.ExcelFile(out, engine="openpyxl") as xls:
+            exported = {
+                name: pd.read_excel(xls, sheet_name=name)
+                for name in (
+                    "Products", "Comparison", "Components", "BOM_Options",
+                    "Final_Assemblies", "Final_Set_Details",
+                    "Cplus_Compatible_Grate_Evidence",
+                    "Comparison_flow_head_10mm", "Comparison_flow_head_20mm",
+                )
+            }
+
+        prefix = "aco-assembled-showerdrain-cplus-"
+        assert len(exported["Cplus_Compatible_Grate_Evidence"]) == 30
+        assert len(exported["Components"]) == 16
+        assert set(grate_components["product_id"]).issubset(set(exported["Components"]["product_id"]))
+        cplus_bom = exported["BOM_Options"][
+            exported["BOM_Options"]["product_family"].eq("showerdrain_cplus")
+        ]
+        assert len(cplus_bom) == 30
+        assert cplus_bom["component_id"].isin(set(exported["Components"]["product_id"])).all()
+        for sheet_name in (
+            "Products", "Comparison", "Final_Assemblies", "Final_Set_Details",
+            "Comparison_flow_head_10mm", "Comparison_flow_head_20mm",
+        ):
+            id_column = "assembled_product_id" if sheet_name == "Final_Set_Details" else "product_id"
+            assert exported[sheet_name][id_column].fillna("").astype(str).str.startswith(prefix).sum() == 30
+
+
+def test_streamlit_export_entrypoint_reaches_cplus_production_baseline():
+    """Exercise the real app contract from the 50/32/221 pre-C+ baseline."""
+    from src.app_export import export_streamlit_workbook
+    from tools.report_cplus_compatible_grate_evidence import _fallback_products_and_components
+
+    with tempfile.TemporaryDirectory() as td:
+        template = Path(td) / "template.xlsx"
+        out = Path(td) / "benchmark_output.xlsx"
+        wb = openpyxl.Workbook()
+        wb.active.title = "Candidates_All"
+        for name in ["Excluded", "Products", "BOM_Options", "Components", "Evidence", "Comparison"]:
+            wb.create_sheet(name)
+        wb.save(template)
+        wb.close()
+
+        bases, grates = _fallback_products_and_components(pd.DataFrame(), pd.DataFrame())
+        bases["manufacturer"] = ""
+        existing_assemblies = pd.DataFrame([
+            {
+                "manufacturer": "",
+                "product_id": f"aco-assembled-easyflowplus-existing-{index}__component-{index}",
+                "product_name": f"Existing assembly {index}",
+                "candidate_type": "drain",
+                "product_family": "easyflowplus",
+                "complete_system": "yes",
+                "system_role": "assembled_system",
+                "assembled_from_bom": True,
+                "ready_for_benchmark": True,
+                "ready_for_customer_view": True,
+                "flow_rate_lps": 0.8,
+                "water_seal_mm": "50",
+                "outlet_dn": "DN50",
+                "height_adj_min_mm": "80",
+                "height_adj_max_mm": "128",
+            }
+            for index in range(32)
+        ])
+        regular_products = pd.DataFrame([
+            {
+                "manufacturer": "",
+                "product_id": f"regular-product-{index}",
+                "product_name": f"Regular product {index}",
+                "candidate_type": "drain",
+            }
+            for index in range(16)
+        ])
+        product_component_sentinel = pd.DataFrame([{
+            "manufacturer": "",
+            "product_id": "dummy-component-0",
+            "product_name": "Products component sentinel",
+            "candidate_type": "component",
+            "complete_system": "component/base-set",
+            "system_role": "base_set",
+        }])
+        products = pd.concat(
+            [bases, existing_assemblies, regular_products, product_component_sentinel],
+            ignore_index=True,
+            sort=False,
+        )
+        comparison = pd.concat(
+            [bases, existing_assemblies, regular_products], ignore_index=True, sort=False
+        )
+
+        grates["manufacturer"] = ""
+        dummy_components = pd.DataFrame([
+            {
+                "manufacturer": "other",
+                "product_id": f"dummy-component-{index}",
+                "product_name": f"Dummy component {index}",
+                "candidate_type": "component",
+                "system_role": "accessory",
+                "why_not_product_reason": "accessory_only",
+            }
+            for index in range(85)
+        ])
+        excluded = pd.concat([grates, dummy_components], ignore_index=True, sort=False)
+        excluded["why_not_product_reason"] = excluded["why_not_product_reason"].fillna("cover_only_component")
+        bom_options = pd.DataFrame([
+            {
+                "manufacturer": "other",
+                "product_id": f"regular-product-{index % 16}",
+                "component_id": f"dummy-component-{index % 85}",
+                "option_type": "optional_accessory",
+            }
+            for index in range(221)
+        ])
+        registry = pd.DataFrame([
+            {"manufacturer": "other", "product_id": f"candidate-{index}"}
+            for index in range(118)
+        ])
+
+        export_streamlit_workbook(
+            template,
+            out,
+            default_config(),
+            registry=registry,
+            products=products,
+            comparison=comparison,
+            excluded=excluded,
+            evidence=pd.DataFrame(),
+            bom_options=bom_options,
+        )
+
+        with pd.ExcelFile(out, engine="openpyxl") as xls:
+            counts = {
+                name: len(pd.read_excel(xls, sheet_name=name))
+                for name in (
+                    "Products", "Comparison", "Scoring_Field_Coverage", "Components",
+                    "BOM_Options", "Final_Assemblies", "Final_Set_Details",
+                    "Cplus_Compatible_Grate_Evidence", "Comparison_flow_head_10mm",
+                    "Comparison_flow_head_20mm",
+                )
+            }
+            products_out = pd.read_excel(xls, sheet_name="Products")
+            bom_out = pd.read_excel(xls, sheet_name="BOM_Options")
+
+        print("Streamlit app export counts:", counts)
+        assert counts == {
+            "Products": 80,
+            "Comparison": 80,
+            "Scoring_Field_Coverage": 80,
+            "Components": 100,
+            "BOM_Options": 251,
+            "Final_Assemblies": 62,
+            "Final_Set_Details": 62,
+            "Cplus_Compatible_Grate_Evidence": 30,
+            "Comparison_flow_head_10mm": 80,
+            "Comparison_flow_head_20mm": 80,
+        }
+        prefix = "aco-assembled-showerdrain-cplus-"
+        assert products_out["product_id"].astype(str).str.startswith(prefix).sum() == 30
+        assert (
+            bom_out.get("product_family", pd.Series("", index=bom_out.index))
+            .fillna("").eq("showerdrain_cplus").sum()
+            == 30
+        )
+
+
+def test_streamlit_app_uses_shared_workbook_export_entrypoint():
+    app_source = (Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8")
+    assert "from src.app_export import export_streamlit_workbook" in app_source
+    assert "export_streamlit_workbook(" in app_source
+    assert "components_df=None" not in app_source
