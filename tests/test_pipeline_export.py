@@ -1938,3 +1938,85 @@ class PipelineExportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_export_promotes_exact_cplus_explicit_matrix_rows():
+    from tools.report_cplus_compatible_grate_evidence import _fallback_products_and_components
+
+    with tempfile.TemporaryDirectory() as td:
+        template = Path(td) / "template.xlsx"
+        out = Path(td) / "cplus.xlsx"
+        wb = openpyxl.Workbook()
+        wb.active.title = "Candidates_All"
+        for name in ["Excluded", "Products", "BOM_Options", "Components", "Evidence", "Comparison"]:
+            wb.create_sheet(name)
+        wb.save(template)
+        wb.close()
+
+        products, components = _fallback_products_and_components(pd.DataFrame(), pd.DataFrame())
+        export_excel(
+            template,
+            out,
+            default_config(),
+            products_df=products,
+            comparison_df=products.copy(),
+            components_df=components,
+            bom_options_df=pd.DataFrame(),
+        )
+
+        with pd.ExcelFile(out, engine="openpyxl") as xls:
+            sheets = {name: pd.read_excel(xls, sheet_name=name) for name in [
+                "Products", "Comparison", "BOM_Options", "Final_Assemblies",
+                "Final_Set_Details", "Cplus_Compatible_Grate_Evidence",
+                "Comparison_flow_head_10mm", "Comparison_flow_head_20mm",
+            ]}
+
+        prefix = "aco-assembled-showerdrain-cplus-"
+        cplus_products = sheets["Products"][sheets["Products"]["product_id"].astype(str).str.startswith(prefix)]
+        cplus_comparison = sheets["Comparison"][sheets["Comparison"]["product_id"].astype(str).str.startswith(prefix)]
+        cplus_final = sheets["Final_Assemblies"][sheets["Final_Assemblies"]["assembled_family"].eq("showerdrain_cplus")]
+        cplus_details = sheets["Final_Set_Details"][sheets["Final_Set_Details"]["assembled_family"].eq("showerdrain_cplus")]
+        cplus_bom = sheets["BOM_Options"][sheets["BOM_Options"]["product_family"].eq("showerdrain_cplus")]
+
+        assert len(cplus_products) == len(cplus_comparison) == len(cplus_final) == len(cplus_details) == 30
+        assert cplus_details["ready_for_benchmark"].eq(True).all()
+        assert cplus_details["ready_for_customer_view"].eq(False).all()
+        assert cplus_details["compatibility_evidence_type"].eq("explicit_catalog_matrix").all()
+        assert cplus_details["compatibility_confidence"].eq("high").all()
+        assert cplus_details["component_role"].eq("grate").all()
+        assert len(cplus_bom) == 30
+        assert len(sheets["Cplus_Compatible_Grate_Evidence"]) == 30
+        assert cplus_products["product_id"].is_unique
+        assert cplus_products["base_id"].ne("").all()
+        assert cplus_products["grate_id"].ne("").all()
+        assert cplus_products["compatibility_evidence_type"].eq("explicit_catalog_matrix").all()
+        assert cplus_products["compatibility_confidence"].eq("high").all()
+        assert cplus_products["ready_for_benchmark"].eq(True).all()
+        assert cplus_products["ready_for_customer_view"].eq(False).all()
+        assert cplus_products["customer_view_enabled"].eq(False).all()
+        assert cplus_products["data_quality_status"].eq("explicit_source_ready_production_assembly").all()
+        assert ~cplus_products["grate_article_number"].astype(str).str.startswith("9010.85.").any()
+        assert ~cplus_products["product_name"].astype(str).str.contains("Tile", case=False).any()
+        assert ~(cplus_products["base_id"] == cplus_products["grate_id"]).any()
+
+        standard = cplus_products[cplus_products["base_id"].eq("aco-showerdrain-cplus-standard-h92")]
+        low = cplus_products[cplus_products["base_id"].eq("aco-showerdrain-cplus-low-h69")]
+        assert len(standard) == len(low) == 15
+        assert standard["flow_rate_lps"].eq(0.91).all()
+        assert standard["water_seal_mm"].eq(50).all()
+        assert standard["outlet_dn"].eq("DN50").all()
+        assert standard["height_adj_min_mm"].eq(80).all()
+        assert standard["height_adj_max_mm"].eq(128).all()
+        assert low["flow_rate_lps"].eq(0.62).all()
+        assert low["water_seal_mm"].eq(25).all()
+        assert low["outlet_dn"].eq("DN40").all()
+        assert low["height_adj_min_mm"].eq(57).all()
+        assert low["height_adj_max_mm"].eq(128).all()
+
+        for sheet_name in ("Comparison_flow_head_10mm", "Comparison_flow_head_20mm"):
+            scenario = sheets[sheet_name][sheets[sheet_name]["product_id"].astype(str).str.startswith(prefix)]
+            assert len(scenario) == 30
+            assert scenario["flow_rate_resolution_source"].eq("scalar_unconditional").all()
+            assert scenario["flow_rate_resolution_status"].eq("resolved_from_scalar").all()
+            assert scenario["scenario_ready_for_benchmark"].eq(True).all()
+            assert scenario["scenario_blocked_reason"].isna().all() | scenario["scenario_blocked_reason"].eq("").all()
