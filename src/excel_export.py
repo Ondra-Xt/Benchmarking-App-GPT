@@ -1665,6 +1665,7 @@ def export_excel(
     excluded_df = pd.DataFrame() if excluded_df is None else excluded_df.copy()
     evidence_df = pd.DataFrame() if evidence_df is None else evidence_df.copy()
     bom_options_df = pd.DataFrame() if bom_options_df is None else bom_options_df.copy()
+    explicit_components_provided = components_df is not None and not components_df.empty
     components_df = pd.DataFrame() if components_df is None else components_df.copy()
 
     # Odstranit staré template listy, které už nemají být součástí hlavního scoringu.
@@ -1675,44 +1676,44 @@ def export_excel(
             ws_old = wb[obsolete_sheet]
             wb.remove(ws_old)
 
-    # --- AUTO split base_set/component -> Components ---
-    if not products_df.empty and components_df.empty:
-        df = products_df.copy()
+    # Streamlit passes ``components_df=None`` and stores component-only pipeline rows
+    # in Excluded.  Materialize component candidates from both Products and Excluded:
+    # a small Products-derived subset must not prevent the complete Excluded component
+    # set (including the 15 article-backed C/C+ grates) from reaching C+ promotion.
+    if not explicit_components_provided:
+        component_frames: list[pd.DataFrame] = []
+        if not products_df.empty:
+            df = products_df.copy()
+            cand = df.get("candidate_type", pd.Series([""] * len(df), index=df.index)).astype(str).str.lower()
+            complete = df.get("complete_system", pd.Series([""] * len(df), index=df.index)).astype(str).str.lower()
+            is_component = (
+                cand.isin(["base_set", "component"])
+                | complete.str.contains("component/base-set", na=False)
+                | complete.str.contains("component", na=False)
+            )
+            component_frames.append(df[is_component].copy())
+            products_df = df[~is_component].copy()
 
-        if "candidate_type" in df.columns:
-            cand = df["candidate_type"].astype(str).str.lower()
-        else:
-            cand = pd.Series([""] * len(df), index=df.index)
+        if not excluded_df.empty:
+            ex = excluded_df.copy()
+            cand = ex.get("candidate_type", pd.Series([""] * len(ex), index=ex.index)).astype(str).str.lower()
+            role = ex.get("system_role", pd.Series([""] * len(ex), index=ex.index)).astype(str).str.lower()
+            why = ex.get("why_not_product_reason", pd.Series([""] * len(ex), index=ex.index)).astype(str).str.lower()
+            status = ex.get("current_status", pd.Series([""] * len(ex), index=ex.index)).astype(str).str.lower()
+            is_component = (
+                cand.isin(["component", "base_set"])
+                | role.isin(["grate", "accessory", "optional_accessory"])
+                | why.isin({"cover_only_component", "accessory_only", "component_not_final_product", "configuration_family_not_final_product", "incomplete_assembly"})
+                | status.str.contains("component", na=False)
+            )
+            component_frames.append(ex[is_component].copy())
 
-        if "complete_system" in df.columns:
-            comp = df["complete_system"].astype(str).str.lower()
-        else:
-            comp = pd.Series([""] * len(df), index=df.index)
-
-        is_component = (
-            cand.isin(["base_set", "component"])
-            | comp.str.contains("component/base-set", na=False)
-            | comp.str.contains("component", na=False)
-        )
-
-        components_df = df[is_component].copy()
-        products_df = df[~is_component].copy()
-
-    # If components are intentionally excluded from Products (e.g., ACO component-only rows),
-    # materialize them into Components from Excluded when no explicit Components were provided.
-    if components_df.empty and not excluded_df.empty:
-        ex = excluded_df.copy()
-        cand = ex.get("candidate_type", pd.Series([""] * len(ex), index=ex.index)).astype(str).str.lower()
-        role = ex.get("system_role", pd.Series([""] * len(ex), index=ex.index)).astype(str).str.lower()
-        why = ex.get("why_not_product_reason", pd.Series([""] * len(ex), index=ex.index)).astype(str).str.lower()
-        status = ex.get("current_status", pd.Series([""] * len(ex), index=ex.index)).astype(str).str.lower()
-        is_component = (
-            cand.isin(["component", "base_set"])
-            | role.isin(["grate", "accessory", "optional_accessory"])
-            | why.isin({"cover_only_component", "accessory_only", "component_not_final_product", "configuration_family_not_final_product", "incomplete_assembly"})
-            | status.str.contains("component", na=False)
-        )
-        components_df = ex[is_component].copy()
+        nonempty_component_frames = [frame for frame in component_frames if not frame.empty]
+        if nonempty_component_frames:
+            components_df = pd.concat(nonempty_component_frames, ignore_index=True, sort=False)
+            if "product_id" in components_df.columns:
+                valid_ids = components_df["product_id"].fillna("").astype(str).str.strip().ne("")
+                components_df = components_df[valid_ids].drop_duplicates("product_id", keep="last").reset_index(drop=True)
 
     def write_df(sheet_name: str, df: pd.DataFrame) -> None:
         # Přepiš sheet, aby v template nezůstávaly staré/hybridní hodnoty.
