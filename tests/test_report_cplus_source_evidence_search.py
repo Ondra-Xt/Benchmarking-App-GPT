@@ -76,9 +76,10 @@ def test_synthetic_explicit_table_requires_cplus_scope_and_matching_articles(tmp
     assert mappings[0].base_article_numbers == ("9010.85.20", "9010.85.30")
 
 
-def test_main_prints_explicit_finding_without_production_generation(capsys):
+def test_main_prints_explicit_finding_with_production_generation(capsys):
     assert mod.main([]) == 0
     out = capsys.readouterr().out
     assert "Explicit article-level compatibility found: YES" in out
-    assert "C+ production assemblies generated: NO" in out
+    assert "C+ production assemblies generated: YES" in out
+    assert "Customer-facing C+ output changed: NO" in out
     assert "9010.85.20,9010.85.30 -> grate articles" in out
