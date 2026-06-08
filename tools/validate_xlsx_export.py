@@ -357,6 +357,81 @@ class CheckResult:
     detail: str
 
 
+APP_EXPORT_EXPECTED_COUNTS = {
+    "Products": 80,
+    "Comparison": 80,
+    "Scoring_Field_Coverage": 80,
+    "Candidates_All": 118,
+    "Components": 100,
+    "BOM_Options": 251,
+    "Final_Assemblies": 62,
+    "Final_Set_Details": 62,
+    "Cplus_Compatible_Grate_Evidence": 30,
+    "Comparison_flow_head_10mm": 80,
+    "Comparison_flow_head_20mm": 80,
+}
+
+APP_EXPORT_EXPECTED_ASSEMBLED_COUNTS = {
+    "aco-assembled-showerdrain-splus-": 16,
+    "aco-assembled-showerdrain-c-": 4,
+    "aco-assembled-showerdrain-mplus-": 4,
+    "aco-assembled-showerdrain-cplus-": 30,
+    "aco-assembled-showerdrain-eplus-": 0,
+    "aco-assembled-showerdrain-b-": 0,
+}
+
+
+def validate_app_export_baseline(path: str) -> Tuple[bool, List[CheckResult]]:
+    """Fast fail-closed preflight for a workbook exposed by Streamlit.
+
+    This deliberately uses fixed canonical counts rather than the current UI/session
+    membership.  A filtered connector run or stale partial session is therefore not
+    eligible for download.
+    """
+    results: List[CheckResult] = []
+    try:
+        xls = pd.ExcelFile(path, engine="openpyxl")
+    except Exception as exc:
+        return False, [CheckResult("app_export_open", False, f"{type(exc).__name__}: {exc}")]
+
+    required = list(APP_EXPORT_EXPECTED_COUNTS)
+    missing = [name for name in required if name not in xls.sheet_names]
+    results.append(CheckResult("app_export_required_sheets", not missing, f"missing={missing}"))
+    if missing:
+        xls.close()
+        return False, results
+
+    sheets = {name: pd.read_excel(xls, sheet_name=name) for name in required}
+    xls.close()
+    for name, expected in APP_EXPORT_EXPECTED_COUNTS.items():
+        actual = len(sheets[name])
+        results.append(CheckResult(
+            f"app_export_row_count:{name}", actual == expected,
+            f"actual={actual} expected={expected}",
+        ))
+
+    products = sheets["Products"]
+    product_ids = _norm_series(products, "product_id").str.lower()
+    for prefix, expected in APP_EXPORT_EXPECTED_ASSEMBLED_COUNTS.items():
+        actual = int(product_ids.str.startswith(prefix).sum())
+        results.append(CheckResult(
+            f"app_export_assembled_count:{prefix}", actual == expected,
+            f"actual={actual} expected={expected}",
+        ))
+
+    bom = sheets["BOM_Options"]
+    cplus_bom = (
+        _norm_series(bom, "option_type").str.lower().eq("compatible_grate")
+        & _norm_series(bom, "product_family").str.lower().eq("showerdrain_cplus")
+    )
+    actual_cplus_bom = int(cplus_bom.sum())
+    results.append(CheckResult(
+        "app_export_cplus_bom_count", actual_cplus_bom == 30,
+        f"actual={actual_cplus_bom} expected=30",
+    ))
+    return all(result.passed for result in results), results
+
+
 def _norm_series(df: pd.DataFrame, col: str) -> pd.Series:
     if col not in df.columns:
         return pd.Series([""] * len(df), index=df.index, dtype=str)

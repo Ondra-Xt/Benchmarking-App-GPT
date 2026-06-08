@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import openpyxl
 import pandas as pd
+import pytest
 
 from src.config import default_config
 from src.excel_export import export_excel
@@ -2022,9 +2023,8 @@ def test_export_promotes_exact_cplus_explicit_matrix_rows():
             assert scenario["scenario_blocked_reason"].isna().all() | scenario["scenario_blocked_reason"].eq("").all()
 
 
-def test_streamlit_export_entrypoint_materializes_all_excluded_cplus_components():
+def test_exporter_materializes_all_excluded_cplus_components():
     """Regression: a Products component subset must not hide Excluded grates."""
-    from src.app_export import export_streamlit_workbook
     from tools.report_cplus_compatible_grate_evidence import _fallback_products_and_components
 
     with tempfile.TemporaryDirectory() as td:
@@ -2055,16 +2055,17 @@ def test_streamlit_export_entrypoint_materializes_all_excluded_cplus_components(
         excluded = grate_components.copy()
         excluded["why_not_product_reason"] = "cover_only_component"
 
-        export_streamlit_workbook(
+        export_excel(
             template,
             out,
             default_config(),
-            registry=pd.DataFrame([{"manufacturer": "aco", "product_id": "aco-context"}]),
-            products=products,
-            comparison=comparison,
-            excluded=excluded,
-            evidence=pd.DataFrame(),
-            bom_options=pd.DataFrame(),
+            registry_df=pd.DataFrame([{"manufacturer": "aco", "product_id": "aco-context"}]),
+            products_df=products,
+            comparison_df=comparison,
+            excluded_df=excluded,
+            evidence_df=pd.DataFrame(),
+            bom_options_df=pd.DataFrame(),
+            components_df=None,
         )
 
         with pd.ExcelFile(out, engine="openpyxl") as xls:
@@ -2095,127 +2096,29 @@ def test_streamlit_export_entrypoint_materializes_all_excluded_cplus_components(
             assert exported[sheet_name][id_column].fillna("").astype(str).str.startswith(prefix).sum() == 30
 
 
-def test_streamlit_export_entrypoint_reaches_cplus_production_baseline():
-    """Exercise the real app contract from the 50/32/221 pre-C+ baseline."""
-    from src.app_export import export_streamlit_workbook
-    from tools.report_cplus_compatible_grate_evidence import _fallback_products_and_components
-
-    with tempfile.TemporaryDirectory() as td:
-        template = Path(td) / "template.xlsx"
-        out = Path(td) / "benchmark_output.xlsx"
-        wb = openpyxl.Workbook()
-        wb.active.title = "Candidates_All"
-        for name in ["Excluded", "Products", "BOM_Options", "Components", "Evidence", "Comparison"]:
-            wb.create_sheet(name)
-        wb.save(template)
-        wb.close()
-
-        bases, grates = _fallback_products_and_components(pd.DataFrame(), pd.DataFrame())
-        bases["manufacturer"] = ""
-        existing_assemblies = pd.DataFrame([
-            {
-                "manufacturer": "",
-                "product_id": f"aco-assembled-easyflowplus-existing-{index}__component-{index}",
-                "product_name": f"Existing assembly {index}",
-                "candidate_type": "drain",
-                "product_family": "easyflowplus",
-                "complete_system": "yes",
-                "system_role": "assembled_system",
-                "assembled_from_bom": True,
-                "ready_for_benchmark": True,
-                "ready_for_customer_view": True,
-                "flow_rate_lps": 0.8,
-                "water_seal_mm": "50",
-                "outlet_dn": "DN50",
-                "height_adj_min_mm": "80",
-                "height_adj_max_mm": "128",
-            }
-            for index in range(32)
-        ])
-        regular_products = pd.DataFrame([
-            {
-                "manufacturer": "",
-                "product_id": f"regular-product-{index}",
-                "product_name": f"Regular product {index}",
-                "candidate_type": "drain",
-            }
-            for index in range(16)
-        ])
-        product_component_sentinel = pd.DataFrame([{
-            "manufacturer": "",
-            "product_id": "dummy-component-0",
-            "product_name": "Products component sentinel",
-            "candidate_type": "component",
-            "complete_system": "component/base-set",
-            "system_role": "base_set",
-        }])
-        products = pd.concat(
-            [bases, existing_assemblies, regular_products, product_component_sentinel],
-            ignore_index=True,
-            sort=False,
-        )
-        comparison = pd.concat(
-            [bases, existing_assemblies, regular_products], ignore_index=True, sort=False
-        )
-
-        grates["manufacturer"] = ""
-        dummy_components = pd.DataFrame([
-            {
-                "manufacturer": "other",
-                "product_id": f"dummy-component-{index}",
-                "product_name": f"Dummy component {index}",
-                "candidate_type": "component",
-                "system_role": "accessory",
-                "why_not_product_reason": "accessory_only",
-            }
-            for index in range(85)
-        ])
-        excluded = pd.concat([grates, dummy_components], ignore_index=True, sort=False)
-        excluded["why_not_product_reason"] = excluded["why_not_product_reason"].fillna("cover_only_component")
-        bom_options = pd.DataFrame([
-            {
-                "manufacturer": "other",
-                "product_id": f"regular-product-{index % 16}",
-                "component_id": f"dummy-component-{index % 85}",
-                "option_type": "optional_accessory",
-            }
-            for index in range(221)
-        ])
-        registry = pd.DataFrame([
-            {"manufacturer": "other", "product_id": f"candidate-{index}"}
-            for index in range(118)
-        ])
-
-        export_streamlit_workbook(
-            template,
-            out,
-            default_config(),
-            registry=registry,
-            products=products,
-            comparison=comparison,
-            excluded=excluded,
-            evidence=pd.DataFrame(),
-            bom_options=bom_options,
-        )
-
-        with pd.ExcelFile(out, engine="openpyxl") as xls:
-            counts = {
-                name: len(pd.read_excel(xls, sheet_name=name))
-                for name in (
-                    "Products", "Comparison", "Scoring_Field_Coverage", "Components",
-                    "BOM_Options", "Final_Assemblies", "Final_Set_Details",
-                    "Cplus_Compatible_Grate_Evidence", "Comparison_flow_head_10mm",
-                    "Comparison_flow_head_20mm",
-                )
-            }
-            products_out = pd.read_excel(xls, sheet_name="Products")
-            bom_out = pd.read_excel(xls, sheet_name="BOM_Options")
-
-        print("Streamlit app export counts:", counts)
-        assert counts == {
+def _write_app_preflight_workbook(path: Path, *, partial: bool = False) -> None:
+    if partial:
+        counts = {
+            "Products": 34,
+            "Comparison": 34,
+            "Scoring_Field_Coverage": 34,
+            "Candidates_All": 106,
+            "Components": 88,
+            "BOM_Options": 72,
+            "Final_Assemblies": 16,
+            "Final_Set_Details": 16,
+            "Cplus_Compatible_Grate_Evidence": 2,
+            "Comparison_flow_head_10mm": 34,
+            "Comparison_flow_head_20mm": 34,
+        }
+        products = pd.DataFrame({"product_id": [f"partial-{index}" for index in range(34)]})
+        bom = pd.DataFrame({"option_type": ["optional_accessory"] * 72})
+    else:
+        counts = {
             "Products": 80,
             "Comparison": 80,
             "Scoring_Field_Coverage": 80,
+            "Candidates_All": 118,
             "Components": 100,
             "BOM_Options": 251,
             "Final_Assemblies": 62,
@@ -2224,17 +2127,140 @@ def test_streamlit_export_entrypoint_reaches_cplus_production_baseline():
             "Comparison_flow_head_10mm": 80,
             "Comparison_flow_head_20mm": 80,
         }
-        prefix = "aco-assembled-showerdrain-cplus-"
-        assert products_out["product_id"].astype(str).str.startswith(prefix).sum() == 30
-        assert (
-            bom_out.get("product_family", pd.Series("", index=bom_out.index))
-            .fillna("").eq("showerdrain_cplus").sum()
-            == 30
+        product_ids = (
+            [f"aco-assembled-showerdrain-splus-base-{index}__drain-{index}" for index in range(16)]
+            + [f"aco-assembled-showerdrain-c-base-{index}__grate-{index}" for index in range(4)]
+            + [f"aco-assembled-showerdrain-mplus-channel__drain-{index}__grate" for index in range(4)]
+            + [f"aco-assembled-showerdrain-cplus-base-{index}__grate-{index}" for index in range(30)]
+            + [f"canonical-product-{index}" for index in range(26)]
         )
+        products = pd.DataFrame({"product_id": product_ids})
+        bom = pd.DataFrame([
+            {
+                "option_type": "compatible_grate",
+                "product_family": "showerdrain_cplus",
+            }
+            for _ in range(30)
+        ] + [
+            {"option_type": "optional_accessory", "product_family": "other"}
+            for _ in range(221)
+        ])
+
+    frames = {
+        "Products": products,
+        "Comparison": pd.DataFrame({"product_id": products["product_id"].tolist()[:counts["Comparison"]]}),
+        "Scoring_Field_Coverage": pd.DataFrame({"product_id": range(counts["Scoring_Field_Coverage"])}),
+        "Candidates_All": pd.DataFrame({"product_id": range(counts["Candidates_All"])}),
+        "Components": pd.DataFrame({"product_id": range(counts["Components"])}),
+        "BOM_Options": bom,
+        "Final_Assemblies": pd.DataFrame({"product_id": range(counts["Final_Assemblies"])}),
+        "Final_Set_Details": pd.DataFrame({"set_id": range(counts["Final_Set_Details"])}),
+        "Cplus_Compatible_Grate_Evidence": pd.DataFrame({"set_id": range(counts["Cplus_Compatible_Grate_Evidence"])}),
+        "Comparison_flow_head_10mm": pd.DataFrame({"product_id": range(counts["Comparison_flow_head_10mm"])}),
+        "Comparison_flow_head_20mm": pd.DataFrame({"product_id": range(counts["Comparison_flow_head_20mm"])}),
+    }
+    with pd.ExcelWriter(path, engine="openpyxl") as writer:
+        for name, frame in frames.items():
+            frame.to_excel(writer, sheet_name=name, index=False)
+
+
+def test_streamlit_export_blocks_partial_34_16_72_session(monkeypatch, tmp_path):
+    from src import app_export
+
+    destination = tmp_path / "benchmark_output.xlsx"
+
+    def write_partial(_template, temporary, _cfg, **_kwargs):
+        _write_app_preflight_workbook(Path(temporary), partial=True)
+
+    monkeypatch.setattr(app_export, "export_excel", write_partial)
+    with pytest.raises(app_export.AppExportValidationError) as exc_info:
+        app_export.export_streamlit_workbook(
+            "template.xlsx",
+            destination,
+            default_config(),
+            registry=pd.DataFrame(), products=pd.DataFrame(), comparison=pd.DataFrame(),
+            excluded=pd.DataFrame(), evidence=pd.DataFrame(), bom_options=pd.DataFrame(),
+        )
+
+    message = str(exc_info.value)
+    assert "current Streamlit session is not the canonical full benchmark state" in message
+    assert "Products: actual=34 expected=80" in message
+    assert "BOM_Options: actual=72 expected=251" in message
+    assert "Final_Assemblies: actual=16 expected=62" in message
+    assert not destination.exists()
+    assert not list(tmp_path.glob("*.tmp.xlsx"))
+
+
+def test_streamlit_export_publishes_only_canonical_80_62_251_workbook(monkeypatch, tmp_path):
+    from src import app_export
+    from tools.validate_xlsx_export import validate_app_export_baseline
+
+    destination = tmp_path / "benchmark_output.xlsx"
+
+    def write_canonical(_template, temporary, _cfg, **_kwargs):
+        _write_app_preflight_workbook(Path(temporary), partial=False)
+
+    full_validator_calls = []
+
+    def accept_full_validator(path):
+        full_validator_calls.append(path)
+        return True, []
+
+    monkeypatch.setattr(app_export, "export_excel", write_canonical)
+    monkeypatch.setattr(app_export, "validate_xlsx", accept_full_validator)
+    app_export.export_streamlit_workbook(
+        "template.xlsx",
+        destination,
+        default_config(),
+        registry=pd.DataFrame(), products=pd.DataFrame(), comparison=pd.DataFrame(),
+        excluded=pd.DataFrame(), evidence=pd.DataFrame(), bom_options=pd.DataFrame(),
+    )
+
+    assert destination.exists()
+    assert len(full_validator_calls) == 1
+    assert full_validator_calls[0] != str(destination)
+    passed, results = validate_app_export_baseline(str(destination))
+    assert passed, [f"{result.name}: {result.detail}" for result in results if not result.passed]
+    details = {result.name: result.detail for result in results}
+    assert details["app_export_row_count:Products"] == "actual=80 expected=80"
+    assert details["app_export_row_count:BOM_Options"] == "actual=251 expected=251"
+    assert details["app_export_row_count:Final_Assemblies"] == "actual=62 expected=62"
+    assert details["app_export_assembled_count:aco-assembled-showerdrain-splus-"] == "actual=16 expected=16"
+    assert details["app_export_assembled_count:aco-assembled-showerdrain-cplus-"] == "actual=30 expected=30"
 
 
 def test_streamlit_app_uses_shared_workbook_export_entrypoint():
     app_source = (Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8")
-    assert "from src.app_export import export_streamlit_workbook" in app_source
+    assert "from src.app_export import AppExportValidationError, export_streamlit_workbook" in app_source
     assert "export_streamlit_workbook(" in app_source
+    assert "except AppExportValidationError" in app_source
+    assert "st.error(str(exc))" in app_source
+    assert "st.stop()" in app_source
     assert "components_df=None" not in app_source
+
+
+def test_streamlit_export_blocks_when_full_xlsx_validator_fails(monkeypatch, tmp_path):
+    from src import app_export
+    from tools.validate_xlsx_export import CheckResult
+
+    destination = tmp_path / "benchmark_output.xlsx"
+
+    def write_canonical(_template, temporary, _cfg, **_kwargs):
+        _write_app_preflight_workbook(Path(temporary), partial=False)
+
+    monkeypatch.setattr(app_export, "export_excel", write_canonical)
+    monkeypatch.setattr(
+        app_export,
+        "validate_xlsx",
+        lambda _path: (False, [CheckResult("full_validator_guard", False, "OVERALL would fail")]),
+    )
+
+    with pytest.raises(app_export.AppExportValidationError, match="full_validator_guard"):
+        app_export.export_streamlit_workbook(
+            "template.xlsx",
+            destination,
+            default_config(),
+            registry=pd.DataFrame(), products=pd.DataFrame(), comparison=pd.DataFrame(),
+            excluded=pd.DataFrame(), evidence=pd.DataFrame(), bom_options=pd.DataFrame(),
+        )
+    assert not destination.exists()
