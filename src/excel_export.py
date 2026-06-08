@@ -95,6 +95,16 @@ FINAL_SET_DETAILS_COLUMNS = [
     "component_id",
     "component_role",
     "component_family",
+    "base_article_number",
+    "base_source_url",
+    "grate_id",
+    "grate_article_number",
+    "grate_source_url",
+    "source_text_or_reason",
+    "compatibility_evidence_type",
+    "compatibility_confidence",
+    "assembly_model",
+    "assembled_from_bom",
     "flow_rate_lps",
     "water_seal_mm",
     "outlet_dn",
@@ -320,6 +330,8 @@ def _assembled_family(product_id: Any) -> str:
     pid = str(product_id or "")
     if pid.startswith("aco-assembled-showerdrain-mplus-"):
         return "showerdrain_mplus"
+    if pid.startswith("aco-assembled-showerdrain-cplus-"):
+        return "showerdrain_cplus"
     if pid.startswith("aco-assembled-easyflowplus-"):
         return "easyflowplus"
     if pid.startswith("aco-assembled-easyflow-"):
@@ -342,6 +354,8 @@ def _missing_final_assembly_technical_fields(row: pd.Series) -> list[str]:
 def _final_assembly_data_quality_status(missing_fields: list[str], family: str = "") -> str:
     if family == "showerdrain_mplus":
         return MPLUS_FINAL_DATA_QUALITY_STATUS
+    if family == "showerdrain_cplus" and not missing_fields:
+        return "explicit_source_ready_production_assembly"
     if not missing_fields:
         return "complete"
     if len(missing_fields) == len(FINAL_ASSEMBLIES_REQUIRED_TECHNICAL_FIELDS):
@@ -352,6 +366,11 @@ def _final_assembly_data_quality_status(missing_fields: list[str], family: str =
 def _final_assembly_source_status_note(family: str, missing_fields: list[str]) -> str:
     if family == "showerdrain_mplus":
         return MPLUS_PRODUCTION_STATUS_NOTE
+    if family == "showerdrain_cplus" and not missing_fields:
+        return (
+            "explicit C+ catalog matrix on pages 25-26; protected C+ body and stainless "
+            "grate articles are compatible only at equal nominal length"
+        )
     if not missing_fields:
         return "complete technical data"
     if family == "easyflow" and EASYFLOW_AMBIGUOUS_TECHNICAL_FIELDS.issubset(set(missing_fields)):
@@ -370,6 +389,7 @@ def _parse_final_set_parts(product_id: Any, family: str) -> tuple[str, str]:
         "showerdrain_c": "aco-assembled-showerdrain-c-",
         "showerdrain_splus": "aco-assembled-showerdrain-splus-",
         "showerdrain_mplus": "aco-assembled-showerdrain-mplus-",
+        "showerdrain_cplus": "aco-assembled-showerdrain-cplus-",
     }
     prefix = family_prefixes.get(str(family or ""), ASSEMBLED_PREFIX)
     remainder = pid[len(prefix):] if pid.startswith(prefix) else pid[len(ASSEMBLED_PREFIX):]
@@ -443,6 +463,11 @@ def _extract_final_set_details(
     assembled_mask = final_assemblies_df.get(product_col, pd.Series([""] * len(final_assemblies_df), index=final_assemblies_df.index)).fillna("").astype(str).str.startswith(ASSEMBLED_PREFIX)
     final_assemblies_df = final_assemblies_df[assembled_mask].copy()
     bom_lookup = _build_component_lookup(bom_options_df, components_df)
+    component_lookup = {
+        str(row.get("product_id") or "").strip(): row
+        for _, row in components_df.iterrows()
+        if str(row.get("product_id") or "").strip()
+    }
 
     rows: list[dict[str, Any]] = []
     for _, assembly in final_assemblies_df.iterrows():
@@ -456,9 +481,15 @@ def _extract_final_set_details(
             component_id = lookup.get("component_id") or component_id
             component_role = lookup.get("component_role") or ""
             component_family = lookup.get("component_family") or ""
+        component = component_lookup.get(component_id)
+        if component is not None:
+            if not _present(component_role):
+                component_role = _first_present(component, ("component_role", "system_role", "candidate_type"))
+            if not _present(component_family):
+                component_family = _first_present(component, ("component_family", "family", "product_family"))
 
         data_quality_status = str(assembly.get("data_quality_status") or "").strip().lower()
-        is_complete = data_quality_status == "complete"
+        is_complete = data_quality_status in {"complete", "explicit_source_ready_production_assembly"}
         is_easyflow_partial = assembled_family == "easyflow" and data_quality_status == "partial"
         is_mplus_conditional = assembled_family == "showerdrain_mplus"
         def _assembly_bool(value: Any, default: bool) -> bool:
@@ -487,6 +518,16 @@ def _extract_final_set_details(
             "component_id": component_id,
             "component_role": component_role,
             "component_family": component_family,
+            "base_article_number": assembly.get("base_article_number", ""),
+            "base_source_url": assembly.get("base_source_url", ""),
+            "grate_id": assembly.get("grate_id", component_id),
+            "grate_article_number": assembly.get("grate_article_number", ""),
+            "grate_source_url": assembly.get("grate_source_url", ""),
+            "source_text_or_reason": assembly.get("source_text_or_reason", ""),
+            "compatibility_evidence_type": assembly.get("compatibility_evidence_type", ""),
+            "compatibility_confidence": assembly.get("compatibility_confidence", ""),
+            "assembly_model": assembly.get("assembly_model", ""),
+            "assembled_from_bom": assembly.get("assembled_from_bom", ""),
             "flow_rate_lps": assembly.get("flow_rate_lps", ""),
             "water_seal_mm": assembly.get("water_seal_mm", ""),
             "outlet_dn": assembly.get("outlet_dn", ""),
@@ -547,7 +588,9 @@ def _extract_final_assemblies(products_df: pd.DataFrame) -> pd.DataFrame:
         index=final_assemblies.index,
     )
 
-    final_assemblies["is_complete_technical_data"] = statuses.eq("complete")
+    final_assemblies["is_complete_technical_data"] = statuses.isin({
+        "complete", "explicit_source_ready_production_assembly"
+    })
     final_assemblies["missing_technical_fields"] = missing_by_row.map(",".join)
     final_assemblies["data_quality_status"] = statuses
     final_assemblies["source_status_note"] = [
@@ -1344,6 +1387,191 @@ def _append_mplus_final_assembly_rows(
         comparison_df = pd.concat([comparison_df, pd.DataFrame(comparison_rows)], ignore_index=True, sort=False)
     return products_df, comparison_df
 
+
+
+def _bool_like(value: Any, default: bool = False) -> bool:
+    if value is None or _is_nan(value):
+        return default
+    text = str(value).strip().lower()
+    if text in {"true", "1", "yes", "y", "ja"}:
+        return True
+    if text in {"false", "0", "no", "n", "nein"}:
+        return False
+    return default
+
+
+def _cplus_assembled_product_id(base_id: Any, grate_id: Any) -> str:
+    base = str(base_id or "").strip().lower()
+    grate = str(grate_id or "").strip().lower()
+    if not base or not grate:
+        return ""
+    return f"aco-assembled-showerdrain-cplus-{base}__{grate}"
+
+
+def _append_cplus_production_rows(
+    products_df: pd.DataFrame,
+    comparison_df: pd.DataFrame,
+    bom_options_df: pd.DataFrame,
+    components_df: pd.DataFrame,
+    evidence_df: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Promote only validated explicit C+ evidence rows into production exports."""
+    products_df = pd.DataFrame() if products_df is None else products_df.copy()
+    comparison_df = pd.DataFrame() if comparison_df is None else comparison_df.copy()
+    bom_options_df = pd.DataFrame() if bom_options_df is None else bom_options_df.copy()
+    components_df = pd.DataFrame() if components_df is None else components_df.copy()
+    evidence_df = pd.DataFrame() if evidence_df is None else evidence_df.copy()
+    required = {
+        "product_family", "base_id", "grate_id", "grate_article_number",
+        "compatibility_evidence_type", "compatibility_confidence",
+        "article_level_compatibility_found", "safe_to_generate",
+        "ready_for_benchmark", "ready_for_customer_view",
+    }
+    if evidence_df.empty or not required.issubset(evidence_df.columns):
+        return products_df, comparison_df, bom_options_df
+
+    eligible = evidence_df[
+        evidence_df["product_family"].fillna("").astype(str).str.strip().eq("showerdrain_cplus")
+        & evidence_df["compatibility_evidence_type"].fillna("").astype(str).str.strip().eq("explicit_catalog_matrix")
+        & evidence_df["compatibility_confidence"].fillna("").astype(str).str.strip().eq("high")
+        & evidence_df["article_level_compatibility_found"].map(_bool_like)
+        & evidence_df["safe_to_generate"].map(_bool_like)
+        & evidence_df["ready_for_benchmark"].map(_bool_like)
+        & ~evidence_df["ready_for_customer_view"].map(_bool_like)
+    ].copy()
+    if eligible.empty:
+        return products_df, comparison_df, bom_options_df
+
+    product_lookup = {
+        str(row.get("product_id") or "").strip(): row
+        for _, row in products_df.iterrows()
+        if str(row.get("product_id") or "").strip()
+    }
+    component_lookup = {
+        str(row.get("product_id") or "").strip(): row
+        for _, row in components_df.iterrows()
+        if str(row.get("product_id") or "").strip()
+    }
+    existing_product_ids = set(product_lookup)
+    existing_comparison_ids = set(comparison_df.get("product_id", pd.Series(dtype=str)).fillna("").astype(str))
+    existing_bom_keys = {
+        (str(row.get("product_id") or "").strip(), str(row.get("component_id") or "").strip(), str(row.get("option_type") or "").strip())
+        for _, row in bom_options_df.iterrows()
+    }
+    product_rows: list[dict[str, Any]] = []
+    comparison_rows: list[dict[str, Any]] = []
+    bom_rows: list[dict[str, Any]] = []
+    seen_assembled_ids: set[str] = set()
+
+    for _, mapping in eligible.sort_values(["base_id", "grate_article_number", "grate_id"]).iterrows():
+        base_id = str(mapping.get("base_id") or "").strip()
+        grate_id = str(mapping.get("grate_id") or "").strip()
+        grate_article = str(mapping.get("grate_article_number") or "").strip()
+        if not base_id or not grate_id or base_id == grate_id or grate_id.startswith("aco-assembled-"):
+            continue
+        if not grate_article or grate_article.lower() == "nan" or grate_article.startswith("9010.85."):
+            continue
+        base = product_lookup.get(base_id)
+        grate = component_lookup.get(grate_id)
+        if base is None or grate is None:
+            continue
+        grate_role = str(grate.get("system_role") or "").strip().lower()
+        if grate_role != "grate":
+            continue
+        assembled_id = _cplus_assembled_product_id(base_id, grate_id)
+        if not assembled_id or assembled_id in seen_assembled_ids:
+            continue
+        seen_assembled_ids.add(assembled_id)
+
+        source_note = (
+            "explicit C+ catalog matrix on pages 25-26; protected C+ body and stainless "
+            "grate articles are compatible only at equal nominal length"
+        )
+        sources = " | ".join(filter(None, [
+            str(mapping.get("base_source_url") or "").strip(),
+            str(mapping.get("grate_source_url") or "").strip(),
+        ]))
+        name = f"{str(base.get('product_name') or 'ACO ShowerDrain C+').strip()} + {str(grate.get('product_name') or grate_article).strip()}"
+        row = dict(base)
+        row.update({
+            "manufacturer": "aco",
+            "product_id": assembled_id,
+            "product_name": name,
+            "candidate_type": "drain",
+            "product_family": "showerdrain_cplus",
+            "family": "showerdrain_cplus",
+            "complete_system": "yes",
+            "system_role": "assembled_system",
+            "promote_to_product": "yes",
+            "promotion_reason": "assembled_from_cplus_explicit_catalog_matrix",
+            "why_not_product_reason": "",
+            "assembly_reason": "aco_cplus_explicit_catalog_base_grate_assembly",
+            "assembly_model": "base_x_grate",
+            "assembled_from_bom": True,
+            "base_id": base_id,
+            "base_product_id": base_id,
+            "base_article_number": mapping.get("base_article_number", ""),
+            "base_source_url": mapping.get("base_source_url", ""),
+            "grate_id": grate_id,
+            "grate_component_id": grate_id,
+            "grate_article_number": grate_article,
+            "grate_source_url": mapping.get("grate_source_url", ""),
+            "matched_component_ids": f"{base_id},{grate_id}",
+            "source_text_or_reason": mapping.get("source_text_or_reason", ""),
+            "compatibility_evidence_type": "explicit_catalog_matrix",
+            "compatibility_confidence": "high",
+            "article_level_compatibility_found": True,
+            "explicit_article_matrix": True,
+            "ready_for_benchmark": True,
+            "ready_for_customer_view": False,
+            "customer_view_enabled": False,
+            "blocked_reason": "",
+            "data_quality_status": "explicit_source_ready_production_assembly",
+            "source_status_note": source_note,
+            "source_url": mapping.get("base_source_url", ""),
+            "sources": sources,
+        })
+        for field in FINAL_ASSEMBLIES_REQUIRED_TECHNICAL_FIELDS:
+            row[field] = mapping.get(field, base.get(field, ""))
+        if assembled_id not in existing_product_ids:
+            product_rows.append(row)
+            existing_product_ids.add(assembled_id)
+        if assembled_id not in existing_comparison_ids:
+            comparison_rows.append(dict(row))
+            existing_comparison_ids.add(assembled_id)
+
+        bom_key = (base_id, grate_id, "compatible_grate")
+        if bom_key not in existing_bom_keys:
+            bom_rows.append({
+                "manufacturer": "aco",
+                "product_id": base_id,
+                "base_id": base_id,
+                "component_id": grate_id,
+                "option_type": "compatible_grate",
+                "option_role": "grate",
+                "product_family": "showerdrain_cplus",
+                "parent_family": "showerdrain_cplus",
+                "option_family": "showerdrain_cplus",
+                "component_family": str(grate.get("product_family") or "showerdrain_c_article_grate"),
+                "base_article_number": mapping.get("base_article_number", ""),
+                "grate_article_number": grate_article,
+                "compatibility_evidence_type": "explicit_catalog_matrix",
+                "compatibility_confidence": "high",
+                "article_level_compatibility_found": True,
+                "source_url": mapping.get("grate_source_url", ""),
+                "source_text_or_reason": mapping.get("source_text_or_reason", ""),
+                "option_meta": "compatibility_confidence=high; explicit_article_matrix=true; equal_nominal_length=true",
+            })
+            existing_bom_keys.add(bom_key)
+
+    if product_rows:
+        products_df = pd.concat([products_df, pd.DataFrame(product_rows)], ignore_index=True, sort=False)
+    if comparison_rows:
+        comparison_df = pd.concat([comparison_df, pd.DataFrame(comparison_rows)], ignore_index=True, sort=False)
+    if bom_rows:
+        bom_options_df = pd.concat([bom_options_df, pd.DataFrame(bom_rows)], ignore_index=True, sort=False)
+    return products_df, comparison_df, bom_options_df
+
 def _extract_conditional_technical_values(mplus_compound_mappings_df: pd.DataFrame) -> pd.DataFrame:
     """Return diagnostic-only condition-specific technical values for proposal rows.
 
@@ -1437,6 +1665,7 @@ def export_excel(
     excluded_df = pd.DataFrame() if excluded_df is None else excluded_df.copy()
     evidence_df = pd.DataFrame() if evidence_df is None else evidence_df.copy()
     bom_options_df = pd.DataFrame() if bom_options_df is None else bom_options_df.copy()
+    explicit_components_provided = components_df is not None and not components_df.empty
     components_df = pd.DataFrame() if components_df is None else components_df.copy()
 
     # Odstranit staré template listy, které už nemají být součástí hlavního scoringu.
@@ -1447,44 +1676,44 @@ def export_excel(
             ws_old = wb[obsolete_sheet]
             wb.remove(ws_old)
 
-    # --- AUTO split base_set/component -> Components ---
-    if not products_df.empty and components_df.empty:
-        df = products_df.copy()
+    # Streamlit passes ``components_df=None`` and stores component-only pipeline rows
+    # in Excluded.  Materialize component candidates from both Products and Excluded:
+    # a small Products-derived subset must not prevent the complete Excluded component
+    # set (including the 15 article-backed C/C+ grates) from reaching C+ promotion.
+    if not explicit_components_provided:
+        component_frames: list[pd.DataFrame] = []
+        if not products_df.empty:
+            df = products_df.copy()
+            cand = df.get("candidate_type", pd.Series([""] * len(df), index=df.index)).astype(str).str.lower()
+            complete = df.get("complete_system", pd.Series([""] * len(df), index=df.index)).astype(str).str.lower()
+            is_component = (
+                cand.isin(["base_set", "component"])
+                | complete.str.contains("component/base-set", na=False)
+                | complete.str.contains("component", na=False)
+            )
+            component_frames.append(df[is_component].copy())
+            products_df = df[~is_component].copy()
 
-        if "candidate_type" in df.columns:
-            cand = df["candidate_type"].astype(str).str.lower()
-        else:
-            cand = pd.Series([""] * len(df), index=df.index)
+        if not excluded_df.empty:
+            ex = excluded_df.copy()
+            cand = ex.get("candidate_type", pd.Series([""] * len(ex), index=ex.index)).astype(str).str.lower()
+            role = ex.get("system_role", pd.Series([""] * len(ex), index=ex.index)).astype(str).str.lower()
+            why = ex.get("why_not_product_reason", pd.Series([""] * len(ex), index=ex.index)).astype(str).str.lower()
+            status = ex.get("current_status", pd.Series([""] * len(ex), index=ex.index)).astype(str).str.lower()
+            is_component = (
+                cand.isin(["component", "base_set"])
+                | role.isin(["grate", "accessory", "optional_accessory"])
+                | why.isin({"cover_only_component", "accessory_only", "component_not_final_product", "configuration_family_not_final_product", "incomplete_assembly"})
+                | status.str.contains("component", na=False)
+            )
+            component_frames.append(ex[is_component].copy())
 
-        if "complete_system" in df.columns:
-            comp = df["complete_system"].astype(str).str.lower()
-        else:
-            comp = pd.Series([""] * len(df), index=df.index)
-
-        is_component = (
-            cand.isin(["base_set", "component"])
-            | comp.str.contains("component/base-set", na=False)
-            | comp.str.contains("component", na=False)
-        )
-
-        components_df = df[is_component].copy()
-        products_df = df[~is_component].copy()
-
-    # If components are intentionally excluded from Products (e.g., ACO component-only rows),
-    # materialize them into Components from Excluded when no explicit Components were provided.
-    if components_df.empty and not excluded_df.empty:
-        ex = excluded_df.copy()
-        cand = ex.get("candidate_type", pd.Series([""] * len(ex), index=ex.index)).astype(str).str.lower()
-        role = ex.get("system_role", pd.Series([""] * len(ex), index=ex.index)).astype(str).str.lower()
-        why = ex.get("why_not_product_reason", pd.Series([""] * len(ex), index=ex.index)).astype(str).str.lower()
-        status = ex.get("current_status", pd.Series([""] * len(ex), index=ex.index)).astype(str).str.lower()
-        is_component = (
-            cand.isin(["component", "base_set"])
-            | role.isin(["grate", "accessory", "optional_accessory"])
-            | why.isin({"cover_only_component", "accessory_only", "component_not_final_product", "configuration_family_not_final_product", "incomplete_assembly"})
-            | status.str.contains("component", na=False)
-        )
-        components_df = ex[is_component].copy()
+        nonempty_component_frames = [frame for frame in component_frames if not frame.empty]
+        if nonempty_component_frames:
+            components_df = pd.concat(nonempty_component_frames, ignore_index=True, sort=False)
+            if "product_id" in components_df.columns:
+                valid_ids = components_df["product_id"].fillna("").astype(str).str.strip().ne("")
+                components_df = components_df[valid_ids].drop_duplicates("product_id", keep="last").reset_index(drop=True)
 
     def write_df(sheet_name: str, df: pd.DataFrame) -> None:
         # Přepiš sheet, aby v template nezůstávaly staré/hybridní hodnoty.
@@ -1520,6 +1749,17 @@ def export_excel(
             comparison_df,
             mplus_compound_mappings_df,
         )
+    # Imported lazily to avoid coupling the core exporter to the report CLI at module import time.
+    from tools.report_cplus_compatible_grate_evidence import build_export_evidence_dataframe
+
+    cplus_compatible_grate_evidence_df = build_export_evidence_dataframe(products_df, components_df)
+    products_df, comparison_df, bom_options_df = _append_cplus_production_rows(
+        products_df,
+        comparison_df,
+        bom_options_df,
+        components_df,
+        cplus_compatible_grate_evidence_df,
+    )
     final_assemblies_df = _extract_final_assemblies(products_df)
     final_set_details_df = _extract_final_set_details(final_assemblies_df, bom_options_df, components_df)
     eplus_proposal_mappings_df = _extract_eplus_proposal_mappings(
@@ -1528,10 +1768,6 @@ def export_excel(
         final_set_details_df,
     )
     conditional_technical_values_df = _extract_conditional_technical_values(mplus_compound_mappings_df)
-    # Imported lazily to avoid coupling the core exporter to the report CLI at module import time.
-    from tools.report_cplus_compatible_grate_evidence import build_export_evidence_dataframe
-
-    cplus_compatible_grate_evidence_df = build_export_evidence_dataframe(products_df, components_df)
     scoring_scenarios_df = scoring_scenarios_dataframe()
     comparison_flow_head_10mm_df = build_scenario_comparison(
         comparison_df, conditional_technical_values_df, "flow_head_10mm"

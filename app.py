@@ -14,7 +14,7 @@ import os
 from src.config import load_config, save_config, default_config, EQUIVALENCE_KEYS, FINAL_KEYS, validate_sum_100
 from src.run_manager import utc_run_id, create_run_dirs
 from src.pipeline import run_discovery, run_update
-from src.excel_export import export_excel
+from src.app_export import AppExportValidationError, export_streamlit_workbook
 from src.connectors import CONNECTORS
 from src.connectors import aco as aco_connector
 
@@ -323,16 +323,26 @@ if export_btn:
         save_config(rp.run_dir / "weights.json", cfg)
 
         out_path = rp.outputs_dir / "benchmark_output.xlsx"
-        export_excel(
-            TEMPLATE_PATH, out_path, cfg,
-            registry_df=st.session_state["registry"],
-            products_df=st.session_state["products"],
-            comparison_df=st.session_state["comparison"],
-            excluded_df=st.session_state["excluded"],
-            evidence_df=st.session_state["evidence"],
-            bom_options_df=st.session_state["bom_options"],
-            components_df=None,
-        )
+        try:
+            export_streamlit_workbook(
+                TEMPLATE_PATH,
+                out_path,
+                cfg,
+                registry=st.session_state["registry"],
+                products=st.session_state["products"],
+                comparison=st.session_state["comparison"],
+                excluded=st.session_state["excluded"],
+                evidence=st.session_state["evidence"],
+                bom_options=st.session_state["bom_options"],
+            )
+        except AppExportValidationError as exc:
+            st.error(str(exc))
+            st.warning(
+                "Download was not created. Run discovery and update with all connectors "
+                "selected, then export again."
+            )
+            st.stop()
+
         st.session_state["registry"].to_csv(rp.outputs_dir / "registry.csv", index=False)
         st.session_state["products"].to_csv(rp.outputs_dir / "products.csv", index=False)
         st.session_state["comparison"].to_csv(rp.outputs_dir / "comparison.csv", index=False)
