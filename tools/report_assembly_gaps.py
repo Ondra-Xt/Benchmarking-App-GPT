@@ -41,7 +41,7 @@ STATUS_ACTIONS = {
     "blocked_article_variant_ambiguous": "keep blocked because ambiguity remains; parse article table and resolve unique variant attribution",
     "blocked_pending_conditional_parameter_scoring": "implement scoring/export handling for conditional parameter values before production M+ assemblies",
     "blocked_proposal_only_compatibility_evidence": "collect explicit article-level base-to-grate compatibility before production generation",
-    "blocked_pending_cplus_production_assembly": "implement C+ production assembly generation in a separate reviewed patch",
+    "blocked_pending_cplus_production_assembly": "review and promote explicit C+ catalog mappings into compatible_grate BOM / final assemblies in a separate production patch",
 }
 
 
@@ -68,7 +68,11 @@ class FamilyGap:
     proposal_flow_rate_lps_10mm_head: str = ""
     proposal_flow_rate_lps_20mm_head: str = ""
     proposal_selected_default_flow_rate_lps: str = ""
+    proposal_evidence_type: str = ""
+    proposal_compatibility_confidence: str = ""
     proposal_article_level_compatibility_found: str = ""
+    proposal_customer_ready: str = ""
+    proposal_production_status_note: str = ""
     proposal_data_quality_status: str = ""
     proposal_blocking_reason: str = ""
 
@@ -84,7 +88,11 @@ class ProposalOnlyMappingSummary:
     flow_rate_lps_10mm_head: str
     flow_rate_lps_20mm_head: str
     selected_default_flow_rate_lps: str
+    evidence_type: str
+    compatibility_confidence: str
     article_level_compatibility_found: str
+    customer_ready: str
+    production_status_note: str
     data_quality_status: str
     blocking_reason: str
     recommended_next_action: str
@@ -239,13 +247,26 @@ def _proposal_mapping_summaries(*mapping_frames: pd.DataFrame) -> tuple[Proposal
                     flow_rate_lps_10mm_head=_unique_join(_norm(rows, "flow_rate_lps_10mm_head")),
                     flow_rate_lps_20mm_head=_unique_join(_norm(rows, "flow_rate_lps_20mm_head")),
                     selected_default_flow_rate_lps=_unique_join(_norm(rows, "selected_default_flow_rate_lps")),
+                    evidence_type=_unique_join(_norm(rows, "compatibility_evidence_type")),
+                    compatibility_confidence=_unique_join(_norm(rows, "compatibility_confidence")),
                     article_level_compatibility_found=_unique_join(_norm(rows, "article_level_compatibility_found")),
+                    customer_ready=_unique_join(_norm(rows, "ready_for_customer_view")),
+                    production_status_note=_unique_join(_norm(rows, "production_status_note")),
                     data_quality_status=_unique_join(_norm(rows, "data_quality_status")),
                     blocking_reason=_proposal_blocking_reason(family, rows),
                     recommended_next_action=_proposal_recommended_next_action(family, rows),
                 )
             )
     return tuple(summaries)
+
+
+def _has_explicit_cplus_catalog_evidence(proposal_mapping: ProposalOnlyMappingSummary | None) -> bool:
+    if proposal_mapping is None or proposal_mapping.safe_to_generate_count == 0:
+        return False
+    evidence_types = {value.strip() for value in proposal_mapping.evidence_type.split(",") if value.strip()}
+    confidences = {value.strip().lower() for value in proposal_mapping.compatibility_confidence.split(",") if value.strip()}
+    article_level = proposal_mapping.article_level_compatibility_found.strip().lower() in {"true", "1", "yes", "y"}
+    return "explicit_catalog_matrix" in evidence_types and "high" in confidences and article_level
 
 
 def _next_required_action(status: str, proposal_mapping: ProposalOnlyMappingSummary | None = None) -> str:
@@ -310,13 +331,13 @@ def _family_gap(
         status = "blocked_pending_conditional_parameter_scoring"
     elif current > 0:
         status = "already_active"
+    elif family == "showerdrain_cplus" and _has_explicit_cplus_catalog_evidence(proposal_mapping):
+        status = "blocked_pending_cplus_production_assembly"
     elif proposal_mapping is not None and proposal_mapping.blocked_count > 0:
         if family in {"showerdrain_eplus", "showerdrain_cplus"}:
             status = "blocked_proposal_only_compatibility_evidence"
         else:
             status = "blocked_pending_conditional_parameter_scoring"
-    elif family == "showerdrain_cplus" and proposal_mapping is not None and proposal_mapping.safe_to_generate_count > 0:
-        status = "blocked_pending_cplus_production_assembly"
     elif len(bases) == 0:
         status = "blocked_no_base_rows"
     elif len(complete_bases) == 0:
@@ -352,7 +373,11 @@ def _family_gap(
         proposal_flow_rate_lps_10mm_head=proposal_mapping.flow_rate_lps_10mm_head if proposal_mapping else "",
         proposal_flow_rate_lps_20mm_head=proposal_mapping.flow_rate_lps_20mm_head if proposal_mapping else "",
         proposal_selected_default_flow_rate_lps=proposal_mapping.selected_default_flow_rate_lps if proposal_mapping else "",
+        proposal_evidence_type=proposal_mapping.evidence_type if proposal_mapping else "",
+        proposal_compatibility_confidence=proposal_mapping.compatibility_confidence if proposal_mapping else "",
         proposal_article_level_compatibility_found=proposal_mapping.article_level_compatibility_found if proposal_mapping else "",
+        proposal_customer_ready=proposal_mapping.customer_ready if proposal_mapping else "",
+        proposal_production_status_note=proposal_mapping.production_status_note if proposal_mapping else "",
         proposal_data_quality_status=proposal_mapping.data_quality_status if proposal_mapping else "",
         proposal_blocking_reason=proposal_mapping.blocking_reason if proposal_mapping else "",
     )
@@ -499,7 +524,13 @@ def print_report(report: AssemblyGapReport) -> None:
             print(f"  flow_rate_lps_10mm_head={summary.flow_rate_lps_10mm_head or 'empty'}")
             print(f"  flow_rate_lps_20mm_head={summary.flow_rate_lps_20mm_head or 'empty'}")
             print(f"  selected_default_flow_rate_lps={selected}")
+            print(f"  evidence_type={summary.evidence_type or 'none'}")
+            print(f"  compatibility_confidence={summary.compatibility_confidence or 'none'}")
             print(f"  article_level_compatibility_found={summary.article_level_compatibility_found or 'empty'}")
+            print(f"  safe_diagnostic_mappings_available={summary.safe_to_generate_count > 0}")
+            print(f"  customer_ready={summary.customer_ready or 'empty'}")
+            print(f"  production_assemblies_generated=False")
+            print(f"  production_status_note={summary.production_status_note or 'none'}")
             print(f"  data_quality_status={summary.data_quality_status or 'empty'}")
     else:
         print("- none")
