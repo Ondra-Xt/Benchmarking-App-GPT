@@ -952,20 +952,55 @@ def test_scenario_mplus_flow_validation_rejects_wrong_explicit_value(tmp_path):
     assert not _result_for(results, "scenario_mplus_flow:Comparison_flow_head_10mm").passed
 
 
-def test_assembled_family_count_does_not_mix_showerdrain_c_and_cplus():
+def test_assembled_family_count_excludes_nonassembled_family_rows():
     mod = _load_validator_module()
-    products = pd.DataFrame({
-        "product_id": (
-            [f"aco-assembled-showerdrain-c-base-{index}__grate-{index}" for index in range(4)]
-            + [
-                f"aco-assembled-showerdrain-cplus-base-{index}__grate-{index}"
-                for index in range(30)
-            ]
-        )
-    })
+    rows = (
+        [
+            {
+                "product_id": f"aco-assembled-showerdrain-c-base-{index}__grate-{index}",
+                "product_family": "showerdrain_c",
+                "assembled_from_bom": True,
+            }
+            for index in range(4)
+        ]
+        + [
+            {
+                "product_id": f"aco-showerdrain-c-base-{index}",
+                "product_family": "showerdrain_c",
+                "assembled_from_bom": False,
+            }
+            for index in range(4)
+        ]
+        + [
+            {
+                "product_id": f"aco-assembled-showerdrain-cplus-base-{index}__grate-{index}",
+                "product_family": "showerdrain_cplus",
+                "assembled_from_bom": True,
+            }
+            for index in range(30)
+        ]
+        + [
+            {
+                "product_id": product_id,
+                "product_family": "showerdrain_cplus",
+                "assembled_from_bom": False,
+            }
+            for product_id in (
+                "aco-showerdrain-cplus-standard-h92",
+                "aco-showerdrain-cplus-low-h69",
+            )
+        ]
+        + [{
+            "product_id": "aco-showerdrain-b-base",
+            "product_family": "showerdrain_b",
+            "assembled_from_bom": False,
+        }]
+    )
 
-    families = mod._assembled_family_series(products)
+    families = mod._assembled_family_series(pd.DataFrame(rows))
 
     assert int(families.eq("showerdrain_c").sum()) == 4
     assert int(families.eq("showerdrain_cplus").sum()) == 30
-    assert int(families.eq("showerdrain_c").sum()) != 34
+    assert int(families.eq("showerdrain_b").sum()) == 0
+    assert int(families.eq("showerdrain_c").sum()) != 8
+    assert int(families.eq("showerdrain_cplus").sum()) != 32

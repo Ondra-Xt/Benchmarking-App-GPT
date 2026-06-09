@@ -2153,7 +2153,9 @@ def _write_app_preflight_workbook(path: Path, *, partial: bool = False) -> None:
         "Candidates_All": pd.DataFrame({"product_id": range(counts["Candidates_All"])}),
         "Components": pd.DataFrame({"product_id": range(counts["Components"])}),
         "BOM_Options": bom,
-        "Final_Assemblies": pd.DataFrame({"product_id": range(counts["Final_Assemblies"])}),
+        "Final_Assemblies": pd.DataFrame({
+            "product_id": products["product_id"].tolist()[:counts["Final_Assemblies"]]
+        }),
         "Final_Set_Details": pd.DataFrame({"set_id": range(counts["Final_Set_Details"])}),
         "Cplus_Compatible_Grate_Evidence": pd.DataFrame({"set_id": range(counts["Cplus_Compatible_Grate_Evidence"])}),
         "Comparison_flow_head_10mm": pd.DataFrame({"product_id": range(counts["Comparison_flow_head_10mm"])}),

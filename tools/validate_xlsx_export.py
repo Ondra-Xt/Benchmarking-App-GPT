@@ -390,13 +390,31 @@ _ASSEMBLED_PREFIX_TO_FAMILY = {
 }
 
 
-def _assembled_family_series(df: pd.DataFrame) -> pd.Series:
-    """Resolve assembled families exactly, with delimiter-safe ID fallbacks."""
+def _actual_assembly_mask(df: pd.DataFrame) -> pd.Series:
+    """Identify production assembly rows without relying on family labels."""
+    product_ids = _norm_series(df, "product_id").str.lower()
+    assembled_from_bom = _norm_series(df, "assembled_from_bom").str.lower().isin(
+        {"true", "1", "yes", "y"}
+    )
+    return product_ids.str.startswith(FINAL_ASSEMBLIES_PREFIX) | assembled_from_bom
+
+
+def _assembled_family_series(
+    df: pd.DataFrame,
+    *,
+    assume_assembled: bool = False,
+) -> pd.Series:
+    """Resolve exact families only for rows known to be production assemblies."""
     families = pd.Series("", index=df.index, dtype="object")
+    assembled_rows = (
+        pd.Series(True, index=df.index, dtype=bool)
+        if assume_assembled
+        else _actual_assembly_mask(df)
+    )
     known_families = set(APP_EXPORT_EXPECTED_ASSEMBLED_FAMILY_COUNTS)
     for column in ("assembled_family", "product_family", "family"):
         values = _norm_series(df, column).str.lower()
-        usable = families.eq("") & values.isin(known_families)
+        usable = assembled_rows & families.eq("") & values.isin(known_families)
         families.loc[usable] = values.loc[usable]
 
     product_ids = _norm_series(df, "product_id").str.lower()
@@ -411,7 +429,7 @@ def _assembled_family_series(df: pd.DataFrame) -> pd.Series:
         ("aco-assembled-showerdrain-c-", "showerdrain_c"),
     )
     for prefix, family in id_prefixes:
-        matches = families.eq("") & product_ids.str.startswith(prefix)
+        matches = assembled_rows & families.eq("") & product_ids.str.startswith(prefix)
         families.loc[matches] = family
     return families
 
@@ -445,8 +463,11 @@ def validate_app_export_baseline(path: str) -> Tuple[bool, List[CheckResult]]:
             f"actual={actual} expected={expected}",
         ))
 
-    products = sheets["Products"]
-    assembled_families = _assembled_family_series(products)
+    final_assemblies = sheets["Final_Assemblies"]
+    assembled_families = _assembled_family_series(
+        final_assemblies,
+        assume_assembled=True,
+    )
     for family, expected in APP_EXPORT_EXPECTED_ASSEMBLED_FAMILY_COUNTS.items():
         actual = int(assembled_families.eq(family).sum())
         results.append(CheckResult(
