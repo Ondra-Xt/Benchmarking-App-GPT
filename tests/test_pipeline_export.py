@@ -2233,6 +2233,8 @@ def test_streamlit_app_uses_shared_workbook_export_entrypoint():
     app_source = (Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8")
     assert "from src.app_export import AppExportValidationError, export_streamlit_workbook" in app_source
     assert "export_streamlit_workbook(" in app_source
+    assert "tools/export_canonical_aco_benchmark_xlsx.py" in app_source
+    assert "all connectors" not in app_source.lower()
     assert "except AppExportValidationError" in app_source
     assert "st.error(str(exc))" in app_source
     assert "st.stop()" in app_source

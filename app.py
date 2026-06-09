@@ -338,8 +338,9 @@ if export_btn:
         except AppExportValidationError as exc:
             st.error(str(exc))
             st.warning(
-                "Download was not created. Run discovery and update with all connectors "
-                "selected, then export again."
+                "Current session is incomplete for canonical benchmark export. Use "
+                "tools/export_canonical_aco_benchmark_xlsx.py, or run a full canonical "
+                "ACO update. No XLSX was created."
             )
             st.stop()
 

@@ -17,15 +17,20 @@ from tools.validate_xlsx_export import (
 
 
 class AppExportValidationError(RuntimeError):
-    """Raised when a Streamlit session cannot produce the canonical workbook."""
+    """Raised when export input cannot produce the canonical workbook."""
 
-    def __init__(self, results: list[CheckResult]):
+    def __init__(
+        self,
+        results: list[CheckResult],
+        *,
+        input_description: str = "current Streamlit session",
+    ):
         self.results = results
         failures = [f"{result.name}: {result.detail}" for result in results if not result.passed]
         detail = "; ".join(failures[:12]) or "unknown workbook validation failure"
         super().__init__(
-            "XLSX export blocked because the current Streamlit session is not the canonical "
-            f"full benchmark state. {detail}. Run discovery/update with all connectors, then retry."
+            f"XLSX export blocked because the {input_description} is not the canonical "
+            f"full benchmark state. {detail}. No XLSX was created."
         )
 
 
@@ -40,6 +45,7 @@ def export_streamlit_workbook(
     excluded: pd.DataFrame,
     evidence: pd.DataFrame,
     bom_options: pd.DataFrame,
+    input_description: str = "current Streamlit session",
 ) -> None:
     """Atomically export only a canonical, baseline-valid Streamlit workbook.
 
@@ -50,7 +56,6 @@ def export_streamlit_workbook(
     destination = Path(out_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(f".{destination.name}.{uuid4().hex}.tmp.xlsx")
-    destination.unlink(missing_ok=True)
     try:
         export_excel(
             str(template_path),
@@ -66,12 +71,11 @@ def export_streamlit_workbook(
         )
         passed, results = validate_app_export_baseline(str(temporary))
         if not passed:
-            raise AppExportValidationError(results)
+            raise AppExportValidationError(results, input_description=input_description)
         full_passed, full_results = validate_xlsx(str(temporary))
         if not full_passed:
-            raise AppExportValidationError(full_results)
+            raise AppExportValidationError(full_results, input_description=input_description)
         os.replace(temporary, destination)
     except Exception:
         temporary.unlink(missing_ok=True)
-        destination.unlink(missing_ok=True)
         raise
