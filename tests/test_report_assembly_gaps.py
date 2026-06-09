@@ -101,6 +101,7 @@ def test_build_report_classifies_active_ready_and_blocked_families():
         "easyflow": 1,
         "easyflowplus": 1,
         "showerdrain_mplus": 0,
+        "showerdrain_cplus": 0,
     }
     assert by_family["showerdrain_splus"].status == "already_active"
     assert by_family["showerdrain_cplus"].status == "ready_candidate"
@@ -286,60 +287,36 @@ def test_main_runs_discovery_and_pipeline_without_writing_xlsx(monkeypatch, caps
     assert "blocked_no_base_rows" in out
 
 
-def test_cplus_explicit_diagnostic_evidence_waits_for_separate_production_patch(capsys):
-    products = pd.DataFrame([
-        {"product_id": "aco-showerdrain-cplus-standard-h92", "product_family": "showerdrain_cplus", "flow_rate_lps": 0.91, "water_seal_mm": 50, "outlet_dn": "DN50", "height_adj_min_mm": 80, "height_adj_max_mm": 128},
-        {"product_id": "aco-showerdrain-cplus-low-h69", "product_family": "showerdrain_cplus", "flow_rate_lps": 0.62, "water_seal_mm": 25, "outlet_dn": "DN40", "height_adj_min_mm": 57, "height_adj_max_mm": 128},
-    ])
-    evidence = pd.DataFrame([
-        {
-            "product_family": "showerdrain_cplus",
-            "assembly_model": "base_x_grate",
-            "compatibility_evidence_type": "explicit_catalog_matrix",
-            "compatibility_confidence": "high",
-            "safe_to_generate": True,
-            "article_level_compatibility_found": True,
-            "ready_for_customer_view": False,
-            "production_status_note": "diagnostic/evidence-only; no C+ production assembly generated",
-            "data_quality_status": "explicit_source_ready_diagnostic_only",
-            "blocking_reason": "",
-            "recommended_next_action": "add only explicit C+ article-level compatible_grate rows in a separate production patch",
-        }
-    ])
-    bom = pd.DataFrame([{} for _ in range(221)])
-    final_assemblies = pd.DataFrame([{"product_id": f"existing-{index}"} for index in range(32)])
-    final_set_details = pd.DataFrame([{"product_id": f"existing-{index}"} for index in range(32)])
+def test_cplus_explicit_evidence_is_promoted_to_production(capsys):
+    from tools.report_cplus_compatible_grate_evidence import (
+        _fallback_products_and_components,
+        build_export_evidence_dataframe,
+    )
 
+    products, components = _fallback_products_and_components(pd.DataFrame(), pd.DataFrame())
+    evidence = build_export_evidence_dataframe(products, components)
     report = mod.build_report(
-        pd.DataFrame(), products, pd.DataFrame(), bom,
-        final_assemblies=final_assemblies, final_set_details=final_set_details,
+        pd.DataFrame(), products, components, pd.DataFrame(),
         cplus_compatible_grate_evidence=evidence,
     )
     cplus = {gap.family: gap for gap in report.families}["showerdrain_cplus"]
 
-    assert cplus.status == "blocked_pending_cplus_production_assembly"
-    assert "find explicit" not in cplus.next_required_action
-    assert cplus.next_required_action == (
-        "review and promote explicit C+ catalog mappings into compatible_grate BOM / final assemblies "
-        "in a separate production patch"
-    )
-    assert cplus.current_assembled_count == 0
+    assert cplus.status == "already_active"
+    assert cplus.next_required_action == "no action; existing assembled output is baseline-protected"
+    assert cplus.current_assembled_count == 30
+    assert cplus.compatible_grate_bom_rows_found == 30
     assert cplus.proposal_evidence_type == "explicit_catalog_matrix"
     assert cplus.proposal_compatibility_confidence == "high"
-    assert cplus.proposal_article_level_compatibility_found == "True"
-    assert cplus.proposal_safe_to_generate_count == 1
+    assert cplus.proposal_safe_to_generate_count == 30
     assert cplus.proposal_blocked_count == 0
     assert cplus.proposal_customer_ready == "False"
-    assert report.sheet_counts["BOM_Options"] == 221
-    assert report.sheet_counts["Final_Assemblies"] == 32
-    assert report.sheet_counts["Final_Set_Details"] == 32
+    assert report.sheet_counts["BOM_Options"] == 30
+    assert report.sheet_counts["Final_Assemblies"] == 30
+    assert report.sheet_counts["Final_Set_Details"] == 30
 
     mod.print_report(report)
     out = capsys.readouterr().out
-    assert "evidence_type=explicit_catalog_matrix" in out
-    assert "compatibility_confidence=high" in out
-    assert "article_level_compatibility_found=True" in out
-    assert "safe_diagnostic_mappings_available=True" in out
-    assert "customer_ready=False" in out
-    assert "production_assemblies_generated=False" in out
-    assert "Production behavior changed: no" in out
+    assert "showerdrain_cplus | 30" in out
+    assert "production_assemblies_generated=True" in out
+    assert "Production behavior changed: yes" in out
+    assert "customer-ready behavior changed: no" in out
