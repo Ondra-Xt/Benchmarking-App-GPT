@@ -532,13 +532,20 @@ def test_default_baseline_counts_updated():
     mod = _load_validator_module()
     assert mod.EXPECTED_SHEET_COUNTS["Candidates_All"] == 118
     assert mod.EXPECTED_SHEET_COUNTS["Components"] == 100
-    assert mod.EXPECTED_SHEET_COUNTS["Final_Assemblies"] == 32
-    assert mod.EXPECTED_SHEET_COUNTS["Final_Set_Details"] == 32
+    assert mod.EXPECTED_SHEET_COUNTS["Products"] == 80
+    assert mod.EXPECTED_SHEET_COUNTS["Comparison"] == 80
+    assert mod.EXPECTED_SHEET_COUNTS["Scoring_Field_Coverage"] == 80
+    assert mod.EXPECTED_SHEET_COUNTS["BOM_Options"] == 251
+    assert mod.EXPECTED_SHEET_COUNTS["Final_Assemblies"] == 62
+    assert mod.EXPECTED_SHEET_COUNTS["Final_Set_Details"] == 62
+    assert mod.EXPECTED_SHEET_COUNTS["Cplus_Compatible_Grate_Evidence"] == 30
     assert mod.EXPECTED_SHEET_COUNTS["Mplus_Compound_Mappings"] == 4
     assert mod.EXPECTED_SHEET_COUNTS["Eplus_Proposal_Mappings"] == 3
     assert mod.EXPECTED_SHEET_COUNTS["Conditional_Technical_Values"] == 8
     assert mod.EXPECTED_SHEET_COUNTS["Article_Variants"] == 76
-    assert mod.EXPECTED_FINAL_SET_DETAILS_ROW_COUNT == 32
+    assert mod.EXPECTED_FINAL_SET_DETAILS_ROW_COUNT == 62
+    assert mod.EXPECTED_ASSEMBLED_PREFIX_COUNTS["aco-assembled-showerdrain-cplus"] == 30
+    assert mod.EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS["showerdrain_cplus"] == 30
 
 
 def test_pass_workbook_exits_0(tmp_path):
@@ -685,22 +692,24 @@ def test_compatible_grate_metadata_missing_no_explicit_matrix_sentence_fails(tmp
 
 def test_final_assemblies_baseline_expectations():
     mod = _load_validator_module()
-    assert mod.EXPECTED_SHEET_COUNTS["Final_Assemblies"] == 32
-    assert mod.EXPECTED_SHEET_COUNTS["Final_Set_Details"] == 32
+    assert mod.EXPECTED_SHEET_COUNTS["Final_Assemblies"] == 62
+    assert mod.EXPECTED_SHEET_COUNTS["Final_Set_Details"] == 62
     assert mod.EXPECTED_SHEET_COUNTS["Mplus_Compound_Mappings"] == 4
     assert mod.EXPECTED_SHEET_COUNTS["Eplus_Proposal_Mappings"] == 3
     assert mod.EXPECTED_SHEET_COUNTS["Conditional_Technical_Values"] == 8
     assert mod.EXPECTED_SHEET_COUNTS["Article_Variants"] == 76
-    assert mod.EXPECTED_FINAL_SET_DETAILS_ROW_COUNT == 32
+    assert mod.EXPECTED_FINAL_SET_DETAILS_ROW_COUNT == 62
     assert mod.EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS == {
         "easyflow": 2,
         "easyflowplus": 6,
         "showerdrain_c": 4,
         "showerdrain_splus": 16,
         "showerdrain_mplus": 4,
+        "showerdrain_cplus": 30,
     }
     assert mod.EXPECTED_FINAL_ASSEMBLIES_STATUS_COUNTS == {
         "complete": 26,
+        "explicit_source_ready_production_assembly": 30,
         "partial": 2,
         "conditional_parameter_available_production_blocked": 4,
         "missing": 0,
