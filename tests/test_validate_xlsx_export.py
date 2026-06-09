@@ -496,6 +496,8 @@ def _write_xlsx(path: Path, sheets: dict):
     comparison = sheets.get("Comparison", pd.DataFrame())
     conditional = sheets.get("Conditional_Technical_Values", pd.DataFrame())
     sheets.setdefault("Eplus_Compatible_Grate_Evidence", build_export_evidence_dataframe(sheets.get("Eplus_Proposal_Mappings", pd.DataFrame())))
+    from tools.report_bline_source_evidence import build_export_evidence_dataframe as build_bline_evidence
+    sheets.setdefault("Bline_Source_Evidence", build_bline_evidence())
     sheets.setdefault("Scoring_Scenarios", scoring_scenarios_dataframe())
     sheets.setdefault(
         "Comparison_flow_head_10mm",
@@ -541,6 +543,7 @@ def test_default_baseline_counts_updated():
     assert mod.EXPECTED_SHEET_COUNTS["Final_Assemblies"] == 62
     assert mod.EXPECTED_SHEET_COUNTS["Final_Set_Details"] == 62
     assert mod.EXPECTED_SHEET_COUNTS["Cplus_Compatible_Grate_Evidence"] == 30
+    assert mod.EXPECTED_SHEET_COUNTS["Bline_Source_Evidence"] == 8
     assert mod.EXPECTED_SHEET_COUNTS["Mplus_Compound_Mappings"] == 4
     assert mod.EXPECTED_SHEET_COUNTS["Eplus_Proposal_Mappings"] == 3
     assert mod.EXPECTED_SHEET_COUNTS["Eplus_Compatible_Grate_Evidence"] == 3

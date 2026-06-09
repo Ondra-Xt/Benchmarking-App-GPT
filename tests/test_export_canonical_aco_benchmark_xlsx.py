@@ -49,6 +49,7 @@ def _write_canonical_summary_workbook(path: Path) -> None:
         "Final_Set_Details": pd.DataFrame({"assembled_product_id": product_ids[:62]}),
         "Eplus_Compatible_Grate_Evidence": pd.DataFrame({"mapping_id": range(3)}),
         "Cplus_Compatible_Grate_Evidence": pd.DataFrame({"mapping_id": range(30)}),
+        "Bline_Source_Evidence": pd.DataFrame({"evidence_id": range(8)}),
         "Comparison_flow_head_10mm": scenario_10,
         "Comparison_flow_head_20mm": scenario_20,
     }
@@ -148,6 +149,7 @@ def test_canonical_aco_cli_creates_expected_workbook_and_summary(monkeypatch, tm
         assert len(pd.read_excel(xls, sheet_name="Final_Assemblies")) == 62
         assert len(pd.read_excel(xls, sheet_name="Final_Set_Details")) == 62
         assert len(pd.read_excel(xls, sheet_name="Cplus_Compatible_Grate_Evidence")) == 30
+        assert len(pd.read_excel(xls, sheet_name="Bline_Source_Evidence")) == 8
         scenario_10 = pd.read_excel(xls, sheet_name="Comparison_flow_head_10mm")
         scenario_20 = pd.read_excel(xls, sheet_name="Comparison_flow_head_20mm")
         assert len(scenario_10) == len(scenario_20) == 80
@@ -162,6 +164,7 @@ def test_canonical_aco_cli_creates_expected_workbook_and_summary(monkeypatch, tm
     assert "BOM_Options: 251" in output
     assert "Final_Assemblies: 62" in output
     assert "Cplus_Compatible_Grate_Evidence: 30" in output
+    assert "Bline_Source_Evidence: 8" in output
     assert "Cplus_assembled: 30" in output
     assert output.rstrip().endswith("OVERALL: PASS")
 
@@ -294,15 +297,34 @@ def test_actual_canonical_builder_promotes_old_50_32_221_pipeline_state(monkeypa
 
     with pd.ExcelFile(output, engine="openpyxl") as xls:
         exported_products = pd.read_excel(xls, sheet_name="Products")
+        exported_comparison = pd.read_excel(xls, sheet_name="Comparison")
+        scoring_coverage = pd.read_excel(xls, sheet_name="Scoring_Field_Coverage")
+        candidates = pd.read_excel(xls, sheet_name="Candidates_All")
+        components = pd.read_excel(xls, sheet_name="Components")
         exported_bom = pd.read_excel(xls, sheet_name="BOM_Options")
         final_assemblies = pd.read_excel(xls, sheet_name="Final_Assemblies")
         final_details = pd.read_excel(xls, sheet_name="Final_Set_Details")
+        eplus_evidence = pd.read_excel(xls, sheet_name="Eplus_Compatible_Grate_Evidence")
         cplus_evidence = pd.read_excel(xls, sheet_name="Cplus_Compatible_Grate_Evidence")
+        bline_evidence = pd.read_excel(xls, sheet_name="Bline_Source_Evidence")
         assert len(exported_products) == 80
+        assert len(exported_comparison) == 80
+        assert len(scoring_coverage) == 80
+        assert len(candidates) == 118
+        assert len(components) == 100
         assert len(exported_bom) == 251
         assert len(final_assemblies) == 62
         assert len(final_details) == 62
+        assert len(eplus_evidence) == 3
         assert len(cplus_evidence) == 30
+        assert len(bline_evidence) == 8
+        assert bline_evidence["safe_to_generate"].eq(False).all()
+        evidence_ids = set(bline_evidence["evidence_id"])
+        assert not evidence_ids & set(exported_products["product_id"])
+        assert not evidence_ids & set(final_assemblies["product_id"])
+        assert not evidence_ids & set(final_details["set_id"])
+        assert not final_assemblies["product_id"].str.startswith("aco-assembled-showerdrain-b-").any()
+        assert not final_assemblies["product_id"].str.startswith("aco-assembled-showerdrain-eplus-").any()
         assert exported_products["product_id"].str.startswith(
             "aco-assembled-showerdrain-cplus-"
         ).sum() == 30

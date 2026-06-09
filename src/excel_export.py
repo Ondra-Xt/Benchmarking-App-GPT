@@ -1769,8 +1769,10 @@ def export_excel(
         final_set_details_df,
     )
     from tools.report_eplus_compatible_grate_evidence import build_export_evidence_dataframe as build_eplus_evidence
+    from tools.report_bline_source_evidence import build_export_evidence_dataframe as build_bline_evidence
 
     eplus_compatible_grate_evidence_df = build_eplus_evidence(eplus_proposal_mappings_df)
+    bline_source_evidence_df = build_bline_evidence()
     conditional_technical_values_df = _extract_conditional_technical_values(mplus_compound_mappings_df)
     scoring_scenarios_df = scoring_scenarios_dataframe()
     comparison_flow_head_10mm_df = build_scenario_comparison(
@@ -1788,6 +1790,7 @@ def export_excel(
     write_df("Eplus_Proposal_Mappings", eplus_proposal_mappings_df)
     write_df("Eplus_Compatible_Grate_Evidence", eplus_compatible_grate_evidence_df)
     write_df("Cplus_Compatible_Grate_Evidence", cplus_compatible_grate_evidence_df)
+    write_df("Bline_Source_Evidence", bline_source_evidence_df)
     write_df("Conditional_Technical_Values", conditional_technical_values_df)
     write_df("Scoring_Scenarios", scoring_scenarios_df)
     write_df("Comparison_flow_head_10mm", comparison_flow_head_10mm_df)
