@@ -1,4 +1,30 @@
+
 # Changelog - Current Stable ACO Benchmark Baseline
+
+## ACO C+ Production Assembly Milestone
+
+Validated state:
+- Products: 80
+- Comparison: 80
+- Scoring_Field_Coverage: 80
+- Candidates_All: 118
+- Components: 100
+- BOM_Options: 251
+- Final_Assemblies: 62
+- Final_Set_Details: 62
+- Cplus_Compatible_Grate_Evidence: 30
+- C+ assembled: 30
+- C+ BOM rows: 30
+- XLSX validation: OVERALL PASS
+
+Canonical export command:
+python tools/export_canonical_aco_benchmark_xlsx.py --out "C:\Users\OCundr\Downloads\benchmark_output.xlsx"
+
+Validation command:
+python tools/validate_latest_xlsx_export.py --dir "C:\Users\OCundr\Downloads"
+
+# Changelog – Final Assemblies and Article Variants
+
 
 ## Status
 
