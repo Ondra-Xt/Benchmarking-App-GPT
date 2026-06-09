@@ -2225,8 +2225,9 @@ def test_streamlit_export_publishes_only_canonical_80_62_251_workbook(monkeypatc
     assert details["app_export_row_count:Products"] == "actual=80 expected=80"
     assert details["app_export_row_count:BOM_Options"] == "actual=251 expected=251"
     assert details["app_export_row_count:Final_Assemblies"] == "actual=62 expected=62"
-    assert details["app_export_assembled_count:aco-assembled-showerdrain-splus-"] == "actual=16 expected=16"
-    assert details["app_export_assembled_count:aco-assembled-showerdrain-cplus-"] == "actual=30 expected=30"
+    assert details["app_export_assembled_family_count:showerdrain_splus"] == "actual=16 expected=16"
+    assert details["app_export_assembled_family_count:showerdrain_c"] == "actual=4 expected=4"
+    assert details["app_export_assembled_family_count:showerdrain_cplus"] == "actual=30 expected=30"
 
 
 def test_streamlit_app_uses_shared_workbook_export_entrypoint():

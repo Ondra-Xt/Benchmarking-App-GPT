@@ -371,14 +371,49 @@ APP_EXPORT_EXPECTED_COUNTS = {
     "Comparison_flow_head_20mm": 80,
 }
 
-APP_EXPORT_EXPECTED_ASSEMBLED_COUNTS = {
-    "aco-assembled-showerdrain-splus-": 16,
-    "aco-assembled-showerdrain-c-": 4,
-    "aco-assembled-showerdrain-mplus-": 4,
-    "aco-assembled-showerdrain-cplus-": 30,
-    "aco-assembled-showerdrain-eplus-": 0,
-    "aco-assembled-showerdrain-b-": 0,
+APP_EXPORT_EXPECTED_ASSEMBLED_FAMILY_COUNTS = {
+    "showerdrain_splus": 16,
+    "showerdrain_c": 4,
+    "showerdrain_mplus": 4,
+    "showerdrain_cplus": 30,
+    "showerdrain_eplus": 0,
+    "showerdrain_b": 0,
 }
+
+_ASSEMBLED_PREFIX_TO_FAMILY = {
+    "aco-assembled-showerdrain-splus": "showerdrain_splus",
+    "aco-assembled-showerdrain-c": "showerdrain_c",
+    "aco-assembled-showerdrain-mplus": "showerdrain_mplus",
+    "aco-assembled-showerdrain-eplus": "showerdrain_eplus",
+    "aco-assembled-showerdrain-b": "showerdrain_b",
+    "aco-assembled-showerdrain-cplus": "showerdrain_cplus",
+}
+
+
+def _assembled_family_series(df: pd.DataFrame) -> pd.Series:
+    """Resolve assembled families exactly, with delimiter-safe ID fallbacks."""
+    families = pd.Series("", index=df.index, dtype="object")
+    known_families = set(APP_EXPORT_EXPECTED_ASSEMBLED_FAMILY_COUNTS)
+    for column in ("assembled_family", "product_family", "family"):
+        values = _norm_series(df, column).str.lower()
+        usable = families.eq("") & values.isin(known_families)
+        families.loc[usable] = values.loc[usable]
+
+    product_ids = _norm_series(df, "product_id").str.lower()
+    # C+ must be resolved before C. The trailing hyphens make every fallback
+    # delimiter-safe even if this ordering changes later.
+    id_prefixes = (
+        ("aco-assembled-showerdrain-cplus-", "showerdrain_cplus"),
+        ("aco-assembled-showerdrain-splus-", "showerdrain_splus"),
+        ("aco-assembled-showerdrain-mplus-", "showerdrain_mplus"),
+        ("aco-assembled-showerdrain-eplus-", "showerdrain_eplus"),
+        ("aco-assembled-showerdrain-b-", "showerdrain_b"),
+        ("aco-assembled-showerdrain-c-", "showerdrain_c"),
+    )
+    for prefix, family in id_prefixes:
+        matches = families.eq("") & product_ids.str.startswith(prefix)
+        families.loc[matches] = family
+    return families
 
 
 def validate_app_export_baseline(path: str) -> Tuple[bool, List[CheckResult]]:
@@ -411,11 +446,11 @@ def validate_app_export_baseline(path: str) -> Tuple[bool, List[CheckResult]]:
         ))
 
     products = sheets["Products"]
-    product_ids = _norm_series(products, "product_id").str.lower()
-    for prefix, expected in APP_EXPORT_EXPECTED_ASSEMBLED_COUNTS.items():
-        actual = int(product_ids.str.startswith(prefix).sum())
+    assembled_families = _assembled_family_series(products)
+    for family, expected in APP_EXPORT_EXPECTED_ASSEMBLED_FAMILY_COUNTS.items():
+        actual = int(assembled_families.eq(family).sum())
         results.append(CheckResult(
-            f"app_export_assembled_count:{prefix}", actual == expected,
+            f"app_export_assembled_family_count:{family}", actual == expected,
             f"actual={actual} expected={expected}",
         ))
 
@@ -1273,9 +1308,20 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
         results.append(CheckResult("final_set_details_mplus_ready_for_customer_view_false", mplus_detail_customer_bad == 0, f"actual_bad={mplus_detail_customer_bad} expected=false"))
         results.append(CheckResult("final_set_details_mplus_blocked_reason", mplus_detail_blocked_bad == 0, f"actual_bad={mplus_detail_blocked_bad} expected_snippet={MPLUS_BLOCKING_REASON_SNIPPET}"))
 
-    cmp_product_ids = _norm_series(comparison, "product_id").str.lower()
+    comparison_assembled_families = _assembled_family_series(comparison)
     for prefix, expected in EXPECTED_ASSEMBLED_PREFIX_COUNTS.items():
-        actual = int(cmp_product_ids.str.startswith(prefix).sum())
+        family = _ASSEMBLED_PREFIX_TO_FAMILY.get(prefix.rstrip("-"))
+        if family is None:
+            # Preserve extensibility for custom validator expectations while keeping
+            # the canonical families above exact and delimiter-safe.
+            actual = int(
+                _norm_series(comparison, "product_id")
+                .str.lower()
+                .str.startswith(f"{prefix.rstrip('-')}-")
+                .sum()
+            )
+        else:
+            actual = int(comparison_assembled_families.eq(family).sum())
         results.append(CheckResult(f"assembled_count:{prefix}", actual == expected, f"actual={actual} expected={expected}"))
 
     for sheet_name, df in [("Products", products), ("Comparison", comparison)]:
