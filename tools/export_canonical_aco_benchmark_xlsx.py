@@ -46,6 +46,7 @@ def main(argv: list[str] | None = None) -> int:
         "Final_Assemblies",
         "Eplus_Compatible_Grate_Evidence",
         "Cplus_Compatible_Grate_Evidence",
+        "Bline_Source_Evidence",
         "Cplus_assembled",
     ):
         print(f"{name}: {counts[name]}")

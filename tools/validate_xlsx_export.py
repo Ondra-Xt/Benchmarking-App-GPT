@@ -25,6 +25,7 @@ EXPECTED_SHEET_COUNTS = {
     "Comparison_flow_head_10mm": 80,
     "Comparison_flow_head_20mm": 80,
     "Cplus_Compatible_Grate_Evidence": 30,
+    "Bline_Source_Evidence": 8,
 }
 COMPONENTS_MIN_ROWS = 1
 EXPECTED_BOM_OPTION_TYPE_COUNTS = {
@@ -123,6 +124,7 @@ REQUIRED_SHEETS = [
     "Eplus_Proposal_Mappings",
     "Eplus_Compatible_Grate_Evidence",
     "Cplus_Compatible_Grate_Evidence",
+    "Bline_Source_Evidence",
     "Conditional_Technical_Values",
     "Article_Variants",
     "Scoring_Scenarios",
@@ -150,6 +152,19 @@ CPLUS_EXPLICIT_EVIDENCE_TYPES = {
 }
 CPLUS_DIAGNOSTIC_PRODUCTION_NOTE_SNIPPET = "diagnostic/evidence-only"
 CPLUS_GRATE_ARTICLE_RE = r"^9010\.88\.\d{2}$"
+
+BLINE_SOURCE_EVIDENCE_REQUIRED_COLUMNS = [
+    "evidence_id", "product_family", "assembly_model", "product_article_number",
+    "body_article_number", "grate_article_number", "variant_condition",
+    "flow_rate_lps", "flow_rate_10mm_lps", "flow_rate_20mm_lps",
+    "water_seal_mm", "outlet_dn", "height_adj_min_mm", "height_adj_max_mm",
+    "installation_height_mm", "compatibility_evidence_type",
+    "compatibility_confidence", "article_level_compatibility_found",
+    "source_text_or_reason", "data_quality_status", "safe_to_generate",
+    "ready_for_benchmark", "ready_for_customer_view", "blocking_reason",
+    "recommended_next_action", "production_status_note",
+]
+BLINE_EXPLICIT_INTEGRAL_SET = "explicit_article_level_integral_complete_set"
 
 
 SCORING_SCENARIOS_REQUIRED_COLUMNS = [
@@ -614,6 +629,15 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
     final_assemblies = sheets.get("Final_Assemblies")
     final_set_details = sheets.get("Final_Set_Details")
     cplus_evidence = sheets.get("Cplus_Compatible_Grate_Evidence", pd.DataFrame())
+    bline_evidence = (
+        sheets.get("Bline_Source_Evidence")
+        if "Bline_Source_Evidence" in sheets
+        else (
+            pd.read_excel(xls, sheet_name="Bline_Source_Evidence")
+            if "Bline_Source_Evidence" in xls.sheet_names
+            else pd.DataFrame(columns=BLINE_SOURCE_EVIDENCE_REQUIRED_COLUMNS)
+        )
+    )
     mplus_compound_mappings = (
         sheets.get("Mplus_Compound_Mappings")
         if "Mplus_Compound_Mappings" in sheets
@@ -658,6 +682,33 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
     for name, expected in EXPECTED_SHEET_COUNTS.items():
         actual = len(sheets[name])
         results.append(CheckResult(f"row_count:{name}", actual == expected, f"actual={actual} expected={expected}"))
+
+    if "Bline_Source_Evidence" in required_sheets or "Bline_Source_Evidence" in xls.sheet_names:
+        bline_missing_columns = [
+            col for col in BLINE_SOURCE_EVIDENCE_REQUIRED_COLUMNS if col not in bline_evidence.columns
+        ]
+        results.append(CheckResult(
+            "bline_evidence_required_columns",
+            not bline_missing_columns,
+            f"missing={bline_missing_columns} expected={BLINE_SOURCE_EVIDENCE_REQUIRED_COLUMNS}",
+        ))
+        if not bline_missing_columns:
+            evidence_ids = set(_norm_series(bline_evidence, "evidence_id")) - {""}
+            article_numbers = _norm_series(bline_evidence, "product_article_number")
+            results.append(CheckResult("bline_evidence_ids_unique", len(evidence_ids) == len(bline_evidence), f"unique={len(evidence_ids)} rows={len(bline_evidence)}"))
+            results.append(CheckResult("bline_evidence_articles_unique", article_numbers.nunique() == len(bline_evidence), f"unique={article_numbers.nunique()} rows={len(bline_evidence)}"))
+            results.append(CheckResult("bline_evidence_integral_model", _norm_series(bline_evidence, "assembly_model").eq("integral_all_in_one_set").all(), f"actual={sorted(set(_norm_series(bline_evidence, 'assembly_model')))}"))
+            results.append(CheckResult("bline_evidence_explicit_integral_set", _norm_series(bline_evidence, "compatibility_evidence_type").eq(BLINE_EXPLICIT_INTEGRAL_SET).all(), f"actual={sorted(set(_norm_series(bline_evidence, 'compatibility_evidence_type')))}"))
+            results.append(CheckResult("bline_evidence_no_separate_grate_article", _norm_series(bline_evidence, "grate_article_number").eq("").all(), "separate grate articles must remain empty"))
+            results.append(CheckResult("bline_evidence_no_unconditional_flow", _empty_series(bline_evidence, "flow_rate_lps").all(), "flow_rate_lps must remain empty while 10/20 mm conditions coexist"))
+            for column in ("safe_to_generate", "ready_for_benchmark", "ready_for_customer_view"):
+                bad = int((~_bool_series_eq(bline_evidence, column, False)).sum())
+                results.append(CheckResult(f"bline_evidence_false:{column}", bad == 0, f"actual_bad={bad} expected=false"))
+            production_ids = set(_norm_series(products, "product_id")) | set(_norm_series(final_assemblies, "product_id")) | set(_norm_series(final_set_details, "set_id"))
+            overlap = sorted(evidence_ids & production_ids)
+            results.append(CheckResult("bline_evidence_diagnostic_only_no_overlap", not overlap, f"overlap={overlap}"))
+            b_assembled = _norm_series(final_assemblies, "product_id").str.startswith("aco-assembled-showerdrain-b-").sum()
+            results.append(CheckResult("bline_no_production_assemblies", int(b_assembled) == 0, f"actual={int(b_assembled)} expected=0"))
 
     cplus_missing_columns = [
         col for col in CPLUS_COMPATIBLE_GRATE_EVIDENCE_REQUIRED_COLUMNS if col not in cplus_evidence.columns

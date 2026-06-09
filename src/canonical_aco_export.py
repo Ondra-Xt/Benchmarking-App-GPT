@@ -167,6 +167,9 @@ def workbook_summary(path: str | Path) -> dict[str, int]:
             "Cplus_Compatible_Grate_Evidence": len(
                 pd.read_excel(xls, sheet_name="Cplus_Compatible_Grate_Evidence")
             ),
+            "Bline_Source_Evidence": len(
+                pd.read_excel(xls, sheet_name="Bline_Source_Evidence")
+            ),
             "Cplus_assembled": int(
                 products.get("product_id", pd.Series(dtype=str))
                 .fillna("")
