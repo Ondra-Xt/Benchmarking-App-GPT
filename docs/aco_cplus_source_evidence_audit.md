@@ -10,7 +10,7 @@
 - Page 26: stainless grate article table explicitly headed `ACO ShowerDrain C & C+`.
 - Compatibility rule used by the diagnostic: body and grate must have the same nominal length.
 
-This finding upgrades only source-backed rows in `Cplus_Compatible_Grate_Evidence`. It does **not** add BOM rows, generate C+ final assemblies, or enable customer-facing output.
+This finding first upgraded the source-backed rows in `Cplus_Compatible_Grate_Evidence` and now supports the canonical production baseline. The protected bases and 15 non-Tile grates generate 30 C+ assemblies. Customer-facing output remains disabled.
 
 ## Exact protected-base mappings
 
@@ -65,4 +65,4 @@ For catalog-proven rows only:
 - `ready_for_benchmark = True` because protected technical fields are complete
 - `ready_for_customer_view = False`
 
-Production remains deliberately unchanged: no C+ `BOM_Options`, `Final_Assemblies`, or `Final_Set_Details` are generated. Assembly-gap reporting therefore uses `blocked_pending_cplus_production_assembly`, directing a separate reviewed production patch.
+The reviewed production milestone promotes exactly the 30 catalogue-proven combinations into `BOM_Options`, `Final_Assemblies`, and `Final_Set_Details`: two protected bases multiplied by 15 Wave, Quadrato, and Massive grates. Tile articles remain excluded, protected hydraulic values remain unchanged, and `ready_for_customer_view` remains false.

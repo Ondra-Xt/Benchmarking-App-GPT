@@ -1,282 +1,155 @@
-# Changelog – Final Assemblies and Article Variants
+# Changelog - Current Stable ACO Benchmark Baseline
 
 ## Status
 
-Stable and validated.
+Stable and validated as of June 9, 2026.
+
+This document records the canonical ACO benchmark baseline after the C+, E+,
+Easyflow, and B-line milestones. It is a documentation snapshot of the existing
+export behavior; it does not change product generation, scoring, validation, or
+XLSX output.
+
+## Canonical workbook counts
+
+| Sheet | Rows |
+|---|---:|
+| `Products` | 80 |
+| `Comparison` | 80 |
+| `Scoring_Field_Coverage` | 80 |
+| `Candidates_All` | 118 |
+| `Components` | 100 |
+| `BOM_Options` | 251 |
+| `Final_Assemblies` | 62 |
+| `Final_Set_Details` | 62 |
+| `Article_Variants` | 76 |
+| `Mplus_Compound_Mappings` | 4 |
+| `Eplus_Proposal_Mappings` | 3 |
+| `Eplus_Compatible_Grate_Evidence` | 3 |
+| `Cplus_Compatible_Grate_Evidence` | 30 |
+| `Bline_Source_Evidence` | 8 |
+| `Conditional_Technical_Values` | 8 |
+| `Scoring_Scenarios` | 3 |
+| `Comparison_flow_head_10mm` | 80 |
+| `Comparison_flow_head_20mm` | 80 |
+
+These are the stable canonical counts. Documentation work must not change them,
+and no XLSX export behavior is changed by this changelog update.
+
+## Assembled-product baseline
+
+| Product family | Assemblies | Current status |
+|---|---:|---|
+| Easyflow | 2 | Partial/blocked |
+| EasyflowPlus | 6 | Assembled |
+| ShowerDrain C | 4 | Assembled |
+| ShowerDrain S+ | 16 | Assembled |
+| ShowerDrain M+ | 4 | Conditional/default benchmark blocked |
+| ShowerDrain C+ | 30 | Production-ready; customer view disabled |
+| ShowerDrain E+ | 0 | Diagnostic/proposal-only |
+| ShowerDrain B | 0 | Diagnostic-only finished-set evidence |
+
+The 62 production assembly rows are therefore 2 Easyflow + 6 EasyflowPlus +
+4 ShowerDrain C + 16 ShowerDrain S+ + 4 ShowerDrain M+ + 30 ShowerDrain C+.
+E+ and B-line evidence is deliberately not promoted to production assemblies.
+
+## Milestone conclusions
+
+### ShowerDrain C+: production-ready from an explicit catalogue matrix
+
+C+ is production-ready from explicit article-level catalogue evidence:
+
+- Two protected hydraulic bases are each paired with 15 proven grates,
+  producing **2 x 15 = 30 assemblies**.
+- Only catalogue-proven, length-compatible grate rows are promoted.
+- Tile articles are not promoted.
+- `Cplus_Compatible_Grate_Evidence` contains 30 rows.
+- The customer view remains disabled even though the benchmark production gate
+  is satisfied.
+
+See [the C+ source-evidence audit](aco_cplus_source_evidence_audit.md) for the
+protected base mappings, catalogue source, and promotion boundary.
+
+### ShowerDrain M+: conditional flow is preserved
+
+M+ retains both source-backed conditional flow observations:
+
+- **0.40 l/s** at **10 mm** head;
+- **0.46 l/s** at **20 mm** head.
+
+No unconditional/default scalar `flow_rate_lps` is selected. The canonical
+`Conditional_Technical_Values` sheet preserves the observations, and the
+`Comparison_flow_head_10mm` and `Comparison_flow_head_20mm` scenario sheets
+resolve the applicable value. The four M+ assemblies remain blocked from a
+default benchmark result because the source does not identify a default head
+condition.
+
+See [the conditional parameter scoring review](conditional_parameter_scoring_review.md)
+for the scenario-resolution policy.
+
+### ShowerDrain E+: blocked pending explicit compatibility evidence
+
+E+ remains diagnostic/proposal-only because no explicit article-level
+body-to-grate compatibility matrix has been found:
+
+- `Eplus_Proposal_Mappings` contains 3 proposal rows.
+- `Eplus_Compatible_Grate_Evidence` contains 3 blocked rows.
+- No E+ production assemblies are generated.
+- Family-page co-occurrence is not accepted as article-level compatibility.
+
+See [the E+ source-evidence audit](aco_eplus_source_evidence_audit.md) for the
+search scope and blocking rationale.
+
+### Easyflow: partial and blocked by article ambiguity
+
+Easyflow retains two partial assembled rows, but the family-level base maps to
+multiple article candidates:
 
-This change set adds final assembled-product reporting, article-level evidence reporting, and validation coverage without changing the default benchmark universe.
+- `2500.00.00`;
+- `2500.05.00`;
+- `2500.55.00`.
 
-Default benchmark counts remain unchanged:
+The candidates carry conflicting source-backed flow values, so a unique article
+and a safe default flow cannot be selected. `Article_Variants` remains an
+**evidence-only** sheet with 76 rows; its candidates are not promoted into the
+canonical product universe.
 
-- Products: 46
-- Comparison: 46
-- Scoring_Field_Coverage: 46
-- Candidates_All: 118
-- Components: 100
-- BOM_Options: 221
-- Final_Assemblies: 28
+### ShowerDrain B / B-line: diagnostic finished-set evidence only
 
-The XLSX validator reports OVERALL: PASS.
+B-line has explicit article evidence for eight integral all-in-one finished
+sets:
 
----
+- `9010.78.70`-`9010.78.73` without a sealing sleeve;
+- `3018172`-`3018175` with an attached sealing sleeve.
 
-## Added
+These articles are complete finished sets, not separately selectable
+`base_x_grate` assemblies. Consequently:
 
-### Final_Assemblies XLSX sheet
+- `Bline_Source_Evidence` contains 8 diagnostic rows;
+- no B-line production assemblies are generated;
+- no body-to-grate compatibility is inferred;
+- flow remains conditional at **0.40 l/s at 10 mm build-up** and **0.46 l/s at
+  20 mm build-up**, with no unconditional default scalar.
 
-Added a dedicated Final_Assemblies sheet to the XLSX export.
+See [the B-line source-evidence audit](aco_bline_source_evidence_audit.md) for
+article classification and the production gate.
 
-The sheet contains only final assembled products from Products, identified by product_id values starting with `aco-assembled-`.
+## Canonical validation gate
 
-Current family counts:
+Run the canonical export and latest-workbook validator from the repository root
+in Windows Command Prompt:
 
-- easyflow: 2
-- easyflowplus: 6
-- showerdrain_c: 4
-- showerdrain_splus: 16
+```bat
+set PYTHONPATH=.
+python tools/export_canonical_aco_benchmark_xlsx.py --out "C:\Users\OCundr\Downloads\benchmark_output.xlsx"
+python tools/validate_latest_xlsx_export.py --dir "C:\Users\OCundr\Downloads"
+```
 
-Total Final_Assemblies rows: 28.
+Expected validator result:
 
----
+```text
+OVERALL: PASS
+```
 
-### Final_Assemblies completeness metadata
-
-Added data-quality helper columns to Final_Assemblies:
-
-- is_complete_technical_data
-- missing_technical_fields
-- data_quality_status
-- source_status_note
-
-Current status distribution:
-
-- complete: 26
-- partial: 2
-- missing: 0
-
-The two partial rows are Easyflow assembled products.
-
-Easyflow assembled rows currently have:
-
-- water_seal_mm = 50
-- outlet_dn = DN50
-
-Easyflow assembled rows intentionally still have empty:
-
-- flow_rate_lps
-- height_adj_min_mm
-- height_adj_max_mm
-
-Reason: flow and height values are ambiguous at the current article/variant granularity.
-
----
-
-### Article_Variants XLSX sheet
-
-Added a dedicated Article_Variants sheet to expose source-backed article-level evidence without changing the default benchmark universe.
-
-The sheet includes normalized article-level rows with these columns:
-
-- manufacturer
-- base_product_id
-- article_number
-- variant_type
-- product_family
-- source_url
-- water_seal_mm
-- outlet_dn
-- flow_rate_lps
-- height_adj_min_mm
-- height_adj_max_mm
-- cutout_mm
-- side_inlet
-- row_text
-- attribution_status
-- why_not_promoted
-
-Current Article_Variants state:
-
-- Article_Variants exists
-- Article_Variants rows: 76
-- Required Easyflow WS50/DN50 article candidates are present:
-  - 2500.55.00
-  - 2500.05.00
-  - 2500.00.00
-- Article-level values are kept as evidence only
-- No article variants are promoted to Products in default mode
-
----
-
-### Easyflow article-variant diagnostics
-
-Added diagnostics for Easyflow article/variant attribution.
-
-The diagnostics confirm that the current Easyflow base row `aco-easyflow-komplettablaeufe-aco-easyflow-dn-50` matches multiple possible WS50/DN50 article candidates.
-
-Relevant candidates include:
-
-- 2500.55.00
-- 2500.05.00
-- 2500.00.00
-
-These candidates have different source-backed flow values, including:
-
-- 1.5 l/s
-- 1.0 l/s
-
-Because multiple article candidates match the current family-level base row, there is no unique article attribution.
-
-Result: Easyflow flow_rate_lps and height fields remain unsafe to write into Products by default.
-
----
-
-### Feature flag for article-variant products
-
-Added a disabled-by-default config flag:
-
-- enable_article_variant_products = False
-
-Default behavior:
-
-- Article variants are not promoted to Products
-- Products remains 46
-- Comparison remains 46
-- BOM_Options remains 221
-- Final_Assemblies remains 28
-- Article_Variants remains evidence-only
-
-Experimental behavior when enabled:
-
-- Article-level Easyflow products can be generated from candidate Article_Variants rows
-- Expected experimental product IDs include:
-  - aco-easyflow-article-25005500
-  - aco-easyflow-article-25000500
-  - aco-easyflow-article-25000000
-
-This mode is disabled by default and does not affect standard exports.
-
----
-
-## Changed
-
-### Easyflow assembled WS/DN inheritance
-
-Easyflow assembled products now inherit source-backed technical fields from their resolved base row where safe.
-
-The two Easyflow assembled rows now correctly receive:
-
-- water_seal_mm = 50
-- outlet_dn = DN50
-
-They still intentionally do not receive:
-
-- flow_rate_lps
-- height_adj_min_mm
-- height_adj_max_mm
-
-Those values remain empty because the current base row cannot be uniquely attributed to a single article variant.
-
----
-
-### XLSX validator coverage
-
-The XLSX validator now checks:
-
-- Required workbook sheets
-- Existing baseline row counts
-- Final_Assemblies existence
-- Final_Assemblies row count
-- Final_Assemblies family counts
-- Final_Assemblies completeness metadata
-- Easyflow partial status
-- Article_Variants existence
-- Article_Variants required columns
-- Article_Variants source URLs
-- Required Easyflow WS50/DN50 article candidates
-- No article variant promotion into Products
-- BOM integrity
-- ACO dangling component references
-- C+ baseline values
-
-The latest validated XLSX reports OVERALL: PASS.
-
----
-
-## Not Changed
-
-The default benchmark universe remains unchanged.
-
-No default changes were made to:
-
-- Products count
-- Comparison count
-- Scoring_Field_Coverage count
-- BOM_Options count
-- Final_Assemblies count
-- Product generation behavior
-- BOM generation behavior
-- Scoring formulas
-- Connector discovery behavior
-
-Article variants are not promoted to Products unless the experimental feature flag is explicitly enabled.
-
----
-
-## Known Limitations
-
-### Easyflow article ambiguity
-
-Easyflow remains partially complete in Final_Assemblies.
-
-Reason: the current Easyflow base row is family-level and matches multiple WS50/DN50 article candidates.
-
-Because of this, the following fields remain empty for Easyflow assembled rows:
-
-- flow_rate_lps
-- height_adj_min_mm
-- height_adj_max_mm
-
-These values should not be filled until the model can safely distinguish article-level variants.
-
----
-
-## Validation Summary
-
-Latest validated state:
-
-- Products: 46
-- Comparison: 46
-- Scoring_Field_Coverage: 46
-- Candidates_All: 118
-- Components: 100
-- BOM_Options: 221
-- Final_Assemblies: 28
-- Article_Variants: present
-- Final_Assemblies complete rows: 26
-- Final_Assemblies partial rows: 2
-- Final_Assemblies missing rows: 0
-- Article variants promoted to Products: 0
-- ACO dangling component_id: 0
-- XLSX validation: OVERALL PASS
-
----
-
-## Next Possible Work
-
-### Option 1: Keep Article_Variants as evidence-only
-
-Recommended for stable baseline.
-
-Article variants remain visible in Excel, while Products and Comparison stay unchanged.
-
-### Option 2: Improve article-level attribution
-
-Add stronger mapping between family-level Easyflow base rows and concrete article variants.
-
-This is required before safely filling Easyflow flow and height values.
-
-### Option 3: Experimental variant-level Products
-
-Use the disabled feature flag enable_article_variant_products = True to test article-level Easyflow products without changing the default benchmark export.
-
-This should remain experimental until a new baseline and validator mode are explicitly defined.
+The gate covers the canonical row counts, assembly-family counts, evidence
+sheets, conditional M+ scenario resolution, and the C+, E+, Easyflow, and
+B-line promotion boundaries described above.
