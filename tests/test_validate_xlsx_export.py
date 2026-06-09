@@ -543,10 +543,16 @@ def test_default_baseline_counts_updated():
     assert mod.EXPECTED_SHEET_COUNTS["Cplus_Compatible_Grate_Evidence"] == 30
     assert mod.EXPECTED_SHEET_COUNTS["Mplus_Compound_Mappings"] == 4
     assert mod.EXPECTED_SHEET_COUNTS["Eplus_Proposal_Mappings"] == 3
+    assert mod.EXPECTED_SHEET_COUNTS["Eplus_Compatible_Grate_Evidence"] == 3
     assert mod.EXPECTED_SHEET_COUNTS["Conditional_Technical_Values"] == 8
     assert mod.EXPECTED_SHEET_COUNTS["Article_Variants"] == 76
+    assert mod.EXPECTED_SHEET_COUNTS["Scoring_Scenarios"] == 3
+    assert mod.EXPECTED_SHEET_COUNTS["Comparison_flow_head_10mm"] == 80
+    assert mod.EXPECTED_SHEET_COUNTS["Comparison_flow_head_20mm"] == 80
     assert mod.EXPECTED_FINAL_SET_DETAILS_ROW_COUNT == 62
     assert mod.EXPECTED_ASSEMBLED_PREFIX_COUNTS["aco-assembled-showerdrain-cplus"] == 30
+    assert mod.EXPECTED_ASSEMBLED_PREFIX_COUNTS["aco-assembled-showerdrain-eplus"] == 0
+    assert mod.EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS["easyflow"] == 2
     assert mod.EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS["showerdrain_cplus"] == 30
 
 

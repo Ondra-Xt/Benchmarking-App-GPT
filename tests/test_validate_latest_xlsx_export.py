@@ -119,3 +119,20 @@ def test_propagates_validation_failure_exit_code(tmp_path, capsys):
     rc = latest_mod.main(["--dir", str(tmp_path)])
     assert rc != 0
     assert "OVERALL: FAIL" in capsys.readouterr().out
+
+
+def test_script_can_be_executed_directly_from_repo_root():
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "tools/validate_latest_xlsx_export.py", "--help"],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "Find newest benchmark XLSX export" in result.stdout
+    assert "ModuleNotFoundError" not in result.stderr
