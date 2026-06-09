@@ -276,10 +276,8 @@ def _fixture_text_for_url(url: str) -> tuple[str, str]:
     return "", ""
 
 
-def _fallback_products_and_components(products: pd.DataFrame, components: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    products = pd.DataFrame() if products is None else products.copy()
-    components = pd.DataFrame() if components is None else components.copy()
-    product_ids = set(_norm(products, "product_id"))
+def catalog_backed_cplus_products_and_components() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return the protected C+ bases and validated non-Tile grate candidate rows."""
     fallback_products = [
         {
             "manufacturer": "aco",
@@ -308,17 +306,10 @@ def _fallback_products_and_components(products: pd.DataFrame, components: pd.Dat
             "height_adj_max_mm": 128,
         },
     ]
-    missing_products = [row for row in fallback_products if row["product_id"] not in product_ids]
-    if missing_products:
-        products = pd.concat([products, pd.DataFrame(missing_products)], ignore_index=True, sort=False)
-
-    component_ids = set(_norm(components, "product_id"))
     fallback_components = []
     for article in PLAUSIBLE_CPLUS_GRATE_ARTICLES:
         digits = re.sub(r"\D+", "", article)
         pid = f"aco-{digits}"
-        if pid in component_ids:
-            continue
         fallback_components.append({
             "manufacturer": "aco",
             "product_id": pid,
@@ -330,8 +321,21 @@ def _fallback_products_and_components(products: pd.DataFrame, components: pd.Dat
             "source_url": getattr(aco, "SHOWERDRAIN_C_ARTICLE_GRATE_URL", ""),
             "product_url": f"{getattr(aco, 'SHOWERDRAIN_C_ARTICLE_GRATE_URL', '')}#article-{digits}",
         })
-    if fallback_components:
-        components = pd.concat([components, pd.DataFrame(fallback_components)], ignore_index=True, sort=False)
+    return pd.DataFrame(fallback_products), pd.DataFrame(fallback_components)
+
+
+def _fallback_products_and_components(products: pd.DataFrame, components: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    products = pd.DataFrame() if products is None else products.copy()
+    components = pd.DataFrame() if components is None else components.copy()
+    catalog_products, catalog_components = catalog_backed_cplus_products_and_components()
+    product_ids = set(_norm(products, "product_id"))
+    missing_products = catalog_products[~catalog_products["product_id"].isin(product_ids)]
+    if not missing_products.empty:
+        products = pd.concat([products, missing_products], ignore_index=True, sort=False)
+    component_ids = set(_norm(components, "product_id"))
+    missing_components = catalog_components[~catalog_components["product_id"].isin(component_ids)]
+    if not missing_components.empty:
+        components = pd.concat([components, missing_components], ignore_index=True, sort=False)
     return products, components
 
 

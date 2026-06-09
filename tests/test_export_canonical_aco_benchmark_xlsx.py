@@ -81,7 +81,11 @@ def test_canonical_aco_builder_runs_only_aco_connector(monkeypatch):
 
     assert calls == [("discovery", ("aco",)), ("update", ("aco",))]
     assert frames.registry is registry
-    assert frames.products is outputs[0]
+    assert set(outputs[0]["product_id"]).issubset(set(frames.products["product_id"]))
+    assert {"aco-showerdrain-cplus-standard-h92", "aco-showerdrain-cplus-low-h69"}.issubset(
+        set(frames.products["product_id"])
+    )
+    assert len(frames.excluded) == 16
     assert frames.bom_options is outputs[4]
 
 
@@ -159,3 +163,157 @@ def test_canonical_aco_cli_creates_expected_workbook_and_summary(monkeypatch, tm
     assert "Cplus_Compatible_Grate_Evidence: 30" in output
     assert "Cplus_assembled: 30" in output
     assert output.rstrip().endswith("OVERALL: PASS")
+
+
+def test_actual_canonical_builder_promotes_old_50_32_221_pipeline_state(monkeypatch, tmp_path):
+    """Regression: the CLI's real frame builder must enrich live C+ source rows."""
+    import openpyxl
+
+    from src import canonical_aco_export
+    from src.config import default_config
+    from src.excel_export import export_excel
+    from tools.report_cplus_compatible_grate_evidence import (
+        catalog_backed_cplus_products_and_components,
+    )
+
+    catalog_bases, catalog_grates = catalog_backed_cplus_products_and_components()
+    existing_assembly_ids = (
+        [f"aco-assembled-showerdrain-splus-base-{index}__drain-{index}" for index in range(16)]
+        + [f"aco-assembled-showerdrain-c-base-{index}__grate-{index}" for index in range(4)]
+        + [f"aco-assembled-easyflow-base-{index}__grate-{index}" for index in range(4)]
+        + [f"aco-assembled-easyflowplus-base-{index}__grate-{index}" for index in range(4)]
+    )
+    ordinary = catalog_bases.to_dict("records") + [
+        {
+            "manufacturer": "aco",
+            "product_id": f"aco-canonical-product-{index}",
+            "product_name": f"Canonical product {index}",
+            "flow_rate_lps": 0.6,
+        }
+        for index in range(16)
+    ]
+    assemblies = [
+        {
+            "manufacturer": "aco",
+            "product_id": product_id,
+            "product_name": product_id,
+            "flow_rate_lps": 0.6,
+            "water_seal_mm": 50,
+            "outlet_dn": "DN50",
+            "height_adj_min_mm": 80,
+            "height_adj_max_mm": 120,
+            "assembled_from_bom": True,
+            "ready_for_benchmark": True,
+            "ready_for_customer_view": False,
+        }
+        for product_id in existing_assembly_ids
+    ]
+    products = pd.DataFrame(ordinary + assemblies)
+    products["flow_rate_lps"] = products["flow_rate_lps"].astype(object)
+    comparison = products.copy()
+
+    # Reproduce the live regression: all 15 grate articles exist, but only one carries
+    # metadata that lets the two protected bases produce two diagnostic mappings.
+    malformed_grates = catalog_grates.copy()
+    malformed_grates["product_family"] = "unclassified_component"
+    malformed_grates["system_role"] = "component"
+    malformed_grates.loc[0, "product_family"] = "showerdrain_c_article_grate"
+    malformed_grates.loc[0, "system_role"] = "grate"
+    fillers = pd.DataFrame([
+        {
+            "manufacturer": "aco",
+            "product_id": f"aco-component-{index}",
+            "candidate_type": "component",
+            "system_role": "accessory",
+            "why_not_product_reason": "component_not_final_product",
+        }
+        for index in range(85)
+    ])
+    excluded = pd.concat([malformed_grates, fillers], ignore_index=True, sort=False)
+    registry = pd.DataFrame([
+        {"manufacturer": "aco", "product_id": f"aco-candidate-{index}"}
+        for index in range(118)
+    ])
+    bom = pd.DataFrame([
+        {
+            "product_id": "aco-canonical-product-0",
+            "component_id": f"aco-component-{index % 85}",
+            "option_type": "optional_accessory",
+            "product_family": "other",
+        }
+        for index in range(221)
+    ])
+
+    from tools.report_cplus_compatible_grate_evidence import build_export_evidence_dataframe
+
+    assert len(build_export_evidence_dataframe(products, excluded)) == 2
+
+    monkeypatch.setattr(
+        canonical_aco_export,
+        "run_discovery",
+        lambda **_kwargs: (registry, pd.DataFrame()),
+    )
+    monkeypatch.setattr(
+        canonical_aco_export,
+        "run_update",
+        lambda *_args, **_kwargs: (
+            products, comparison, excluded, pd.DataFrame(), bom
+        ),
+    )
+
+    frames = canonical_aco_export.build_canonical_aco_frames(default_config())
+    assert len(frames.products) == 46
+    assert len(frames.excluded) == 100
+    normalized_grates = frames.excluded[
+        frames.excluded["product_id"].isin(set(catalog_grates["product_id"]))
+    ]
+    assert len(normalized_grates) == 15
+    assert normalized_grates["system_role"].eq("grate").all()
+    assert normalized_grates["product_family"].eq("showerdrain_c_article_grate").all()
+    assert len(build_export_evidence_dataframe(frames.products, frames.excluded)) == 30
+
+    template = tmp_path / "template.xlsx"
+    workbook = openpyxl.Workbook()
+    workbook.active.title = "Candidates_All"
+    workbook.save(template)
+    workbook.close()
+    output = tmp_path / "canonical.xlsx"
+    export_excel(
+        template,
+        output,
+        default_config(),
+        registry_df=frames.registry,
+        products_df=frames.products,
+        comparison_df=frames.comparison,
+        excluded_df=frames.excluded,
+        evidence_df=frames.evidence,
+        bom_options_df=frames.bom_options,
+        components_df=None,
+    )
+
+    with pd.ExcelFile(output, engine="openpyxl") as xls:
+        exported_products = pd.read_excel(xls, sheet_name="Products")
+        exported_bom = pd.read_excel(xls, sheet_name="BOM_Options")
+        final_assemblies = pd.read_excel(xls, sheet_name="Final_Assemblies")
+        final_details = pd.read_excel(xls, sheet_name="Final_Set_Details")
+        cplus_evidence = pd.read_excel(xls, sheet_name="Cplus_Compatible_Grate_Evidence")
+        assert len(exported_products) == 80
+        assert len(exported_bom) == 251
+        assert len(final_assemblies) == 62
+        assert len(final_details) == 62
+        assert len(cplus_evidence) == 30
+        assert exported_products["product_id"].str.startswith(
+            "aco-assembled-showerdrain-cplus-"
+        ).sum() == 30
+        assert (
+            exported_bom.get("product_family", pd.Series(dtype=str))
+            .fillna("")
+            .eq("showerdrain_cplus")
+            .sum()
+            == 30
+        )
+        for scenario_sheet in (
+            "Comparison_flow_head_10mm",
+            "Comparison_flow_head_20mm",
+        ):
+            assert len(pd.read_excel(xls, sheet_name=scenario_sheet)) == 80
