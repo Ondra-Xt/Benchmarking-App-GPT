@@ -8,26 +8,27 @@ import pandas as pd
 
 # Configurable baseline expectations
 EXPECTED_SHEET_COUNTS = {
-    "Products": 50,
-    "Comparison": 50,
-    "Scoring_Field_Coverage": 50,
+    "Products": 80,
+    "Comparison": 80,
+    "Scoring_Field_Coverage": 80,
     "Candidates_All": 118,
     "Components": 100,
-    "BOM_Options": 221,
-    "Final_Assemblies": 32,
-    "Final_Set_Details": 32,
+    "BOM_Options": 251,
+    "Final_Assemblies": 62,
+    "Final_Set_Details": 62,
     "Mplus_Compound_Mappings": 4,
     "Eplus_Proposal_Mappings": 3,
     "Conditional_Technical_Values": 8,
     "Article_Variants": 76,
     "Scoring_Scenarios": 3,
-    "Comparison_flow_head_10mm": 50,
-    "Comparison_flow_head_20mm": 50,
+    "Comparison_flow_head_10mm": 80,
+    "Comparison_flow_head_20mm": 80,
+    "Cplus_Compatible_Grate_Evidence": 30,
 }
 COMPONENTS_MIN_ROWS = 1
 EXPECTED_BOM_OPTION_TYPE_COUNTS = {
     "optional_accessory": 144,
-    "compatible_grate": 53,
+    "compatible_grate": 83,
 }
 EXPECTED_ASSEMBLED_PREFIX_COUNTS = {
     "aco-assembled-showerdrain-splus": 16,
@@ -35,7 +36,7 @@ EXPECTED_ASSEMBLED_PREFIX_COUNTS = {
     "aco-assembled-showerdrain-mplus": 4,
     "aco-assembled-showerdrain-eplus": 0,
     "aco-assembled-showerdrain-b": 0,
-    "aco-assembled-showerdrain-cplus": 0,
+    "aco-assembled-showerdrain-cplus": 30,
 }
 EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS = {
     "easyflow": 2,
@@ -43,6 +44,7 @@ EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS = {
     "showerdrain_c": 4,
     "showerdrain_splus": 16,
     "showerdrain_mplus": 4,
+    "showerdrain_cplus": 30,
 }
 FINAL_ASSEMBLIES_PREFIX = "aco-assembled-"
 FINAL_ASSEMBLIES_EASYFLOW_EXPECTED = {
@@ -62,14 +64,15 @@ FINAL_ASSEMBLIES_REQUIRED_COMPLETENESS_COLUMNS = [
 ]
 EXPECTED_FINAL_ASSEMBLIES_STATUS_COUNTS = {
     "complete": 26,
+    "explicit_source_ready_production_assembly": 30,
     "partial": 2,
     "conditional_parameter_available_production_blocked": 4,
     "missing": 0,
 }
-EXPECTED_FINAL_SET_DETAILS_ROW_COUNT = 32
+EXPECTED_FINAL_SET_DETAILS_ROW_COUNT = 62
 EXPECTED_FINAL_SET_DETAILS_FAMILY_COUNTS = EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS.copy()
 EXPECTED_FINAL_SET_DETAILS_READY_COUNTS = {
-    True: 26,
+    True: 56,
     False: 6,
 }
 FINAL_SET_DETAILS_REQUIRED_COLUMNS = [
@@ -354,6 +357,116 @@ class CheckResult:
     detail: str
 
 
+APP_EXPORT_EXPECTED_COUNTS = {
+    "Products": 80,
+    "Comparison": 80,
+    "Scoring_Field_Coverage": 80,
+    "Candidates_All": 118,
+    "Components": 100,
+    "BOM_Options": 251,
+    "Final_Assemblies": 62,
+    "Final_Set_Details": 62,
+    "Cplus_Compatible_Grate_Evidence": 30,
+    "Comparison_flow_head_10mm": 80,
+    "Comparison_flow_head_20mm": 80,
+}
+
+APP_EXPORT_EXPECTED_ASSEMBLED_FAMILY_COUNTS = {
+    "showerdrain_splus": 16,
+    "showerdrain_c": 4,
+    "showerdrain_mplus": 4,
+    "showerdrain_cplus": 30,
+    "showerdrain_eplus": 0,
+    "showerdrain_b": 0,
+}
+
+_ASSEMBLED_PREFIX_TO_FAMILY = {
+    "aco-assembled-showerdrain-splus": "showerdrain_splus",
+    "aco-assembled-showerdrain-c": "showerdrain_c",
+    "aco-assembled-showerdrain-mplus": "showerdrain_mplus",
+    "aco-assembled-showerdrain-eplus": "showerdrain_eplus",
+    "aco-assembled-showerdrain-b": "showerdrain_b",
+    "aco-assembled-showerdrain-cplus": "showerdrain_cplus",
+}
+
+
+def _assembled_family_series(df: pd.DataFrame) -> pd.Series:
+    """Resolve assembled families exactly, with delimiter-safe ID fallbacks."""
+    families = pd.Series("", index=df.index, dtype="object")
+    known_families = set(APP_EXPORT_EXPECTED_ASSEMBLED_FAMILY_COUNTS)
+    for column in ("assembled_family", "product_family", "family"):
+        values = _norm_series(df, column).str.lower()
+        usable = families.eq("") & values.isin(known_families)
+        families.loc[usable] = values.loc[usable]
+
+    product_ids = _norm_series(df, "product_id").str.lower()
+    # C+ must be resolved before C. The trailing hyphens make every fallback
+    # delimiter-safe even if this ordering changes later.
+    id_prefixes = (
+        ("aco-assembled-showerdrain-cplus-", "showerdrain_cplus"),
+        ("aco-assembled-showerdrain-splus-", "showerdrain_splus"),
+        ("aco-assembled-showerdrain-mplus-", "showerdrain_mplus"),
+        ("aco-assembled-showerdrain-eplus-", "showerdrain_eplus"),
+        ("aco-assembled-showerdrain-b-", "showerdrain_b"),
+        ("aco-assembled-showerdrain-c-", "showerdrain_c"),
+    )
+    for prefix, family in id_prefixes:
+        matches = families.eq("") & product_ids.str.startswith(prefix)
+        families.loc[matches] = family
+    return families
+
+
+def validate_app_export_baseline(path: str) -> Tuple[bool, List[CheckResult]]:
+    """Fast fail-closed preflight for a workbook exposed by Streamlit.
+
+    This deliberately uses fixed canonical counts rather than the current UI/session
+    membership.  A filtered connector run or stale partial session is therefore not
+    eligible for download.
+    """
+    results: List[CheckResult] = []
+    try:
+        xls = pd.ExcelFile(path, engine="openpyxl")
+    except Exception as exc:
+        return False, [CheckResult("app_export_open", False, f"{type(exc).__name__}: {exc}")]
+
+    required = list(APP_EXPORT_EXPECTED_COUNTS)
+    missing = [name for name in required if name not in xls.sheet_names]
+    results.append(CheckResult("app_export_required_sheets", not missing, f"missing={missing}"))
+    if missing:
+        xls.close()
+        return False, results
+
+    sheets = {name: pd.read_excel(xls, sheet_name=name) for name in required}
+    xls.close()
+    for name, expected in APP_EXPORT_EXPECTED_COUNTS.items():
+        actual = len(sheets[name])
+        results.append(CheckResult(
+            f"app_export_row_count:{name}", actual == expected,
+            f"actual={actual} expected={expected}",
+        ))
+
+    products = sheets["Products"]
+    assembled_families = _assembled_family_series(products)
+    for family, expected in APP_EXPORT_EXPECTED_ASSEMBLED_FAMILY_COUNTS.items():
+        actual = int(assembled_families.eq(family).sum())
+        results.append(CheckResult(
+            f"app_export_assembled_family_count:{family}", actual == expected,
+            f"actual={actual} expected={expected}",
+        ))
+
+    bom = sheets["BOM_Options"]
+    cplus_bom = (
+        _norm_series(bom, "option_type").str.lower().eq("compatible_grate")
+        & _norm_series(bom, "product_family").str.lower().eq("showerdrain_cplus")
+    )
+    actual_cplus_bom = int(cplus_bom.sum())
+    results.append(CheckResult(
+        "app_export_cplus_bom_count", actual_cplus_bom == 30,
+        f"actual={actual_cplus_bom} expected=30",
+    ))
+    return all(result.passed for result in results), results
+
+
 def _norm_series(df: pd.DataFrame, col: str) -> pd.Series:
     if col not in df.columns:
         return pd.Series([""] * len(df), index=df.index, dtype=str)
@@ -362,7 +475,13 @@ def _norm_series(df: pd.DataFrame, col: str) -> pd.Series:
 
 def _compatible_grate_meta_valid(meta: str) -> bool:
     text = str(meta or "").lower()
-    return all(snippet in text for snippet in COMPATIBLE_GRATE_META_REQUIRED_SNIPPETS)
+    explicit = all(snippet in text for snippet in (
+        "compatibility_confidence=high",
+        "explicit_article_matrix=true",
+        "equal_nominal_length=true",
+    ))
+    implicit = all(snippet in text for snippet in COMPATIBLE_GRATE_META_REQUIRED_SNIPPETS)
+    return explicit or implicit
 
 
 def _empty_series(df: pd.DataFrame, col: str) -> pd.Series:
@@ -612,6 +731,21 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
         results.append(CheckResult(f"scenario_mplus_resolution_source:{sheet_name}", source_bad == 0, f"actual_bad={source_bad} expected=Conditional_Technical_Values"))
         results.append(CheckResult(f"scenario_mplus_resolution_status:{sheet_name}", status_bad == 0, f"actual_bad={status_bad} expected=resolved_from_condition"))
         results.append(CheckResult(f"scenario_mplus_ready:{sheet_name}", ready_bad == 0, f"actual_bad={ready_bad} expected=true"))
+
+        expected_cplus_rows = EXPECTED_ASSEMBLED_PREFIX_COUNTS.get("aco-assembled-showerdrain-cplus", 0)
+        if expected_cplus_rows:
+            cplus_scenario = scenario_df[
+                _norm_series(scenario_df, "product_id").str.startswith("aco-assembled-showerdrain-cplus-")
+            ]
+            cplus_source_bad = int((~_string_series_eq(cplus_scenario, "flow_rate_resolution_source", "scalar_unconditional")).sum())
+            cplus_status_bad = int((~_string_series_eq(cplus_scenario, "flow_rate_resolution_status", "resolved_from_scalar")).sum())
+            cplus_ready_bad = int((~_bool_series_eq(cplus_scenario, "scenario_ready_for_benchmark", True)).sum())
+            cplus_blocked_filled = int((~_empty_series(cplus_scenario, "scenario_blocked_reason")).sum())
+            results.append(CheckResult(f"scenario_cplus_count:{sheet_name}", len(cplus_scenario) == expected_cplus_rows, f"actual={len(cplus_scenario)} expected={expected_cplus_rows}"))
+            results.append(CheckResult(f"scenario_cplus_resolution_source:{sheet_name}", cplus_source_bad == 0, f"actual_bad={cplus_source_bad} expected=scalar_unconditional"))
+            results.append(CheckResult(f"scenario_cplus_resolution_status:{sheet_name}", cplus_status_bad == 0, f"actual_bad={cplus_status_bad} expected=resolved_from_scalar"))
+            results.append(CheckResult(f"scenario_cplus_ready:{sheet_name}", cplus_ready_bad == 0, f"actual_bad={cplus_ready_bad} expected=true"))
+            results.append(CheckResult(f"scenario_cplus_blocked_reason_empty:{sheet_name}", cplus_blocked_filled == 0, f"actual_filled={cplus_blocked_filled} expected=0"))
 
     for default_sheet_name, default_df in (("Products", products), ("Comparison", comparison)):
         default_family = _norm_series(default_df, "product_family").str.lower()
@@ -1043,6 +1177,41 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
         results.append(CheckResult("final_assemblies_mplus_blocked_reason", mplus_blocked_bad == 0, f"actual_bad={mplus_blocked_bad} expected_snippet={MPLUS_BLOCKING_REASON_SNIPPET}"))
         results.append(CheckResult("final_assemblies_mplus_source_status_note", mplus_note_bad == 0, f"actual_bad={mplus_note_bad} expected_snippet={MPLUS_PRODUCTION_STATUS_NOTE_SNIPPET}"))
 
+    if final_assemblies is not None and EXPECTED_ASSEMBLED_PREFIX_COUNTS.get("aco-assembled-showerdrain-cplus", 0) > 0:
+        cplus = final_assemblies[_norm_series(final_assemblies, "assembled_family").str.lower().eq("showerdrain_cplus")]
+        cplus_ids = _norm_series(cplus, "product_id")
+        results.append(CheckResult("cplus_final_assemblies_count", len(cplus) == 30, f"actual={len(cplus)} expected=30"))
+        results.append(CheckResult("cplus_final_assemblies_unique_ids", cplus_ids.nunique() == len(cplus), f"unique={cplus_ids.nunique()} rows={len(cplus)}"))
+        results.append(CheckResult("cplus_final_assemblies_prefix", cplus_ids.str.startswith("aco-assembled-showerdrain-cplus-").all(), "all IDs must use the stable C+ prefix"))
+        for field in ("base_id", "base_article_number", "base_source_url", "grate_id", "grate_article_number", "grate_source_url", "source_text_or_reason"):
+            blank = int(_norm_series(cplus, field).eq("").sum())
+            results.append(CheckResult(f"cplus_final_assemblies_link:{field}", blank == 0, f"actual_blank={blank} expected=0"))
+        checks = {
+            "product_family": "showerdrain_cplus",
+            "family": "showerdrain_cplus",
+            "assembly_model": "base_x_grate",
+            "compatibility_evidence_type": "explicit_catalog_matrix",
+            "compatibility_confidence": "high",
+            "data_quality_status": "explicit_source_ready_production_assembly",
+        }
+        for field, expected in checks.items():
+            bad = int((~_string_series_eq(cplus, field, expected)).sum())
+            results.append(CheckResult(f"cplus_final_assemblies_value:{field}", bad == 0, f"actual_bad={bad} expected={expected}"))
+        for field, expected in (("assembled_from_bom", True), ("article_level_compatibility_found", True), ("ready_for_benchmark", True), ("ready_for_customer_view", False), ("customer_view_enabled", False)):
+            bad = int((~_bool_series_eq(cplus, field, expected)).sum())
+            results.append(CheckResult(f"cplus_final_assemblies_bool:{field}", bad == 0, f"actual_bad={bad} expected={expected}"))
+        base_ids = _norm_series(cplus, "base_id")
+        grate_ids = _norm_series(cplus, "grate_id")
+        grate_articles = _norm_series(cplus, "grate_article_number")
+        results.append(CheckResult("cplus_final_assemblies_no_self_reference", ~(base_ids.eq(grate_ids) & base_ids.ne("")).any(), "base_id must differ from grate_id"))
+        results.append(CheckResult("cplus_final_assemblies_no_body_as_grate", ~grate_articles.str.startswith("9010.85.").any(), "9010.85.xx body articles are forbidden as grates"))
+        results.append(CheckResult("cplus_final_assemblies_no_tile", ~(_norm_series(cplus, "product_name").str.contains("tile", case=False, regex=False) | grate_articles.str.contains("tile", case=False, regex=False)).any(), "Tile articles are out of scope"))
+        for base_id, expected in CPLUS_EXPECTED.items():
+            rows = cplus[base_ids.eq(base_id)]
+            for field, value in expected.items():
+                ok = _string_series_eq(rows, field, value).all() if isinstance(value, str) else _numeric_series_eq(rows, field, value).all()
+                results.append(CheckResult(f"cplus_final_assemblies_hydraulic:{base_id}:{field}", bool(ok) and len(rows) == 15, f"rows={len(rows)} expected_rows=15 expected_value={value}"))
+
     if final_set_details is not None:
         missing_columns = [
             col for col in FINAL_SET_DETAILS_REQUIRED_COLUMNS
@@ -1079,7 +1248,12 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
             results.append(CheckResult(f"final_set_details_family_count:{family}", actual == expected, f"actual={actual} expected={expected}"))
 
         for field in ["ready_for_benchmark", "ready_for_customer_view"]:
-            for expected_bool, expected_count in EXPECTED_FINAL_SET_DETAILS_READY_COUNTS.items():
+            expected_counts = dict(EXPECTED_FINAL_SET_DETAILS_READY_COUNTS)
+            if field == "ready_for_customer_view":
+                cplus_count = EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS.get("showerdrain_cplus", 0)
+                expected_counts[True] = expected_counts.get(True, 0) - cplus_count
+                expected_counts[False] = expected_counts.get(False, 0) + cplus_count
+            for expected_bool, expected_count in expected_counts.items():
                 actual = int(_bool_series_eq(final_set_details, field, expected_bool).sum())
                 results.append(CheckResult(
                     f"final_set_details_{field}_count:{expected_bool}",
@@ -1091,7 +1265,9 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
         mplus_detail_mask = detail_families.eq("showerdrain_mplus")
         easyflow = final_set_details[easyflow_mask]
         mplus_details = final_set_details[mplus_detail_mask]
-        non_easyflow = final_set_details[~easyflow_mask & ~mplus_detail_mask]
+        cplus_detail_mask = detail_families.eq("showerdrain_cplus")
+        cplus_details = final_set_details[cplus_detail_mask]
+        non_easyflow = final_set_details[~easyflow_mask & ~mplus_detail_mask & ~cplus_detail_mask]
         easyflow_status_bad = int((~_string_series_eq(easyflow, "data_quality_status", "partial")).sum())
         easyflow_benchmark_bad = int((~_bool_series_eq(easyflow, "ready_for_benchmark", False)).sum())
         easyflow_customer_bad = int((~_bool_series_eq(easyflow, "ready_for_customer_view", False)).sum())
@@ -1114,6 +1290,15 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
         results.append(CheckResult("final_set_details_non_easyflow_blocked_reason_empty", non_easyflow_blocked_filled == 0, f"actual_filled={non_easyflow_blocked_filled} expected_filled=0"))
         results.append(CheckResult("final_set_details_non_easyflow_article_variant_status", non_easyflow_variant_bad == 0, f"actual_bad={non_easyflow_variant_bad} expected=not_required"))
 
+        cplus_detail_status_bad = int((~_string_series_eq(cplus_details, "data_quality_status", "explicit_source_ready_production_assembly")).sum())
+        cplus_detail_benchmark_bad = int((~_bool_series_eq(cplus_details, "ready_for_benchmark", True)).sum())
+        cplus_detail_customer_bad = int((~_bool_series_eq(cplus_details, "ready_for_customer_view", False)).sum())
+        cplus_detail_blocked_filled = int((~_empty_series(cplus_details, "blocked_reason")).sum())
+        results.append(CheckResult("final_set_details_cplus_status", cplus_detail_status_bad == 0, f"actual_bad={cplus_detail_status_bad} expected=explicit_source_ready_production_assembly"))
+        results.append(CheckResult("final_set_details_cplus_ready_for_benchmark_true", cplus_detail_benchmark_bad == 0, f"actual_bad={cplus_detail_benchmark_bad} expected=false"))
+        results.append(CheckResult("final_set_details_cplus_ready_for_customer_view_false", cplus_detail_customer_bad == 0, f"actual_bad={cplus_detail_customer_bad} expected=false"))
+        results.append(CheckResult("final_set_details_cplus_blocked_reason_empty", cplus_detail_blocked_filled == 0, f"actual_filled={cplus_detail_blocked_filled} expected=0"))
+
         mplus_detail_status_bad = int((~_string_series_eq(mplus_details, "data_quality_status", "conditional_parameter_available_production_blocked")).sum())
         mplus_detail_benchmark_bad = int((~_bool_series_eq(mplus_details, "ready_for_benchmark", False)).sum())
         mplus_detail_customer_bad = int((~_bool_series_eq(mplus_details, "ready_for_customer_view", False)).sum())
@@ -1123,9 +1308,20 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
         results.append(CheckResult("final_set_details_mplus_ready_for_customer_view_false", mplus_detail_customer_bad == 0, f"actual_bad={mplus_detail_customer_bad} expected=false"))
         results.append(CheckResult("final_set_details_mplus_blocked_reason", mplus_detail_blocked_bad == 0, f"actual_bad={mplus_detail_blocked_bad} expected_snippet={MPLUS_BLOCKING_REASON_SNIPPET}"))
 
-    cmp_product_ids = _norm_series(comparison, "product_id").str.lower()
+    comparison_assembled_families = _assembled_family_series(comparison)
     for prefix, expected in EXPECTED_ASSEMBLED_PREFIX_COUNTS.items():
-        actual = int(cmp_product_ids.str.startswith(prefix).sum())
+        family = _ASSEMBLED_PREFIX_TO_FAMILY.get(prefix.rstrip("-"))
+        if family is None:
+            # Preserve extensibility for custom validator expectations while keeping
+            # the canonical families above exact and delimiter-safe.
+            actual = int(
+                _norm_series(comparison, "product_id")
+                .str.lower()
+                .str.startswith(f"{prefix.rstrip('-')}-")
+                .sum()
+            )
+        else:
+            actual = int(comparison_assembled_families.eq(family).sum())
         results.append(CheckResult(f"assembled_count:{prefix}", actual == expected, f"actual={actual} expected={expected}"))
 
     for sheet_name, df in [("Products", products), ("Comparison", comparison)]:
@@ -1148,6 +1344,16 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
     grate_ids = {k for k, v in comp_role_map.items() if v == "grate"}
     grate_to_grate = int(((option_types == "compatible_grate") & bom_cid.isin(grate_ids) & bom_pid.isin(grate_ids)).sum())
     results.append(CheckResult("grate_to_grate_links", grate_to_grate == 0, f"actual={grate_to_grate} expected=0"))
+
+    expected_cplus_assemblies = EXPECTED_ASSEMBLED_PREFIX_COUNTS.get("aco-assembled-showerdrain-cplus", 0)
+    cplus_bom = bom[(option_types == "compatible_grate") & _norm_series(bom, "product_family").eq("showerdrain_cplus")]
+    results.append(CheckResult("cplus_bom_count", len(cplus_bom) == expected_cplus_assemblies, f"actual={len(cplus_bom)} expected={expected_cplus_assemblies}"))
+    cplus_bom_components = _norm_series(cplus_bom, "component_id")
+    results.append(CheckResult("cplus_bom_component_id_nonempty", cplus_bom_components.ne("").all(), f"empty={int(cplus_bom_components.eq('').sum())}"))
+    results.append(CheckResult("cplus_bom_component_id_exists", cplus_bom_components.isin(set(_norm_series(components, "product_id"))).all(), "all C+ component IDs must exist"))
+    results.append(CheckResult("cplus_bom_explicit_evidence", _string_series_eq(cplus_bom, "compatibility_evidence_type", "explicit_catalog_matrix").all(), "expected explicit_catalog_matrix"))
+    results.append(CheckResult("cplus_bom_high_confidence", _string_series_eq(cplus_bom, "compatibility_confidence", "high").all(), "expected high"))
+    results.append(CheckResult("cplus_bom_article_level", _bool_series_eq(cplus_bom, "article_level_compatibility_found", True).all(), "expected true"))
 
     nav_labels = int(comp_roles.eq("navigation-label").sum())
     results.append(CheckResult("navigation_label_components", nav_labels == 0, f"actual={nav_labels} expected=0"))

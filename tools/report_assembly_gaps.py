@@ -25,9 +25,9 @@ ACTIVE_FAMILIES = (
     "easyflow",
     "easyflowplus",
     "showerdrain_mplus",
+    "showerdrain_cplus",
 )
 REQUIRED_BLOCKED_FAMILIES = (
-    "showerdrain_cplus",
     "showerdrain_eplus",
     "showerdrain_b",
 )
@@ -42,6 +42,7 @@ STATUS_ACTIONS = {
     "blocked_pending_conditional_parameter_scoring": "implement scoring/export handling for conditional parameter values before production M+ assemblies",
     "blocked_proposal_only_compatibility_evidence": "collect explicit article-level base-to-grate compatibility before production generation",
     "blocked_pending_cplus_production_assembly": "review and promote explicit C+ catalog mappings into compatible_grate BOM / final assemblies in a separate production patch",
+    "production_active": "no action; C+ explicit catalog assemblies are baseline-protected",
 }
 
 
@@ -407,6 +408,19 @@ def build_report(
     cplus_compatible_grate_evidence = pd.DataFrame() if cplus_compatible_grate_evidence is None else cplus_compatible_grate_evidence.copy()
     proposal_mappings = _proposal_mapping_summaries(mplus_compound_mappings, eplus_proposal_mappings, cplus_compatible_grate_evidence)
     proposal_by_family = {summary.family: summary for summary in proposal_mappings}
+    if not cplus_compatible_grate_evidence.empty:
+        product_count_before = len(products)
+        bom_count_before = len(bom)
+        products, _comparison_unused, bom = excel_export._append_cplus_production_rows(
+            products,
+            pd.DataFrame(),
+            bom,
+            components,
+            cplus_compatible_grate_evidence,
+        )
+        if len(products) != product_count_before or len(bom) != bom_count_before:
+            final_assemblies = excel_export._extract_final_assemblies(products)
+            final_set_details = excel_export._extract_final_set_details(final_assemblies, bom, components)
     if not mplus_compound_mappings.empty:
         products, _comparison_unused = excel_export._append_mplus_final_assembly_rows(
             products,
@@ -529,7 +543,8 @@ def print_report(report: AssemblyGapReport) -> None:
             print(f"  article_level_compatibility_found={summary.article_level_compatibility_found or 'empty'}")
             print(f"  safe_diagnostic_mappings_available={summary.safe_to_generate_count > 0}")
             print(f"  customer_ready={summary.customer_ready or 'empty'}")
-            print(f"  production_assemblies_generated=False")
+            generated = report.current_assembled_counts.get(summary.family, 0) > 0
+            print(f"  production_assemblies_generated={generated}")
             print(f"  production_status_note={summary.production_status_note or 'none'}")
             print(f"  data_quality_status={summary.data_quality_status or 'empty'}")
     else:
@@ -568,7 +583,11 @@ def print_report(report: AssemblyGapReport) -> None:
         else:
             print(f"- {blocked.family}: {blocked.next_required_action}")
 
-    print("\nProduction behavior changed: no (C+ evidence remains diagnostic-only; no BOM, assembly, scoring, connector, or customer-ready behavior changes)")
+    cplus_active = report.current_assembled_counts.get("showerdrain_cplus", 0) > 0
+    if cplus_active:
+        print("\nProduction behavior changed: yes (C+ explicit catalog assemblies are active); customer-ready behavior changed: no")
+    else:
+        print("\nProduction behavior changed: no")
 
 
 def main() -> int:
@@ -601,8 +620,8 @@ def main() -> int:
     cplus_compatible_grate_evidence = build_export_evidence_dataframe(_cplus_products, cplus_source_components)
     report = build_report(
         registry,
-        products,
-        components,
+        _cplus_products,
+        cplus_source_components,
         bom,
         final_assemblies=final_assemblies,
         final_set_details=final_set_details,
