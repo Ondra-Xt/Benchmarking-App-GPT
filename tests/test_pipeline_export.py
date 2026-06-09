@@ -290,12 +290,14 @@ class PipelineExportTests(unittest.TestCase):
                 self.assertIn("Mplus_Compound_Mappings", wb.sheetnames)
                 self.assertLess(wb.sheetnames.index("Final_Set_Details"), wb.sheetnames.index("Mplus_Compound_Mappings"))
                 self.assertLess(wb.sheetnames.index("Mplus_Compound_Mappings"), wb.sheetnames.index("Eplus_Proposal_Mappings"))
+                self.assertIn("Eplus_Compatible_Grate_Evidence", wb.sheetnames)
                 self.assertIn("Cplus_Compatible_Grate_Evidence", wb.sheetnames)
                 self.assertIn("Conditional_Technical_Values", wb.sheetnames)
                 self.assertIn("Scoring_Scenarios", wb.sheetnames)
                 self.assertIn("Comparison_flow_head_10mm", wb.sheetnames)
                 self.assertIn("Comparison_flow_head_20mm", wb.sheetnames)
-                self.assertLess(wb.sheetnames.index("Eplus_Proposal_Mappings"), wb.sheetnames.index("Cplus_Compatible_Grate_Evidence"))
+                self.assertLess(wb.sheetnames.index("Eplus_Proposal_Mappings"), wb.sheetnames.index("Eplus_Compatible_Grate_Evidence"))
+                self.assertLess(wb.sheetnames.index("Eplus_Compatible_Grate_Evidence"), wb.sheetnames.index("Cplus_Compatible_Grate_Evidence"))
                 self.assertLess(wb.sheetnames.index("Cplus_Compatible_Grate_Evidence"), wb.sheetnames.index("Conditional_Technical_Values"))
                 self.assertLess(wb.sheetnames.index("Conditional_Technical_Values"), wb.sheetnames.index("Components"))
                 self.assertLess(wb.sheetnames.index("Conditional_Technical_Values"), wb.sheetnames.index("Article_Variants"))
@@ -350,6 +352,16 @@ class PipelineExportTests(unittest.TestCase):
             self.assertEqual(set(eplus_df["safe_to_generate"]), {False})
             self.assertEqual(set(eplus_df["ready_for_benchmark"]), {False})
             self.assertEqual(set(eplus_df["ready_for_customer_view"]), {False})
+            eplus_evidence_rows = self._sheet_rows(out, "Eplus_Compatible_Grate_Evidence")
+            eplus_evidence_df = pd.DataFrame(eplus_evidence_rows[1:], columns=eplus_evidence_rows[0])
+            self.assertEqual(len(eplus_evidence_df), 3)
+            self.assertEqual(set(eplus_evidence_df["set_id"]), set(eplus_df["set_id"]))
+            self.assertEqual(set(eplus_evidence_df["compatibility_evidence_type"]), {"no_explicit_article_level_matrix_found"})
+            self.assertEqual(set(eplus_evidence_df["article_level_compatibility_found"]), {False})
+            self.assertEqual(set(eplus_evidence_df["safe_to_generate"]), {False})
+            final_rows = self._sheet_rows(out, "Final_Assemblies")
+            final_df = pd.DataFrame(final_rows[1:], columns=final_rows[0])
+            self.assertTrue(set(eplus_evidence_df["set_id"]).isdisjoint(set(final_df["product_id"])))
             self.assertEqual(len(self._sheet_rows(out, "Products")) - 1, 5)
             self.assertEqual(len(self._sheet_rows(out, "Final_Assemblies")) - 1, 4)
             self.assertEqual(len(self._sheet_rows(out, "Final_Set_Details")) - 1, 4)
@@ -1751,6 +1763,7 @@ class PipelineExportTests(unittest.TestCase):
                 "Final_Set_Details": 4,
                 "Mplus_Compound_Mappings": 4,
                 "Eplus_Proposal_Mappings": 3,
+                "Eplus_Compatible_Grate_Evidence": 3,
                 "Conditional_Technical_Values": 8,
                 "Article_Variants": 0,
             }

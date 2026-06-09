@@ -192,7 +192,7 @@ EPLUS_GRATE_SOURCE_URL = (
     "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/"
     "aco-showerdrain-eplus/design-roste-aus-elektropoliertem-edelstahl/"
 )
-EPLUS_COMPATIBILITY_EVIDENCE_TYPE = "page_level_family_bom_or_inferred_from_current_bom"
+EPLUS_COMPATIBILITY_EVIDENCE_TYPE = "no_explicit_article_level_matrix_found"
 EPLUS_MISSING_EVIDENCE = "explicit_article_level_base_to_grate_compatibility"
 EPLUS_BLOCKING_REASON = (
     "E+ diagnostic has only conservative page-level body/grate evidence and no explicit "
@@ -1140,7 +1140,7 @@ def _extract_eplus_proposal_mappings(
                 "grate_evidence_type": "source_page_level_grate_url",
                 "grate_confidence": "high",
                 "compatibility_evidence_type": EPLUS_COMPATIBILITY_EVIDENCE_TYPE,
-                "compatibility_confidence": "medium",
+                "compatibility_confidence": "low",
                 "article_level_compatibility_found": False,
                 "data_quality_status": "proposal_only_partial",
                 "missing_evidence": EPLUS_MISSING_EVIDENCE,
@@ -1651,6 +1651,7 @@ def export_excel(
     - Source_Checks
     - Mplus_Compound_Mappings
     - Eplus_Proposal_Mappings
+    - Eplus_Compatible_Grate_Evidence
     - Cplus_Compatible_Grate_Evidence
     - Article_Variants
     - Final_Scoring_Weights
@@ -1767,6 +1768,9 @@ def export_excel(
         final_assemblies_df,
         final_set_details_df,
     )
+    from tools.report_eplus_compatible_grate_evidence import build_export_evidence_dataframe as build_eplus_evidence
+
+    eplus_compatible_grate_evidence_df = build_eplus_evidence(eplus_proposal_mappings_df)
     conditional_technical_values_df = _extract_conditional_technical_values(mplus_compound_mappings_df)
     scoring_scenarios_df = scoring_scenarios_dataframe()
     comparison_flow_head_10mm_df = build_scenario_comparison(
@@ -1782,6 +1786,7 @@ def export_excel(
     write_df("Final_Set_Details", final_set_details_df)
     write_df("Mplus_Compound_Mappings", mplus_compound_mappings_df)
     write_df("Eplus_Proposal_Mappings", eplus_proposal_mappings_df)
+    write_df("Eplus_Compatible_Grate_Evidence", eplus_compatible_grate_evidence_df)
     write_df("Cplus_Compatible_Grate_Evidence", cplus_compatible_grate_evidence_df)
     write_df("Conditional_Technical_Values", conditional_technical_values_df)
     write_df("Scoring_Scenarios", scoring_scenarios_df)

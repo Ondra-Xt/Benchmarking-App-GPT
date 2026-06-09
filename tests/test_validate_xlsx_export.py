@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 
 from src.scenario_scoring import build_scenario_comparison, scoring_scenarios_dataframe
+from tools.report_eplus_compatible_grate_evidence import build_export_evidence_dataframe
 
 
 def _load_validator_module():
@@ -54,8 +55,8 @@ def _eplus_proposal_mappings_dataframe():
             "body_confidence": "high",
             "grate_evidence_type": "source_page_level_grate_url",
             "grate_confidence": "high",
-            "compatibility_evidence_type": "page_level_family_bom_or_inferred_from_current_bom",
-            "compatibility_confidence": "medium",
+            "compatibility_evidence_type": "no_explicit_article_level_matrix_found",
+            "compatibility_confidence": "low",
             "article_level_compatibility_found": False,
             "data_quality_status": "proposal_only_partial",
             "missing_evidence": "explicit_article_level_base_to_grate_compatibility",
@@ -494,6 +495,7 @@ def _write_xlsx(path: Path, sheets: dict):
     sheets = dict(sheets)
     comparison = sheets.get("Comparison", pd.DataFrame())
     conditional = sheets.get("Conditional_Technical_Values", pd.DataFrame())
+    sheets.setdefault("Eplus_Compatible_Grate_Evidence", build_export_evidence_dataframe(sheets.get("Eplus_Proposal_Mappings", pd.DataFrame())))
     sheets.setdefault("Scoring_Scenarios", scoring_scenarios_dataframe())
     sheets.setdefault(
         "Comparison_flow_head_10mm",

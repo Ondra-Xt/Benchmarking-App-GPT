@@ -44,6 +44,7 @@ def main(argv: list[str] | None = None) -> int:
         "Products",
         "BOM_Options",
         "Final_Assemblies",
+        "Eplus_Compatible_Grate_Evidence",
         "Cplus_Compatible_Grate_Evidence",
         "Cplus_assembled",
     ):

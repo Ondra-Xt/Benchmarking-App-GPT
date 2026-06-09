@@ -14,8 +14,8 @@ from tools import diagnose_eplus_base_row_sources as eplus_sources
 
 PRODUCT_FAMILY = "showerdrain_eplus"
 ASSEMBLY_MODEL = "base_x_grate"
-COMPATIBILITY_EVIDENCE_TYPE = "page_level_family_bom_or_inferred_from_current_bom"
-COMPATIBILITY_CONFIDENCE = "medium"
+COMPATIBILITY_EVIDENCE_TYPE = "no_explicit_article_level_matrix_found"
+COMPATIBILITY_CONFIDENCE = "low"
 DATA_QUALITY_STATUS = "proposal_only_partial"
 MISSING_EVIDENCE = "explicit_article_level_base_to_grate_compatibility"
 BLOCKING_REASON = (

@@ -47,6 +47,7 @@ def _write_canonical_summary_workbook(path: Path) -> None:
         ),
         "Final_Assemblies": pd.DataFrame({"product_id": product_ids[:62]}),
         "Final_Set_Details": pd.DataFrame({"assembled_product_id": product_ids[:62]}),
+        "Eplus_Compatible_Grate_Evidence": pd.DataFrame({"mapping_id": range(3)}),
         "Cplus_Compatible_Grate_Evidence": pd.DataFrame({"mapping_id": range(30)}),
         "Comparison_flow_head_10mm": scenario_10,
         "Comparison_flow_head_20mm": scenario_20,

@@ -18,6 +18,7 @@ EXPECTED_SHEET_COUNTS = {
     "Final_Set_Details": 62,
     "Mplus_Compound_Mappings": 4,
     "Eplus_Proposal_Mappings": 3,
+    "Eplus_Compatible_Grate_Evidence": 3,
     "Conditional_Technical_Values": 8,
     "Article_Variants": 76,
     "Scoring_Scenarios": 3,
@@ -120,6 +121,7 @@ REQUIRED_SHEETS = [
     "Final_Set_Details",
     "Mplus_Compound_Mappings",
     "Eplus_Proposal_Mappings",
+    "Eplus_Compatible_Grate_Evidence",
     "Cplus_Compatible_Grate_Evidence",
     "Conditional_Technical_Values",
     "Article_Variants",
@@ -256,6 +258,17 @@ EPLUS_PROPOSAL_MAPPINGS_REQUIRED_COLUMNS = [
     "recommended_next_action",
     "production_status_note",
 ]
+
+EPLUS_COMPATIBLE_GRATE_EVIDENCE_REQUIRED_COLUMNS = [
+    "set_id", "product_family", "assembly_model", "body_id", "body_article_number",
+    "body_source_url", "grate_id", "grate_article_number", "grate_source_url",
+    "source_search_scope", "source_search_status", "compatibility_evidence_type",
+    "compatibility_confidence", "article_level_compatibility_found", "safe_to_generate",
+    "ready_for_benchmark", "ready_for_customer_view", "blocking_reason",
+    "recommended_next_action", "production_status_note",
+]
+EPLUS_NO_EXPLICIT_MATRIX = "no_explicit_article_level_matrix_found"
+
 EPLUS_EXPECTED_BODY_IDS = {
     "aco-showerdrain-eplus-rinnenkoerper-einbauhoehe-oberkante-estrich-25-128-mm",
     "aco-showerdrain-eplus-rinnenkoerper-einbauhoehe-oberkante-estrich-57-128-mm",
@@ -628,6 +641,15 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
             else pd.DataFrame(columns=CONDITIONAL_TECHNICAL_VALUES_REQUIRED_COLUMNS)
         )
     )
+    eplus_evidence = (
+        sheets.get("Eplus_Compatible_Grate_Evidence")
+        if "Eplus_Compatible_Grate_Evidence" in sheets
+        else (
+            pd.read_excel(xls, sheet_name="Eplus_Compatible_Grate_Evidence")
+            if "Eplus_Compatible_Grate_Evidence" in xls.sheet_names
+            else pd.DataFrame(columns=EPLUS_COMPATIBLE_GRATE_EVIDENCE_REQUIRED_COLUMNS)
+        )
+    )
     article_variants = sheets.get("Article_Variants", pd.DataFrame(columns=ARTICLE_VARIANTS_REQUIRED_COLUMNS))
 
     scoring_scenarios = sheets["Scoring_Scenarios"]
@@ -860,6 +882,22 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
         ))
 
 
+    if "Eplus_Compatible_Grate_Evidence" in required_sheets or "Eplus_Compatible_Grate_Evidence" in xls.sheet_names:
+        missing = [column for column in EPLUS_COMPATIBLE_GRATE_EVIDENCE_REQUIRED_COLUMNS if column not in eplus_evidence.columns]
+        results.append(CheckResult("eplus_evidence_required_columns", not missing, f"missing={missing}"))
+        if not missing:
+            evidence_ids = set(_norm_series(eplus_evidence, "set_id")) - {""}
+            proposal_ids = set(_norm_series(eplus_proposal_mappings, "set_id")) - {""}
+            results.append(CheckResult("eplus_evidence_matches_proposals", evidence_ids == proposal_ids, f"evidence={sorted(evidence_ids)} proposals={sorted(proposal_ids)}"))
+            classifications = _norm_series(eplus_evidence, "compatibility_evidence_type")
+            results.append(CheckResult("eplus_evidence_no_explicit_matrix", classifications.eq(EPLUS_NO_EXPLICIT_MATRIX).all(), f"actual={sorted(set(classifications))}"))
+            for column in ("article_level_compatibility_found", "safe_to_generate", "ready_for_benchmark", "ready_for_customer_view"):
+                bad = int((~_bool_series_eq(eplus_evidence, column, False)).sum())
+                results.append(CheckResult(f"eplus_evidence_false:{column}", bad == 0, f"actual_bad={bad} expected=false"))
+            production_ids = set(_norm_series(products, "product_id")) | set(_norm_series(final_assemblies, "product_id")) | set(_norm_series(final_set_details, "set_id"))
+            overlap = sorted(evidence_ids & production_ids)
+            results.append(CheckResult("eplus_evidence_diagnostic_only_no_overlap", not overlap, f"overlap={overlap}"))
+
     if "Eplus_Proposal_Mappings" in required_sheets or "Eplus_Proposal_Mappings" in xls.sheet_names:
         eplus_missing_columns = [
             col for col in EPLUS_PROPOSAL_MAPPINGS_REQUIRED_COLUMNS
@@ -907,8 +945,8 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
             "body_confidence": "high",
             "grate_evidence_type": "source_page_level_grate_url",
             "grate_confidence": "high",
-            "compatibility_evidence_type": "page_level_family_bom_or_inferred_from_current_bom",
-            "compatibility_confidence": "medium",
+            "compatibility_evidence_type": "no_explicit_article_level_matrix_found",
+            "compatibility_confidence": "low",
             "data_quality_status": "proposal_only_partial",
         }
         for column, expected in eplus_string_expectations.items():
