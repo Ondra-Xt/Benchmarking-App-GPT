@@ -161,6 +161,9 @@ def workbook_summary(path: str | Path) -> dict[str, int]:
             "Products": len(products),
             "BOM_Options": len(pd.read_excel(xls, sheet_name="BOM_Options")),
             "Final_Assemblies": len(pd.read_excel(xls, sheet_name="Final_Assemblies")),
+            "Eplus_Compatible_Grate_Evidence": len(
+                pd.read_excel(xls, sheet_name="Eplus_Compatible_Grate_Evidence")
+            ),
             "Cplus_Compatible_Grate_Evidence": len(
                 pd.read_excel(xls, sheet_name="Cplus_Compatible_Grate_Evidence")
             ),

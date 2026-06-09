@@ -77,8 +77,8 @@ def test_build_proposed_mappings_has_required_eplus_proposal_only_rows():
     assert set(df["body_confidence"]) == {"high"}
     assert set(df["grate_evidence_type"]) == {"source_page_level_grate_url"}
     assert set(df["grate_confidence"]) == {"high"}
-    assert set(df["compatibility_evidence_type"]) == {"page_level_family_bom_or_inferred_from_current_bom"}
-    assert set(df["compatibility_confidence"]) == {"medium"}
+    assert set(df["compatibility_evidence_type"]) == {"no_explicit_article_level_matrix_found"}
+    assert set(df["compatibility_confidence"]) == {"low"}
     assert set(df["article_level_compatibility_found"]) == {False}
     assert set(df["data_quality_status"]) == {"proposal_only_partial"}
     assert all("explicit_article_level_base_to_grate_compatibility" in value for value in df["missing_evidence"])
