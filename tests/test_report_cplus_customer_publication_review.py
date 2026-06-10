@@ -120,13 +120,18 @@ def _stable_sheets() -> dict[str, pd.DataFrame]:
         row = {
             "product_id": f"aco-assembled-easyflow-{index}",
             "assembled_family": "easyflow",
-            "ready_for_benchmark": False,
-            "ready_for_customer_view": False,
-            "customer_view_enabled": False,
+            "is_complete_technical_data": False,
+            "missing_technical_fields": "flow_rate_lps,height_adj_min_mm,height_adj_max_mm",
             "data_quality_status": "partial",
         }
         final.append(row)
-        details.append({**row, "set_id": row["product_id"], "assembled_product_id": row["product_id"]})
+        details.append({
+            **row,
+            "set_id": row["product_id"],
+            "assembled_product_id": row["product_id"],
+            "ready_for_benchmark": False,
+            "ready_for_customer_view": False,
+        })
 
     products.extend({
         "product_id": f"aco-non-cplus-{index}",
@@ -182,6 +187,11 @@ def test_all_30_cplus_rows_are_eligible_for_manual_review_without_mutation():
     assert len(review) == 30
     assert review["classification"].eq(ELIGIBLE).all()
     assert review["publication_gate"].eq(MANUAL_APPROVAL).all()
+    cplus_products = sheets["Products"][
+        sheets["Products"]["product_id"].str.startswith("aco-assembled-showerdrain-cplus-")
+    ]
+    assert cplus_products["ready_for_customer_view"].eq(False).all()
+    assert cplus_products["customer_view_enabled"].eq(False).all()
     assert set(review["grate_article_number"]) == APPROVED_GRATE_ARTICLES
     assert not review.astype(str).apply(lambda column: column.str.contains("Tile", case=False)).any().any()
     assert review.filter(regex=r"^check_").all(axis=None)
@@ -227,5 +237,6 @@ def test_cli_reads_existing_workbook_without_changing_it(tmp_path: Path):
     assert result.returncode == 0, result.stdout + result.stderr
     assert "OVERALL: requires_manual_approval" in result.stdout
     assert "eligible_rows: 30" in result.stdout
+    assert "Easyflow_blocked: True" in result.stdout
     assert "customer_flags_unchanged_disabled: True" in result.stdout
     assert hashlib.sha256(path.read_bytes()).hexdigest() == before

@@ -23,6 +23,9 @@ if str(REPO_ROOT) not in sys.path:
 CPLUS_PREFIX = "aco-assembled-showerdrain-cplus-"
 CPLUS_FAMILY = "showerdrain_cplus"
 EXPECTED_CPLUS_ASSEMBLIES = 30
+EASYFLOW_MISSING_TECHNICAL_FIELDS = (
+    "flow_rate_lps,height_adj_min_mm,height_adj_max_mm"
+)
 
 REQUIRED_SHEETS = (
     "Products",
@@ -296,6 +299,35 @@ def workbook_diagnostics(
     )
     mplus = final[families.eq("showerdrain_mplus")]
     easyflow = final[families.eq("easyflow")]
+    details = sheets["Final_Set_Details"]
+    detail_families = (
+        details.get("assembled_family", pd.Series("", index=details.index))
+        .fillna("").astype(str).str.strip().str.lower()
+    )
+    easyflow_details = details[detail_families.eq("easyflow")]
+    easyflow_assemblies_blocked = bool(
+        len(easyflow)
+        and easyflow.get("data_quality_status", pd.Series("", index=easyflow.index))
+        .fillna("").astype(str).str.strip().str.lower().eq("partial").all()
+        and easyflow.get(
+            "is_complete_technical_data", pd.Series(None, index=easyflow.index)
+        ).map(_falsey).all()
+        and easyflow.get("missing_technical_fields", pd.Series("", index=easyflow.index))
+        .fillna("").astype(str).str.strip().eq(EASYFLOW_MISSING_TECHNICAL_FIELDS).all()
+    )
+    easyflow_details_blocked = bool(
+        len(easyflow_details) == len(easyflow)
+        and len(easyflow_details)
+        and easyflow_details.get(
+            "data_quality_status", pd.Series("", index=easyflow_details.index)
+        ).fillna("").astype(str).str.strip().str.lower().eq("partial").all()
+        and easyflow_details.get(
+            "ready_for_benchmark", pd.Series(None, index=easyflow_details.index)
+        ).map(_falsey).all()
+        and easyflow_details.get(
+            "ready_for_customer_view", pd.Series(None, index=easyflow_details.index)
+        ).map(_falsey).all()
+    )
     return {
         "Products": len(sheets["Products"]),
         "Comparison": len(sheets["Comparison"]),
@@ -311,12 +343,7 @@ def workbook_diagnostics(
             and mplus.get("ready_for_benchmark", pd.Series(False, index=mplus.index)).map(_falsey).all()
             and mplus.get("ready_for_customer_view", pd.Series(False, index=mplus.index)).map(_falsey).all()
         ),
-        "Easyflow_blocked": bool(
-            len(easyflow)
-            and easyflow.get("data_quality_status", pd.Series("", index=easyflow.index))
-            .fillna("").astype(str).str.lower().eq("partial").all()
-            and easyflow.get("ready_for_customer_view", pd.Series(False, index=easyflow.index)).map(_falsey).all()
-        ),
+        "Easyflow_blocked": easyflow_assemblies_blocked and easyflow_details_blocked,
         "review_rows": len(review),
         "eligible_rows": int(review.get("classification", pd.Series(dtype=str)).eq(ELIGIBLE).sum()),
         "blocked_rows": int(review.get("classification", pd.Series(dtype=str)).eq(BLOCKED).sum()),
