@@ -70,7 +70,7 @@ and no XLSX export behavior is changed by this changelog update.
 | ShowerDrain C | 4 | Assembled |
 | ShowerDrain S+ | 16 | Assembled |
 | ShowerDrain M+ | 4 | Conditional/default benchmark blocked |
-| ShowerDrain C+ | 30 | Production-ready; customer view disabled |
+| ShowerDrain C+ | 30 | Production-ready; manual customer-view approval granted |
 | ShowerDrain E+ | 0 | Diagnostic/proposal-only |
 | ShowerDrain B | 0 | Diagnostic-only finished-set evidence |
 

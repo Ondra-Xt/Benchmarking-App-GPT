@@ -10,7 +10,7 @@
 - Page 26: stainless grate article table explicitly headed `ACO ShowerDrain C & C+`.
 - Compatibility rule used by the diagnostic: body and grate must have the same nominal length.
 
-This finding first upgraded the source-backed rows in `Cplus_Compatible_Grate_Evidence` and now supports the canonical production baseline. The protected bases and 15 non-Tile grates generate 30 C+ assemblies. Customer-facing output remains disabled.
+This finding first upgraded the source-backed rows in `Cplus_Compatible_Grate_Evidence` and now supports the canonical production baseline. The protected bases and 15 non-Tile grates generate 30 C+ assemblies. Manual customer-publication approval has been granted for exactly these validated assemblies, and their production customer-view flags are enabled.
 
 ## Exact protected-base mappings
 

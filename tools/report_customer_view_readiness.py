@@ -47,10 +47,10 @@ READY_REASON = (
 )
 READY_ACTION = "No readiness-policy action; retain normal publication controls."
 CPLUS_REASON = (
-    "C+ is production-ready for benchmark use, but customer publication remains disabled "
-    "pending a separate approval/review."
+    "C+ is production-ready and the validated 30-assembly scope has received manual "
+    "customer-publication approval."
 )
-CPLUS_ACTION = "Complete separate customer-facing publication review; do not auto-enable C+."
+CPLUS_ACTION = "Retain the approved C+ customer-view flags and validated assembly scope."
 MPLUS_REASON = (
     "M+ has no supported default scalar flow_rate_lps; conditional 10 mm and 20 mm head "
     "values are preserved separately."
@@ -175,12 +175,10 @@ def _classify_assembly(
     complete = _complete(row)
     set_id = _text(row.get("set_id"))
 
-    if family == "showerdrain_cplus":
-        category, reason, action = (
-            "benchmark_ready_but_customer_disabled",
-            CPLUS_REASON,
-            CPLUS_ACTION,
-        )
+    if family == "showerdrain_cplus" and (
+        ready_for_benchmark and ready_for_customer_view and customer_view_enabled and complete
+    ):
+        category, reason, action = "customer_view_ready", CPLUS_REASON, CPLUS_ACTION
     elif family == "showerdrain_mplus" or row_id in conditional_set_ids or set_id in conditional_set_ids:
         category, reason, action = "blocked_conditional", MPLUS_REASON, MPLUS_ACTION
     elif family == "easyflow":
@@ -322,7 +320,7 @@ def print_report(report: pd.DataFrame, *, source: str) -> None:
         print(f"  Reason: {first['policy_reason']}")
         print(f"  Next action: {first['recommended_next_action']}")
 
-    print("\nPolicy result: customer-view flags remain unchanged; no automatic promotion recommended.")
+    print("\nPolicy result: approved C+ customer-view flags are enabled; blocked and diagnostic policies remain unchanged.")
 
 
 def _report_existing_workbook(path: Path) -> pd.DataFrame:
