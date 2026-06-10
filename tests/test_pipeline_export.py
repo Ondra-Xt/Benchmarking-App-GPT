@@ -1994,20 +1994,26 @@ def test_export_promotes_exact_cplus_explicit_matrix_rows():
 
         assert len(cplus_products) == len(cplus_comparison) == len(cplus_final) == len(cplus_details) == 30
         assert cplus_details["ready_for_benchmark"].eq(True).all()
-        assert cplus_details["ready_for_customer_view"].eq(False).all()
+        assert cplus_details["ready_for_customer_view"].eq(True).all()
+        for production_rows in (cplus_products, cplus_comparison, cplus_final):
+            assert production_rows["ready_for_customer_view"].eq(True).all()
+            assert production_rows["customer_view_enabled"].eq(True).all()
         assert cplus_details["compatibility_evidence_type"].eq("explicit_catalog_matrix").all()
         assert cplus_details["compatibility_confidence"].eq("high").all()
         assert cplus_details["component_role"].eq("grate").all()
         assert len(cplus_bom) == 30
         assert len(sheets["Cplus_Compatible_Grate_Evidence"]) == 30
+        assert sheets["Cplus_Compatible_Grate_Evidence"][
+            "ready_for_customer_view"
+        ].eq(False).all()
         assert cplus_products["product_id"].is_unique
         assert cplus_products["base_id"].ne("").all()
         assert cplus_products["grate_id"].ne("").all()
         assert cplus_products["compatibility_evidence_type"].eq("explicit_catalog_matrix").all()
         assert cplus_products["compatibility_confidence"].eq("high").all()
         assert cplus_products["ready_for_benchmark"].eq(True).all()
-        assert cplus_products["ready_for_customer_view"].eq(False).all()
-        assert cplus_products["customer_view_enabled"].eq(False).all()
+        assert cplus_products["ready_for_customer_view"].eq(True).all()
+        assert cplus_products["customer_view_enabled"].eq(True).all()
         assert cplus_products["data_quality_status"].eq("explicit_source_ready_production_assembly").all()
         assert ~cplus_products["grate_article_number"].astype(str).str.startswith("9010.85.").any()
         assert ~cplus_products["product_name"].astype(str).str.contains("Tile", case=False).any()

@@ -29,7 +29,8 @@ def _stable_sheets() -> dict[str, pd.DataFrame]:
         for index in range(count):
             product_id = f"aco-assembled-{family.replace('_', '-')}-{index}__component-{index}"
             customer_ready = family in {
-                "easyflowplus", "showerdrain_c", "showerdrain_splus"
+                "easyflowplus", "showerdrain_c", "showerdrain_splus",
+                "showerdrain_cplus",
             }
             rows.append({
                 "product_id": product_id,
@@ -111,8 +112,7 @@ def test_stable_baseline_and_customer_view_policy_are_classified_without_mutatio
         assert len(source) == 62
         counts = source.groupby("category", observed=True).size().to_dict()
         assert counts == {
-            "customer_view_ready": 26,
-            "benchmark_ready_but_customer_disabled": 30,
+            "customer_view_ready": 56,
             "blocked_partial": 2,
             "blocked_conditional": 4,
         }
@@ -125,9 +125,9 @@ def test_stable_baseline_and_customer_view_policy_are_classified_without_mutatio
     final_rows = report[report["source_sheet"].eq("Final_Assemblies")]
     cplus = final_rows[final_rows["assembled_family"].eq("showerdrain_cplus")]
     assert cplus["ready_for_benchmark"].eq(True).all()
-    assert cplus["ready_for_customer_view"].eq(False).all()
-    assert cplus["customer_view_enabled"].eq(False).all()
-    assert cplus["category"].eq("benchmark_ready_but_customer_disabled").all()
+    assert cplus["ready_for_customer_view"].eq(True).all()
+    assert cplus["customer_view_enabled"].eq(True).all()
+    assert cplus["category"].eq("customer_view_ready").all()
 
     mplus = final_rows[final_rows["assembled_family"].eq("showerdrain_mplus")]
     easyflow = final_rows[final_rows["assembled_family"].eq("easyflow")]
@@ -170,9 +170,10 @@ def test_existing_workbook_report_is_read_only_and_cli_prints_actions(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert "Mode: read-only policy evaluation" in result.stdout
-    assert "showerdrain_cplus: benchmark_ready_but_customer_disabled=30" in result.stdout
+    assert "showerdrain_cplus: customer_view_ready=30" in result.stdout
     assert "showerdrain_mplus: blocked_conditional=4" in result.stdout
     assert "showerdrain_eplus: 3 evidence rows" in result.stdout
     assert "showerdrain_b: 8 evidence rows" in result.stdout
-    assert "do not auto-enable C+" in result.stdout
+    assert "validated 30-assembly scope" in result.stdout
+    assert "approved C+ customer-view flags are enabled" in result.stdout
     assert before_hash == hashlib.sha256(workbook.read_bytes()).hexdigest()

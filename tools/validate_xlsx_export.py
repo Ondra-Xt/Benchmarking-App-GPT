@@ -1307,7 +1307,7 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
         for field, expected in checks.items():
             bad = int((~_string_series_eq(cplus, field, expected)).sum())
             results.append(CheckResult(f"cplus_final_assemblies_value:{field}", bad == 0, f"actual_bad={bad} expected={expected}"))
-        for field, expected in (("assembled_from_bom", True), ("article_level_compatibility_found", True), ("ready_for_benchmark", True), ("ready_for_customer_view", False), ("customer_view_enabled", False)):
+        for field, expected in (("assembled_from_bom", True), ("article_level_compatibility_found", True), ("ready_for_benchmark", True), ("ready_for_customer_view", True), ("customer_view_enabled", True)):
             bad = int((~_bool_series_eq(cplus, field, expected)).sum())
             results.append(CheckResult(f"cplus_final_assemblies_bool:{field}", bad == 0, f"actual_bad={bad} expected={expected}"))
         base_ids = _norm_series(cplus, "base_id")
@@ -1359,10 +1359,6 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
 
         for field in ["ready_for_benchmark", "ready_for_customer_view"]:
             expected_counts = dict(EXPECTED_FINAL_SET_DETAILS_READY_COUNTS)
-            if field == "ready_for_customer_view":
-                cplus_count = EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS.get("showerdrain_cplus", 0)
-                expected_counts[True] = expected_counts.get(True, 0) - cplus_count
-                expected_counts[False] = expected_counts.get(False, 0) + cplus_count
             for expected_bool, expected_count in expected_counts.items():
                 actual = int(_bool_series_eq(final_set_details, field, expected_bool).sum())
                 results.append(CheckResult(
@@ -1402,11 +1398,11 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
 
         cplus_detail_status_bad = int((~_string_series_eq(cplus_details, "data_quality_status", "explicit_source_ready_production_assembly")).sum())
         cplus_detail_benchmark_bad = int((~_bool_series_eq(cplus_details, "ready_for_benchmark", True)).sum())
-        cplus_detail_customer_bad = int((~_bool_series_eq(cplus_details, "ready_for_customer_view", False)).sum())
+        cplus_detail_customer_bad = int((~_bool_series_eq(cplus_details, "ready_for_customer_view", True)).sum())
         cplus_detail_blocked_filled = int((~_empty_series(cplus_details, "blocked_reason")).sum())
         results.append(CheckResult("final_set_details_cplus_status", cplus_detail_status_bad == 0, f"actual_bad={cplus_detail_status_bad} expected=explicit_source_ready_production_assembly"))
-        results.append(CheckResult("final_set_details_cplus_ready_for_benchmark_true", cplus_detail_benchmark_bad == 0, f"actual_bad={cplus_detail_benchmark_bad} expected=false"))
-        results.append(CheckResult("final_set_details_cplus_ready_for_customer_view_false", cplus_detail_customer_bad == 0, f"actual_bad={cplus_detail_customer_bad} expected=false"))
+        results.append(CheckResult("final_set_details_cplus_ready_for_benchmark_true", cplus_detail_benchmark_bad == 0, f"actual_bad={cplus_detail_benchmark_bad} expected=true"))
+        results.append(CheckResult("final_set_details_cplus_ready_for_customer_view_true", cplus_detail_customer_bad == 0, f"actual_bad={cplus_detail_customer_bad} expected=true"))
         results.append(CheckResult("final_set_details_cplus_blocked_reason_empty", cplus_detail_blocked_filled == 0, f"actual_filled={cplus_detail_blocked_filled} expected=0"))
 
         mplus_detail_status_bad = int((~_string_series_eq(mplus_details, "data_quality_status", "conditional_parameter_available_production_blocked")).sum())

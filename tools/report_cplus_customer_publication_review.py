@@ -1,10 +1,9 @@
-"""Read-only publication review for canonical ACO ShowerDrain C+ assemblies.
+"""Read-only publication approval report for canonical ACO ShowerDrain C+ assemblies.
 
-This diagnostic inspects an existing canonical workbook and never writes to it.  A row is
-technically eligible for customer-publication review only when every protected C+ assembly,
-component, hydraulic, evidence, and policy invariant is preserved.  Eligibility does not
-constitute publication approval: customer-view flags must remain disabled until a separate
-manual approval changes them outside this review branch.
+This diagnostic inspects an existing canonical workbook and never writes to it. A row is
+approved for customer publication only when every protected C+ assembly, component,
+hydraulic, evidence, and policy invariant is preserved and the production customer-view
+flags reflect the granted manual approval.
 """
 from __future__ import annotations
 
@@ -68,12 +67,12 @@ TECHNICAL_FIELDS = (
     "height_adj_min_mm",
     "height_adj_max_mm",
 )
-ELIGIBLE = "eligible_for_customer_publication_review"
+APPROVED = "approved_for_customer_publication"
 BLOCKED = "blocked_for_customer_publication"
-MANUAL_APPROVAL = "requires_manual_approval"
+APPROVED_GATE = "approved"
 RECOMMENDED_NEXT_ACTION = (
-    "Obtain manual customer-publication approval before changing ready_for_customer_view "
-    "or customer_view_enabled; do not auto-enable C+."
+    "Retain customer-view publication for the approved 30 C+ production assemblies; "
+    "do not expand the validated base or grate scope."
 )
 
 
@@ -256,14 +255,19 @@ def build_cplus_customer_publication_review(
                 "ready_for_benchmark",
                 _truthy,
             ),
-            "ready_for_customer_view_false": _all_rows_match(
-                [product_row, comparison_row, final_row, detail_row, evidence_row],
+            "production_ready_for_customer_view": _all_rows_match(
+                production_rows,
                 "ready_for_customer_view",
-                _falsey,
+                _truthy,
             ),
-            "customer_view_enabled_false": _all_rows_match(
+            "production_customer_view_enabled": _all_rows_match(
                 [product_row, comparison_row, final_row],
                 "customer_view_enabled",
+                _truthy,
+            ),
+            "diagnostic_evidence_customer_view_disabled": _all_rows_match(
+                [evidence_row],
+                "ready_for_customer_view",
                 _falsey,
             ),
         }
@@ -275,12 +279,12 @@ def build_cplus_customer_publication_review(
             "grate_id": grate_id,
             "grate_article_number": grate_article,
             **{f"check_{name}": passed for name, passed in checks.items()},
-            "classification": ELIGIBLE if eligible else BLOCKED,
-            "publication_gate": MANUAL_APPROVAL if eligible else BLOCKED,
+            "classification": APPROVED if eligible else BLOCKED,
+            "publication_gate": APPROVED_GATE if eligible else BLOCKED,
             "blocking_reasons": ",".join(failures),
             "recommended_next_action": (
                 RECOMMENDED_NEXT_ACTION if eligible
-                else "Resolve every blocking diagnostic before requesting manual publication approval."
+                else "Resolve every blocking diagnostic before customer publication."
             ),
         })
 
@@ -345,12 +349,18 @@ def workbook_diagnostics(
         ),
         "Easyflow_blocked": easyflow_assemblies_blocked and easyflow_details_blocked,
         "review_rows": len(review),
-        "eligible_rows": int(review.get("classification", pd.Series(dtype=str)).eq(ELIGIBLE).sum()),
+        "approved_customer_view_rows": int(
+            review.get("classification", pd.Series(dtype=str)).eq(APPROVED).sum()
+        ),
         "blocked_rows": int(review.get("classification", pd.Series(dtype=str)).eq(BLOCKED).sum()),
-        "customer_flags_unchanged_disabled": bool(
+        "customer_flags_approved_enabled": bool(
             len(cplus_products)
-            and cplus_products.get("ready_for_customer_view", pd.Series(False, index=cplus_products.index)).map(_falsey).all()
-            and cplus_products.get("customer_view_enabled", pd.Series(False, index=cplus_products.index)).map(_falsey).all()
+            and cplus_products.get(
+                "ready_for_customer_view", pd.Series(False, index=cplus_products.index)
+            ).map(_truthy).all()
+            and cplus_products.get(
+                "customer_view_enabled", pd.Series(False, index=cplus_products.index)
+            ).map(_truthy).all()
         ),
     }
 
@@ -382,8 +392,8 @@ def _print_report(path: Path, review: pd.DataFrame, diagnostics: Mapping[str, An
             f"publication_gate={row.publication_gate}{suffix}"
         )
     overall = (
-        MANUAL_APPROVAL
-        if len(review) == EXPECTED_CPLUS_ASSEMBLIES and review["classification"].eq(ELIGIBLE).all()
+        APPROVED
+        if len(review) == EXPECTED_CPLUS_ASSEMBLIES and review["classification"].eq(APPROVED).all()
         else BLOCKED
     )
     print(f"\nOVERALL: {overall}")
@@ -422,12 +432,12 @@ def main(argv: list[str] | None = None) -> int:
         diagnostics["Bline_assemblies"] == 0,
         diagnostics["Mplus_blocked"],
         diagnostics["Easyflow_blocked"],
-        diagnostics["customer_flags_unchanged_disabled"],
+        diagnostics["customer_flags_approved_enabled"],
     ))
     review_ok = (
         len(review) == EXPECTED_CPLUS_ASSEMBLIES
-        and review["classification"].eq(ELIGIBLE).all()
-        and review["publication_gate"].eq(MANUAL_APPROVAL).all()
+        and review["classification"].eq(APPROVED).all()
+        and review["publication_gate"].eq(APPROVED_GATE).all()
     )
     return 0 if baseline_ok and review_ok else 1
 

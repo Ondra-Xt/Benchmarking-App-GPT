@@ -10,9 +10,9 @@ from pandas.testing import assert_frame_equal
 
 from tools.report_cplus_customer_publication_review import (
     APPROVED_GRATE_ARTICLES,
+    APPROVED,
+    APPROVED_GATE,
     BLOCKED,
-    ELIGIBLE,
-    MANUAL_APPROVAL,
     PROTECTED_BASES,
     REQUIRED_SHEETS,
     build_cplus_customer_publication_review,
@@ -50,8 +50,8 @@ def _stable_sheets() -> dict[str, pd.DataFrame]:
                 "article_level_compatibility_found": True,
                 "data_quality_status": "explicit_source_ready_production_assembly",
                 "ready_for_benchmark": True,
-                "ready_for_customer_view": False,
-                "customer_view_enabled": False,
+                "ready_for_customer_view": True,
+                "customer_view_enabled": True,
             }
             products.append(common.copy())
             comparison.append(common.copy())
@@ -160,7 +160,7 @@ def _stable_sheets() -> dict[str, pd.DataFrame]:
     }
 
 
-def test_all_30_cplus_rows_are_eligible_for_manual_review_without_mutation():
+def test_all_30_cplus_rows_are_approved_for_publication_without_mutation():
     sheets = _stable_sheets()
     before = {name: frame.copy(deep=True) for name, frame in sheets.items()}
 
@@ -180,18 +180,18 @@ def test_all_30_cplus_rows_are_eligible_for_manual_review_without_mutation():
         "Mplus_blocked": True,
         "Easyflow_blocked": True,
         "review_rows": 30,
-        "eligible_rows": 30,
+        "approved_customer_view_rows": 30,
         "blocked_rows": 0,
-        "customer_flags_unchanged_disabled": True,
+        "customer_flags_approved_enabled": True,
     }
     assert len(review) == 30
-    assert review["classification"].eq(ELIGIBLE).all()
-    assert review["publication_gate"].eq(MANUAL_APPROVAL).all()
+    assert review["classification"].eq(APPROVED).all()
+    assert review["publication_gate"].eq(APPROVED_GATE).all()
     cplus_products = sheets["Products"][
         sheets["Products"]["product_id"].str.startswith("aco-assembled-showerdrain-cplus-")
     ]
-    assert cplus_products["ready_for_customer_view"].eq(False).all()
-    assert cplus_products["customer_view_enabled"].eq(False).all()
+    assert cplus_products["ready_for_customer_view"].eq(True).all()
+    assert cplus_products["customer_view_enabled"].eq(True).all()
     assert set(review["grate_article_number"]) == APPROVED_GRATE_ARTICLES
     assert not review.astype(str).apply(lambda column: column.str.contains("Tile", case=False)).any().any()
     assert review.filter(regex=r"^check_").all(axis=None)
@@ -200,22 +200,22 @@ def test_all_30_cplus_rows_are_eligible_for_manual_review_without_mutation():
         assert_frame_equal(frame, before[name])
 
 
-def test_invalid_or_enabled_cplus_row_is_blocked_not_auto_corrected():
+def test_disabled_cplus_row_is_blocked_not_auto_corrected():
     sheets = _stable_sheets()
     assembly_id = sheets["Products"].iloc[0]["product_id"]
     original = sheets["Products"].copy(deep=True)
-    sheets["Products"].loc[sheets["Products"]["product_id"].eq(assembly_id), "customer_view_enabled"] = True
+    sheets["Products"].loc[sheets["Products"]["product_id"].eq(assembly_id), "customer_view_enabled"] = False
 
     review = build_cplus_customer_publication_review(sheets)
     row = review[review["assembly_id"].eq(assembly_id)].iloc[0]
 
     assert row["classification"] == BLOCKED
     assert row["publication_gate"] == BLOCKED
-    assert "customer_view_enabled_false" in row["blocking_reasons"]
+    assert "production_customer_view_enabled" in row["blocking_reasons"]
     assert sheets["Products"].loc[
         sheets["Products"]["product_id"].eq(assembly_id), "customer_view_enabled"
-    ].eq(True).all()
-    assert original.loc[original["product_id"].eq(assembly_id), "customer_view_enabled"].eq(False).all()
+    ].eq(False).all()
+    assert original.loc[original["product_id"].eq(assembly_id), "customer_view_enabled"].eq(True).all()
 
 
 def test_cli_reads_existing_workbook_without_changing_it(tmp_path: Path):
@@ -235,8 +235,10 @@ def test_cli_reads_existing_workbook_without_changing_it(tmp_path: Path):
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "OVERALL: requires_manual_approval" in result.stdout
-    assert "eligible_rows: 30" in result.stdout
+    assert "OVERALL: approved_for_customer_publication" in result.stdout
+    assert "approved_customer_view_rows: 30" in result.stdout
+    assert "blocked_rows: 0" in result.stdout
+    assert "publication_gate=approved" in result.stdout
     assert "Easyflow_blocked: True" in result.stdout
-    assert "customer_flags_unchanged_disabled: True" in result.stdout
+    assert "customer_flags_approved_enabled: True" in result.stdout
     assert hashlib.sha256(path.read_bytes()).hexdigest() == before
