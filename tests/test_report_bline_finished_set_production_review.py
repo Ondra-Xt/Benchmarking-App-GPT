@@ -32,6 +32,14 @@ def _stable_sheets() -> dict[str, pd.DataFrame]:
     sheets["Bline_Source_Evidence"] = build_export_evidence_dataframe()
     sheets["Products"] = _rows(80, product_family="other", ready_for_customer_view=False)
     sheets["Comparison"] = _rows(80, product_family="other")
+    # Canonical discovery may retain one family-level B catalog row in these sheets.
+    # It is not a promoted direct finished-set product and must not be counted as one.
+    sheets["Products"].loc[0, ["product_family", "product_id", "article_number"]] = [
+        "showerdrain_b", "aco-showerdrain-b-family", "9010.78.70"
+    ]
+    sheets["Comparison"].loc[0, ["product_family", "product_id", "article_number"]] = [
+        "showerdrain_b", "aco-showerdrain-b-family", "9010.78.70"
+    ]
     sheets["BOM_Options"] = _rows(251, product_family="other", option_family="other")
 
     final_rows: list[dict[str, object]] = []
@@ -62,6 +70,11 @@ def _stable_sheets() -> dict[str, pd.DataFrame]:
                 "ready_for_benchmark": family != "showerdrain_mplus" and family != "easyflow",
                 "ready_for_customer_view": customer_ready,
                 "data_quality_status": status,
+                "is_complete_technical_data": family != "easyflow",
+                "missing_technical_fields": (
+                    "flow_rate_lps,height_adj_min_mm,height_adj_max_mm"
+                    if family == "easyflow" else ""
+                ),
             }
             final_rows.append(row.copy())
             detail_rows.append(row.copy())
@@ -109,7 +122,7 @@ def test_all_eight_integral_articles_are_eligible_but_require_manual_approval() 
     assert review["flow_rate_20mm_is_0_46"].all()
     assert review["height_adjustment_min_empty"].all()
     assert review["height_adjustment_max_empty"].all()
-    assert review["no_bline_production_rows"].all()
+    assert not review.columns.str.contains("no_bline_production_rows").any()
 
     assert {name: diagnostics[name] for name in EXPECTED_SHEET_COUNTS} == EXPECTED_SHEET_COUNTS
     assert diagnostics["Bline_Products"] == 0
@@ -122,6 +135,9 @@ def test_all_eight_integral_articles_are_eligible_but_require_manual_approval() 
     assert diagnostics["Mplus_blocked"] is True
     assert diagnostics["Easyflow_blocked"] is True
     assert diagnostics["Eplus_diagnostic_only"] is True
+    assert diagnostics["review_rows"] == 8
+    assert diagnostics["eligible_review_rows"] == 8
+    assert diagnostics["blocked_review_rows"] == 0
 
     for name, original in originals.items():
         assert_frame_equal(sheets[name], original)
@@ -169,7 +185,16 @@ def test_existing_xlsx_is_not_mutated_and_cli_reports_manual_gate(tmp_path: Path
     assert _sha256(workbook) == before
     assert "Mode: read-only diagnostic" in result.stdout
     assert "base_x_grate is prohibited" in result.stdout
-    assert f"OVERALL: {ELIGIBLE}" in result.stdout
+    assert f"OVERALL: {MANUAL_APPROVAL}" in result.stdout
     assert f"Production gate: {MANUAL_APPROVAL}" in result.stdout
     assert "Approve direct finished-set product modelling before promotion" in result.stdout
+    assert "- Bline_Products: 0" in result.stdout
+    assert "- Bline_Comparison: 0" in result.stdout
+    assert "- Bline_BOM_Options: 0" in result.stdout
+    assert "- Bline_Final_Assemblies: 0" in result.stdout
+    assert "- Bline_Final_Set_Details: 0" in result.stdout
+    assert "- Easyflow_blocked: True" in result.stdout
+    assert "- review_rows: 8" in result.stdout
+    assert "- eligible_review_rows: 8" in result.stdout
+    assert "- blocked_review_rows: 0" in result.stdout
     assert result.stdout.count(f"production_gate={MANUAL_APPROVAL}") == 8

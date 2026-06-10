@@ -61,6 +61,9 @@ PRODUCTION_SHEETS = (
 ELIGIBLE = "eligible_for_finished_set_production_review"
 BLOCKED = "blocked_for_finished_set_production"
 MANUAL_APPROVAL = "requires_manual_approval"
+EASYFLOW_MISSING_TECHNICAL_FIELDS = (
+    "flow_rate_lps,height_adj_min_mm,height_adj_max_mm"
+)
 RECOMMENDED_NEXT_ACTION = (
     "Approve direct finished-set product modelling before promotion; do not generate "
     "body × grate or base_x_grate assemblies."
@@ -105,24 +108,40 @@ def _series(frame: pd.DataFrame, column: str, default: Any = "") -> pd.Series:
     return pd.Series([default] * len(frame), index=frame.index)
 
 
-def _bline_rows(frame: pd.DataFrame) -> pd.DataFrame:
-    """Select B-line production-like rows using identity fields, not free-text notes."""
+def _bline_production_rows(frame: pd.DataFrame, sheet_name: str) -> pd.DataFrame:
+    """Select actual B-line production rows while excluding source-family catalog rows.
+
+    Products and Comparison can legitimately contain a discovered family-level B row.
+    Such a row is not one of the eight direct finished-set products and must not be
+    treated as a promotion. Production is identified by an assembled B identifier or
+    by an explicit known finished-set article. BOM rows additionally count explicit
+    B-line body/grate generation so that prohibited base_x_grate modelling is visible.
+    """
     frame = frame.copy(deep=True)
-    mask = pd.Series(False, index=frame.index)
-    for column in (
-        "product_id",
-        "assembled_product_id",
-        "set_id",
-        "product_family",
-        "assembled_family",
-        "parent_family",
-        "option_family",
-    ):
+    assembled_identity = pd.Series(False, index=frame.index)
+    for column in ("product_id", "assembled_product_id", "set_id"):
         values = _series(frame, column).fillna("").astype(str).str.strip().str.lower()
-        mask |= values.eq("showerdrain_b")
-        mask |= values.str.contains(r"(?:^|[-_])showerdrain[-_]b(?:[-_]|$)", regex=True)
-        mask |= values.str.contains(r"(?:^|[-_])bline(?:[-_]|$)", regex=True)
-    return frame[mask].copy()
+        assembled_identity |= values.str.startswith("aco-assembled-showerdrain-b-")
+        assembled_identity |= values.str.startswith("aco-assembled-showerdrain_b-")
+
+    if sheet_name in {"Final_Assemblies", "Final_Set_Details"}:
+        families = _series(frame, "assembled_family").map(lambda value: _text(value).lower())
+        return frame[assembled_identity | families.eq("showerdrain_b")].copy()
+
+    # Raw connector rows may expose a family-level ``article_number``. Only the
+    # explicit finished-set production field identifies a direct promoted product.
+    known_article = _series(frame, "product_article_number").map(_text).isin(EXPECTED_ARTICLES)
+
+    if sheet_name == "BOM_Options":
+        families = pd.Series(False, index=frame.index)
+        for column in ("product_family", "parent_family", "option_family", "assembled_family"):
+            families |= _series(frame, column).map(lambda value: _text(value).lower()).eq("showerdrain_b")
+        models = _series(frame, "assembly_model").map(lambda value: _text(value).lower())
+        roles = _series(frame, "option_role").map(lambda value: _text(value).lower())
+        generated_bom = families & (models.eq("base_x_grate") | roles.eq("grate"))
+        return frame[assembled_identity | known_article | generated_bom].copy()
+
+    return frame[assembled_identity | known_article].copy()
 
 
 def _family_rows(frame: pd.DataFrame, family: str) -> pd.DataFrame:
@@ -132,7 +151,7 @@ def _family_rows(frame: pd.DataFrame, family: str) -> pd.DataFrame:
     return frame[values.eq(family)].copy()
 
 
-def _row_checks(row: pd.Series, *, production_clear: bool) -> dict[str, bool]:
+def _row_checks(row: pd.Series) -> dict[str, bool]:
     return {
         "known_finished_set_article": _text(row.get("product_article_number")) in EXPECTED_ARTICLES,
         "body_article_number_empty": _empty(row.get("body_article_number")),
@@ -155,7 +174,6 @@ def _row_checks(row: pd.Series, *, production_clear: bool) -> dict[str, bool]:
         "safe_to_generate_false": _falsey(row.get("safe_to_generate")),
         "ready_for_benchmark_false": _falsey(row.get("ready_for_benchmark")),
         "ready_for_customer_view_false": _falsey(row.get("ready_for_customer_view")),
-        "no_bline_production_rows": production_clear,
     }
 
 
@@ -168,14 +186,12 @@ def build_bline_finished_set_production_review(
         raise ValueError(f"Missing required workbook sheets: {', '.join(missing)}")
 
     frames = {name: pd.DataFrame(sheets[name]).copy(deep=True) for name in REQUIRED_SHEETS}
-    production_counts = {name: len(_bline_rows(frames[name])) for name in PRODUCTION_SHEETS}
-    production_clear = all(count == 0 for count in production_counts.values())
     evidence = frames["Bline_Source_Evidence"]
     article_counts = _series(evidence, "product_article_number").map(_text).value_counts()
 
     records: list[dict[str, Any]] = []
     for index, row in evidence.iterrows():
-        checks = _row_checks(row, production_clear=production_clear)
+        checks = _row_checks(row)
         article = _text(row.get("product_article_number"))
         checks["finished_set_article_unique"] = article_counts.get(article, 0) == 1
         passed = all(checks.values())
@@ -199,7 +215,10 @@ def workbook_diagnostics(
 ) -> dict[str, Any]:
     """Summarize stable counts and protected family policy state."""
     counts = {name: len(sheets[name]) for name in REQUIRED_SHEETS}
-    bline_counts = {f"Bline_{name}": len(_bline_rows(sheets[name])) for name in PRODUCTION_SHEETS}
+    bline_counts = {
+        f"Bline_{name}": len(_bline_production_rows(sheets[name], name))
+        for name in PRODUCTION_SHEETS
+    }
 
     final = sheets["Final_Assemblies"]
     details = sheets["Final_Set_Details"]
@@ -216,11 +235,24 @@ def workbook_diagnostics(
         and _series(mplus, "ready_for_benchmark", None).map(_falsey).all()
         and _series(mplus, "ready_for_customer_view", None).map(_falsey).all()
     )
-    easyflow_blocked = bool(
+    easyflow_details = _family_rows(details, "easyflow")
+    easyflow_assemblies_blocked = bool(
         len(easyflow) == 2
-        and _series(easyflow, "data_quality_status").map(lambda value: _text(value).lower()).eq("partial").all()
-        and _series(easyflow, "ready_for_customer_view", None).map(_falsey).all()
+        and _series(easyflow, "data_quality_status")
+        .map(lambda value: _text(value).lower()).eq("partial").all()
+        and _series(easyflow, "is_complete_technical_data", None).map(_falsey).all()
+        and _series(easyflow, "missing_technical_fields").map(_text)
+        .eq(EASYFLOW_MISSING_TECHNICAL_FIELDS).all()
     )
+    easyflow_details_blocked = bool(
+        len(easyflow_details) == len(easyflow)
+        and len(easyflow_details) == 2
+        and _series(easyflow_details, "data_quality_status")
+        .map(lambda value: _text(value).lower()).eq("partial").all()
+        and _series(easyflow_details, "ready_for_benchmark", None).map(_falsey).all()
+        and _series(easyflow_details, "ready_for_customer_view", None).map(_falsey).all()
+    )
+    easyflow_blocked = easyflow_assemblies_blocked and easyflow_details_blocked
     eplus_diagnostic_only = bool(
         len(eplus_evidence) == 3
         and len(_family_rows(products, "showerdrain_eplus")) == 0
@@ -297,9 +329,9 @@ def print_report(path: Path, review: pd.DataFrame, diagnostics: Mapping[str, Any
             f"- {row.product_article_number}: {row.classification}; "
             f"production_gate={row.production_gate}{suffix}"
         )
-    overall = ELIGIBLE if _baseline_ok(diagnostics) and _review_ok(review) else BLOCKED
+    overall = MANUAL_APPROVAL if _baseline_ok(diagnostics) and _review_ok(review) else BLOCKED
     print(f"\nOVERALL: {overall}")
-    print(f"Production gate: {MANUAL_APPROVAL if overall == ELIGIBLE else BLOCKED}")
+    print(f"Production gate: {overall}")
     print(f"Recommended next action: {RECOMMENDED_NEXT_ACTION}")
 
 
