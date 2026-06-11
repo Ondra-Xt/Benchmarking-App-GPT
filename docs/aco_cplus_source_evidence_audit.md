@@ -63,6 +63,7 @@ For catalog-proven rows only:
 - `article_level_compatibility_found = True`
 - `safe_to_generate = True` as a diagnostic readiness signal
 - `ready_for_benchmark = True` because protected technical fields are complete
-- `ready_for_customer_view = False`
+- `ready_for_customer_view = True`
+- `customer_view_enabled = True`
 
-The reviewed production milestone promotes exactly the 30 catalogue-proven combinations into `BOM_Options`, `Final_Assemblies`, and `Final_Set_Details`: two protected bases multiplied by 15 Wave, Quadrato, and Massive grates. Tile articles remain excluded, protected hydraulic values remain unchanged, and `ready_for_customer_view` remains false.
+The reviewed production milestone promotes exactly the 30 catalogue-proven combinations into `BOM_Options`, `Final_Assemblies`, and `Final_Set_Details`: two protected bases multiplied by 15 Wave, Quadrato, and Massive grates. Tile articles remain excluded, protected hydraulic values remain unchanged, and manual customer-publication approval enables `ready_for_customer_view` and `customer_view_enabled` for exactly these 30 assemblies.

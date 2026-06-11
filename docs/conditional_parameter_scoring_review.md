@@ -1,95 +1,89 @@
 # Conditional Parameter Scoring and Comparison Export Review
 
-## Scope and non-change confirmation
+## Scope and current-status confirmation
 
-This document is a review-only proposal for conditional technical values in benchmark scoring and
-XLSX Comparison output. It does **not** change production scoring, connector discovery, BOM
-creation, final assembly creation, XLSX export behavior, customer-facing output, or baseline row
-counts.
+This document preserves the original review rationale for conditional technical
+values and records the subsequently implemented canonical scenario exports. It
+does **not** itself change production scoring, connector discovery, BOM creation,
+final assembly creation, XLSX export behavior, readiness flags, customer-facing
+output, or baseline row counts.
 
-The current diagnostic baseline must remain unchanged until a later implementation explicitly
-introduces scenario-aware scoring:
+The stable canonical baseline after the approved ShowerDrain B direct
+finished-set promotion is:
 
 | Sheet / metric | Current baseline |
 |---|---:|
-| Products | 46 |
-| Comparison | 46 |
-| Scoring_Field_Coverage | 46 |
+| Products | 88 |
+| Comparison | 88 |
+| Scoring_Field_Coverage | 88 |
 | Candidates_All | 118 |
 | Components | 100 |
-| BOM_Options | 221 |
-| Final_Assemblies | 28 |
-| Final_Set_Details | 28 |
+| BOM_Options | 251 |
+| Final_Assemblies | 62 |
+| Final_Set_Details | 62 |
+| Article_Variants | 76 |
 | Mplus_Compound_Mappings | 4 |
 | Eplus_Proposal_Mappings | 3 |
-| Conditional_Technical_Values | 8 |
-| Article_Variants | 76 |
-| ShowerDrain S+ assembled | 16 |
-| ShowerDrain C assembled | 4 |
-| Easyflow assembled | 2 |
-| Easyflow+ assembled | 6 |
-| ShowerDrain M+ assembled | 0 |
-| ShowerDrain E+ assembled | 0 |
-| ShowerDrain C+ assembled | 0 |
-| ShowerDrain B assembled | 0 |
+| Conditional_Technical_Values | 24 |
+| Scoring_Scenarios | 3 |
+| Comparison_flow_head_10mm | 88 |
+| Comparison_flow_head_20mm | 88 |
+| ShowerDrain M+ compound assemblies | 4 |
+| ShowerDrain C+ production assemblies | 30 |
+| ShowerDrain B direct finished-set products | 8 |
+| ShowerDrain E+ production assemblies | 0 |
 
-## Current scoring behavior
+The 24 conditional rows consist of 8 M+ observations (two for each of four
+compound assemblies) and 16 B-line observations (two for each of eight direct
+finished-set products).
 
-### Scalar flow scoring
+## Current scoring and scenario behavior
 
-Current benchmark scoring is scalar-row based. `compute_parameter_score()` calls `_score_flow_rate()`
-with the row dictionary, and `_score_flow_rate()` only reads `flow_rate_lps` from that same row. Missing,
-empty, non-numeric, or non-positive values score `0.0` with pass status `unknown`; values greater than
-or equal to `0.8` l/s score `1.0`; lower positive values score linearly as `flow / 0.8` and receive pass
-status `no`.
+### Default scalar flow scoring
 
-Implications:
+Default benchmark scoring remains scalar-row based. A missing scalar
+`flow_rate_lps` is not silently replaced by the maximum or minimum conditional
+observation. Products with a valid scalar flow remain scoreable in the default
+comparison; conditionally valued M+ and B-line rows keep scalar
+`flow_rate_lps` empty and remain blocked in the default benchmark/customer state.
 
-- Products with one scalar `flow_rate_lps` are scoreable today.
-- Products missing scalar `flow_rate_lps` receive zero flow contribution and `flow_rate_pass_0_8_lps = unknown`.
-- Conditional values in `Conditional_Technical_Values` are not read by scoring.
-- Proposal-only diagnostic rows are not made production-ready by the presence of conditional values.
+### Explicit flow-head scenarios
 
-### Pipeline scalarization behavior
+`Scoring_Scenarios` documents three scenario states, including the explicit
+`flow_head_10mm` and `flow_head_20mm` resolutions. The canonical workbook exports
+`Comparison_flow_head_10mm` and `Comparison_flow_head_20mm`, each with 88 rows.
+Those sheets resolve **0.40 l/s at 10 mm head** and **0.46 l/s at 20 mm head**
+for both M+ and B-line without selecting either value as an unconditional
+default.
 
-The ingestion pipeline contains legacy scalarization behavior for ACO rows that expose
-`flow_rate_10mm_lps` / `flow_rate_20mm_lps` directly on extracted product parameters: when
-`flow_rate_lps` is missing and either split field is numeric, the pipeline fills scalar `flow_rate_lps`
-with the maximum split value. This behavior is separate from the M+ diagnostic-only conditional sheet
-and must not be extended to M+ compound proposal rows.
+The scenario sheets make the condition visible and preserve the default
+blocking policy. Their existence does not by itself enable benchmark readiness
+or customer publication for M+ or B-line.
 
-For production eligibility, the pipeline still treats missing scalar `flow_rate_lps` as a missing required
-part. Therefore a product or assembly with only conditional flow values remains blocked unless a future
-policy explicitly maps a scenario to a scoreable value.
+### Assembly and direct-product distinction
 
-### Assembled products
-
-Final assembly export uses scalar technical fields (`flow_rate_lps`, `water_seal_mm`, `outlet_dn`,
-`height_adj_min_mm`, `height_adj_max_mm`) to determine completeness. `Final_Set_Details` marks rows
-ready for benchmark/customer view only when data quality is `complete`. Partial Easyflow rows are
-explicitly blocked because flow/height remain ambiguous at the current article/variant granularity.
-
-### Proposal-only diagnostics
-
-M+ compound mapping rows deliberately preserve flow as split diagnostic fields while leaving the scalar
-`flow_rate_lps` and `selected_default_flow_rate_lps` empty. They are marked `safe_to_generate = False`,
-`ready_for_benchmark = False`, `ready_for_customer_view = False`, and blocked by
-`blocked_pending_conditional_parameter_scoring`.
+M+ has four compound rows in `Final_Assemblies` and `Final_Set_Details`, with
+default benchmark/customer readiness blocked by conditional flow. B-line is
+different: its eight approved articles are direct
+`integral_all_in_one_set` products in `Products` and `Comparison`. They do not
+create `BOM_Options`, `Final_Assemblies`, or `Final_Set_Details` rows because no
+body × grate assembly is generated.
 
 ## Current conditional technical value structure
 
-`Conditional_Technical_Values` is currently a diagnostic-only normalized long-format sheet derived from
-`Mplus_Compound_Mappings`. Each M+ set receives two rows for `parameter_name = flow_rate_lps`:
+`Conditional_Technical_Values` is the canonical normalized long-format sheet.
+Each M+ assembly and each B-line direct product receives two rows for
+`parameter_name = flow_rate_lps`:
 
 | condition_type | condition_value | value | unit | condition_label |
 |---|---:|---:|---|---|
 | head_water_level | 10 | 0.40 | l/s | 10 mm head water level |
 | head_water_level | 20 | 0.46 | l/s | 20 mm head water level |
 
-The sheet also carries set identity, family, assembly model, component IDs, source URLs, evidence type,
-confidence, attribution scope, article-specific flag, production blocking state, and recommended next
-action. This is the correct preservation shape: it does not collapse multiple condition-dependent values
-into one default and does not discard either value.
+The sheet carries entity identity, family, assembly model, source/evidence
+metadata, attribution scope, and production blocking state. This preservation
+shape does not collapse condition-dependent values into one default and does
+not discard either observation.
 
 ## Recommended scoring architecture for conditional parameters
 
@@ -149,8 +143,7 @@ The score is only production-ready when this policy is non-empty, accepted, and 
 
 ## Recommended Comparison/XLSX representation
 
-A hybrid export is recommended. It keeps the current diagnostic long-format sheet as the canonical
-source of conditional values and adds scenario-specific views only when scenario scoring is implemented.
+The implemented export follows the recommended hybrid shape: the normalized long-format sheet remains the canonical source of conditional values, and explicit scenario-specific views provide condition-resolved comparisons without changing the default scalar comparison.
 
 ### Options evaluated
 
@@ -162,15 +155,15 @@ source of conditional values and adds scenario-specific views only when scenario
 | Normalized long-format comparison rows | Most general for future condition dimensions and BI tools. | Less friendly for current customer-facing Comparison workflow. | Recommended as an additional diagnostic sheet, not the only view. |
 | Hybrid | Balances backward compatibility, readability, and generality. | More implementation work. | Recommended. |
 
-### Proposed future workbook layout
+### Implemented workbook layout
 
-Phase-ready workbook layout once conditional scoring is implemented:
+The canonical workbook now applies the core layout recommendation:
 
 1. Keep existing `Comparison` unchanged unless a user explicitly requests a scenario.
 2. Keep `Conditional_Technical_Values` as the canonical long-format observation table.
-3. Add `Scoring_Scenarios` documenting each scenario ID, parameter, condition filters, aggregation rule,
+3. Use `Scoring_Scenarios` to document each scenario ID, parameter, condition filters, aggregation rule,
    readiness impact, and owner-approved status.
-4. Add `Comparison_<scenario_id>` sheets for approved scenarios only.
+4. Export `Comparison_<scenario_id>` sheets for approved scenarios only; the current approved flow-head sheets each contain 88 rows.
 5. Optionally add curated helper columns to `Comparison`, such as `flow_rate_lps_10mm_head` and
    `flow_rate_lps_20mm_head`, but keep score columns scenario-neutral unless explicitly selected.
 
@@ -193,13 +186,13 @@ Recommended fields:
 | `present_scoring_fields` | Keep existing field; optionally include scenario-resolved fields only when policy is selected. |
 | `missing_scoring_fields` | Keep existing field; for M+ under `no_scenario_selected`, keep `flow_rate_lps` missing. |
 
-For current M+ rows before scenario scoring, the correct classification is:
+For current M+ and B-line rows in the default (no-scenario) comparison, the correct classification is:
 
 - `has_flow_rate_lps = False`
 - `has_conditional_flow_rate_lps = True`
 - `flow_rate_status = conditional`
 - `missing_scoring_fields` still includes `flow_rate_lps` for production scoring readiness
-- readiness remains blocked because no scenario policy is implemented
+- default readiness remains blocked because no unconditional scenario policy is selected
 
 ## Recommended readiness/status vocabulary
 
@@ -215,14 +208,11 @@ Use status vocabulary that separates data richness from scoring readiness:
 | `scenario_scored` | Row has been scored under a named scenario and score metadata is exported. |
 | `not_production_ready` | Conservative umbrella status when any production guardrail fails. |
 
-For M+ today, use `technically_data_rich_scoring_blocked` conceptually, with current concrete fields
-remaining `ready_for_benchmark = False`, `safe_to_generate = False`, and
-`blocking_reason = blocked_pending_conditional_parameter_scoring`.
+For M+ and B-line today, `technically_data_rich_scoring_blocked` describes the default state: explicit scenarios can resolve flow, but default `ready_for_benchmark` and customer publication remain false pending an approved unconditional policy.
 
-## Migration plan for M+ conditional flow values
+## Historical migration plan and current boundary
 
-1. **Document and freeze the diagnostic baseline.** Keep Products, Comparison, Final_Assemblies,
-   Final_Set_Details, Mplus_Compound_Mappings, and Conditional_Technical_Values counts unchanged.
+1. **Document and validate the canonical baseline.** The current counts are 88 Products/Comparison rows, 62 final assemblies/details, 4 M+ mappings, and 24 conditional observations.
 2. **Introduce internal conditional observation objects.** Use the existing M+ conditional rows as fixture
    data; do not feed observations into scoring yet.
 3. **Add coverage diagnostics.** Extend coverage in diagnostic mode to report scalar vs conditional vs
@@ -235,8 +225,7 @@ remaining `ready_for_benchmark = False`, `safe_to_generate = False`, and
    is explicitly enabled.
 7. **Update validators.** Add opt-in validator expectations for scenario sheets and metadata while keeping
    current baseline validator expectations unchanged by default.
-8. **Promote M+ only after policy acceptance.** M+ production assemblies may move above zero only after
-   scenario scoring, export metadata, and readiness gates all pass.
+8. **Preserve the publication gate.** Four M+ compound assemblies and eight direct B-line products now exist, but their default benchmark/customer states remain blocked until the conditional-flow policy is accepted.
 
 ## Risks and guardrails
 
@@ -250,7 +239,7 @@ remaining `ready_for_benchmark = False`, `safe_to_generate = False`, and
 | Validator drift. | Preserve current default expected counts; add scenario validator checks only under an explicit mode. |
 | Customer confusion. | Keep diagnostic-only conditional sheets out of customer-ready views until scenario semantics are clear. |
 
-## Proposed implementation phases
+## Historical implementation phases
 
 ### Phase 0: Review-only documentation
 
@@ -286,7 +275,7 @@ remaining `ready_for_benchmark = False`, `safe_to_generate = False`, and
 - Apply the same model to height ranges by variant, DN by drain body, load class by grate, material/finish
   by design variant, and length-dependent technical values.
 
-## Files that would need to change in a future implementation
+## Historical implementation touchpoints
 
 Likely production implementation files:
 
