@@ -17,6 +17,21 @@ from src.pipeline import run_discovery, run_update
 from src.app_export import AppExportValidationError, export_streamlit_workbook
 from src.connectors import CONNECTORS
 from src.connectors import aco as aco_connector
+from src.excel_export import (
+    _append_mplus_final_assembly_rows,
+    _extract_conditional_technical_values,
+    _extract_final_assemblies,
+    _extract_final_set_details,
+    _extract_mplus_compound_mappings,
+)
+from src.customer_scenario_view import (
+    CUSTOMER_SCENARIO_OPTIONS,
+    CUSTOMER_SCENARIO_STATE_KEY,
+    CUSTOMER_SCENARIO_RUN_KEY,
+    NO_SCENARIO_SELECTED,
+    build_customer_scenario_projection,
+    reset_customer_scenario_for_run,
+)
 
 APP_TITLE = "Drain Systems Benchmark – MVP"
 BASE_DIR = Path(__file__).parent
@@ -219,6 +234,14 @@ if "bom_options" not in st.session_state:
     st.session_state["bom_options"] = pd.DataFrame()
 if "last_run_dir" not in st.session_state:
     st.session_state["last_run_dir"] = ""
+if "conditional_technical_values" not in st.session_state:
+    st.session_state["conditional_technical_values"] = pd.DataFrame()
+if "customer_canonical_frame" not in st.session_state:
+    st.session_state["customer_canonical_frame"] = pd.DataFrame()
+if CUSTOMER_SCENARIO_STATE_KEY not in st.session_state:
+    st.session_state[CUSTOMER_SCENARIO_STATE_KEY] = NO_SCENARIO_SELECTED
+if CUSTOMER_SCENARIO_RUN_KEY not in st.session_state:
+    st.session_state[CUSTOMER_SCENARIO_RUN_KEY] = ""
 
 
 def _reset_update_state() -> None:
@@ -227,6 +250,8 @@ def _reset_update_state() -> None:
     st.session_state["excluded"] = pd.DataFrame()
     st.session_state["evidence"] = pd.DataFrame()
     st.session_state["bom_options"] = pd.DataFrame()
+    st.session_state["conditional_technical_values"] = pd.DataFrame()
+    st.session_state["customer_canonical_frame"] = pd.DataFrame()
 
 # Run discovery
 if run_discovery_btn:
@@ -246,6 +271,7 @@ if run_discovery_btn:
     st.session_state["discovery_debug"] = dbg
     _reset_update_state()
     st.session_state["last_run_dir"] = str(rp.run_dir)
+    reset_customer_scenario_for_run(st.session_state, run_id)
 
     st.success(f"Discovery completed. Candidates: {len(reg)}. Run: {run_id}")
     if len(reg) == 0 and not dbg.empty:
@@ -275,6 +301,30 @@ if run_update_btn:
         st.session_state["evidence"] = evidence
         st.session_state["bom_options"] = bom_options
 
+        # Build separate read-only M+ customer inputs. These export helpers copy
+        # their inputs and preserve the canonical no-scenario frames above.
+        runtime_components = pd.DataFrame()
+        runtime_final = _extract_final_assemblies(products)
+        runtime_details = _extract_final_set_details(
+            runtime_final, bom_options, runtime_components
+        )
+        runtime_mplus_mappings = _extract_mplus_compound_mappings(
+            reg,
+            products,
+            comparison,
+            runtime_components,
+            bom_options,
+            runtime_final,
+            runtime_details,
+        )
+        _, customer_canonical_frame = _append_mplus_final_assembly_rows(
+            products, comparison, runtime_mplus_mappings
+        )
+        st.session_state["customer_canonical_frame"] = customer_canonical_frame
+        st.session_state["conditional_technical_values"] = (
+            _extract_conditional_technical_values(runtime_mplus_mappings)
+        )
+
         # persist snapshots
         reg.to_csv(rp.outputs_dir / "registry.csv", index=False)
         products.to_csv(rp.outputs_dir / "products.csv", index=False)
@@ -284,6 +334,7 @@ if run_update_btn:
         bom_options.to_csv(rp.outputs_dir / "bom_options.csv", index=False)
 
         st.session_state["last_run_dir"] = str(rp.run_dir)
+        reset_customer_scenario_for_run(st.session_state, run_id)
         st.success(f"Update completed. Eligible: {len(comparison)}. Excluded: {len(excluded)}. Run: {run_id}")
 
 # Results
@@ -304,6 +355,42 @@ if st.session_state["comparison"].empty:
     st.info("No results yet. Run update first.")
 else:
     st.dataframe(st.session_state["comparison"], width='stretch', height=360)
+
+st.subheader("Customer presentation")
+selected_customer_scenario = st.selectbox(
+    "Water head condition for M+",
+    options=list(CUSTOMER_SCENARIO_OPTIONS),
+    format_func=CUSTOMER_SCENARIO_OPTIONS.get,
+    key=CUSTOMER_SCENARIO_STATE_KEY,
+    help="M+ has no default flow condition. Select 10 mm or 20 mm explicitly.",
+)
+customer_projection = build_customer_scenario_projection(
+    st.session_state["customer_canonical_frame"],
+    st.session_state["conditional_technical_values"],
+    selected_customer_scenario,
+)
+if selected_customer_scenario == NO_SCENARIO_SELECTED:
+    st.warning(
+        "M+ requires an explicit head-water-level selection. No M+ flow rate is "
+        "shown and M+ remains blocked in customer output."
+    )
+else:
+    selected_label = CUSTOMER_SCENARIO_OPTIONS[selected_customer_scenario]
+    st.success(f"Selected M+ condition: {selected_label}")
+    ready_mplus = customer_projection[
+        customer_projection["product_family"].eq("showerdrain_mplus")
+        & customer_projection["customer_ready_for_selected_scenario"].eq(True)
+    ]
+    if not ready_mplus.empty:
+        st.metric(
+            f"M+ flow at {selected_label}",
+            f"{float(ready_mplus.iloc[0]['flow_rate_lps']):.2f} l/s",
+        )
+
+if customer_projection.empty:
+    st.info("No customer projection is available yet. Run update first.")
+else:
+    st.dataframe(customer_projection, width="stretch", height=360)
 
 if show_excluded:
     st.subheader("Excluded")
