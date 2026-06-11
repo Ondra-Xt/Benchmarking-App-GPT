@@ -175,7 +175,14 @@ def test_policy_report_validates_all_four_assemblies_without_mutating_frames() -
     assert diagnostics["default_blocked_rows"] == 4
     assert diagnostics["scenario_10mm_ready_rows"] == 4
     assert diagnostics["scenario_20mm_ready_rows"] == 4
-    assert diagnostics["customer_view_enabled_mplus_rows"] == 0
+    assert diagnostics["canonical_customer_ready_rows"] == 0
+    assert diagnostics["no_selection_customer_ready_rows"] == 0
+    assert diagnostics["runtime_10mm_customer_ready_rows"] == 4
+    assert diagnostics["runtime_20mm_customer_ready_rows"] == 4
+    assert diagnostics["runtime_10mm_0_40_rows"] == 4
+    assert diagnostics["runtime_20mm_0_46_rows"] == 4
+    assert diagnostics["unconditional_scalar_defaults"] == 0
+    assert diagnostics["Bline_customer_ready_rows"] == 0
     assert diagnostics["invalid_conditional_rows"] == 0
     assert diagnostics["selected_scalar_defaults"] == 0
 
@@ -245,7 +252,7 @@ def test_hidden_customer_scenario_enablement_is_blocked() -> None:
     assert policy_gate(review) == INVALID
 
 
-def test_cli_is_read_only_and_prints_manual_approval_gate(tmp_path: Path) -> None:
+def test_cli_is_read_only_and_prints_approved_runtime_policy(tmp_path: Path) -> None:
     workbook = tmp_path / "benchmark_output.xlsx"
     _write_workbook(workbook, _canonical_sheets())
     before = hashlib.sha256(workbook.read_bytes()).hexdigest()
@@ -260,13 +267,16 @@ def test_cli_is_read_only_and_prints_manual_approval_gate(tmp_path: Path) -> Non
 
     assert result.returncode == 0, result.stderr
     assert "Mode: read-only policy evaluation" in result.stdout
-    assert "M+ assemblies reviewed: 4" in result.stdout
-    assert "default blocked rows: 4" in result.stdout
-    assert "10 mm scenario-ready rows: 4" in result.stdout
-    assert "20 mm scenario-ready rows: 4" in result.stdout
-    assert "customer-view-enabled M+ rows: 0" in result.stdout
+    assert "M+ canonical rows: 4" in result.stdout
+    assert "canonical customer-ready rows: 0" in result.stdout
+    assert "no-selection customer-ready rows: 0" in result.stdout
+    assert "10 mm selected customer-ready rows: 4" in result.stdout
+    assert "20 mm selected customer-ready rows: 4" in result.stdout
+    assert "10 mm resolved flow values (0.40): 4" in result.stdout
+    assert "20 mm resolved flow values (0.46): 4" in result.stdout
+    assert "unconditional scalar defaults: 0" in result.stdout
+    assert "B-line customer-ready rows: 0" in result.stdout
     assert "invalid conditional rows: 0" in result.stdout
-    assert "selected scalar defaults: 0" in result.stdout
     assert f"OVERALL: {POLICY_GATE}" in result.stdout
-    assert "do not select a default scalar flow" in result.stdout
+    assert "keep canonical scalar flow empty" in result.stdout
     assert hashlib.sha256(workbook.read_bytes()).hexdigest() == before

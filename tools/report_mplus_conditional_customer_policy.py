@@ -19,6 +19,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from src.customer_scenario_view import build_customer_scenario_projection
+
 EXPECTED_ARTICLES = frozenset({"9010.81.20", "9010.81.21", "9010.81.22", "9010.81.23"})
 EXPECTED_SHEET_COUNTS = {
     "Products": 88,
@@ -48,12 +50,12 @@ REQUIRED_SHEETS = (
 DEFAULT_BLOCKED = "default_blocked_requires_condition"
 SCENARIO_10_READY = "scenario_10mm_benchmark_ready"
 SCENARIO_20_READY = "scenario_20mm_benchmark_ready"
-CUSTOMER_APPROVAL_REQUIRED = "customer_conditional_presentation_requires_approval"
+CUSTOMER_APPROVAL_REQUIRED = "approved_conditional_customer_presentation"
 INVALID = "blocked_invalid_or_missing_condition"
-POLICY_GATE = "requires_manual_customer_policy_approval"
+POLICY_GATE = "approved_conditional_customer_presentation"
 BLOCKED_REASON_FRAGMENT = "conditional_parameter_scoring"
 RECOMMENDED_NEXT_ACTION = (
-    "approve an explicit-condition customer presentation model; do not select a default scalar flow."
+    "present M+ only after an explicit 10 mm or 20 mm selection; keep canonical scalar flow empty."
 )
 
 
@@ -213,6 +215,17 @@ def build_mplus_conditional_customer_policy_report(
         condition_10 = conditions[head_values.eq(10.0)]
         condition_20 = conditions[head_values.eq(20.0)]
 
+        runtime_source = pd.DataFrame([product]) if product is not None else pd.DataFrame()
+        runtime_no_selection = build_customer_scenario_projection(
+            runtime_source, conditions, "no_scenario_selected"
+        )
+        runtime_10 = build_customer_scenario_projection(
+            runtime_source, conditions, "flow_head_10mm"
+        )
+        runtime_20 = build_customer_scenario_projection(
+            runtime_source, conditions, "flow_head_20mm"
+        )
+
         checks = {
             "present_in_all_canonical_sheets": all(row is not None for row in canonical_rows),
             "assembly_model": _text(mapping.get("assembly_model")) == "channel_body_x_drain_body_x_grate",
@@ -250,6 +263,15 @@ def build_mplus_conditional_customer_policy_report(
             ),
             "scenario_10mm_ready": _scenario_check(scenario_10, head=10, flow=0.40),
             "scenario_20mm_ready": _scenario_check(scenario_20, head=20, flow=0.46),
+            "runtime_no_selection_blocked": len(runtime_no_selection) == 1
+            and not _truthy(runtime_no_selection.iloc[0].get("customer_ready_for_selected_scenario"))
+            and _empty(runtime_no_selection.iloc[0].get("flow_rate_lps")),
+            "runtime_10mm_customer_ready": len(runtime_10) == 1
+            and _truthy(runtime_10.iloc[0].get("customer_ready_for_selected_scenario"))
+            and _numeric_equal(runtime_10.iloc[0].get("flow_rate_lps"), 0.40),
+            "runtime_20mm_customer_ready": len(runtime_20) == 1
+            and _truthy(runtime_20.iloc[0].get("customer_ready_for_selected_scenario"))
+            and _numeric_equal(runtime_20.iloc[0].get("flow_rate_lps"), 0.46),
         }
         valid = all(checks.values())
         states = (
@@ -280,10 +302,37 @@ def workbook_diagnostics(
     diagnostics: dict[str, Any] = {
         name: len(sheets[name]) for name in EXPECTED_SHEET_COUNTS if name in sheets
     }
-    mplus_conditions = _mplus_rows(pd.DataFrame(sheets["Conditional_Technical_Values"]))
+    products = pd.DataFrame(sheets["Products"])
+    conditions = pd.DataFrame(sheets["Conditional_Technical_Values"])
+    mplus = _mplus_rows(products)
+    no_selection = build_customer_scenario_projection(mplus, conditions, "no_scenario_selected")
+    runtime_10 = build_customer_scenario_projection(mplus, conditions, "flow_head_10mm")
+    runtime_20 = build_customer_scenario_projection(mplus, conditions, "flow_head_20mm")
+    bline = products[_series(products, "product_family").map(_text).eq("showerdrain_b")]
+    bline_runtime = build_customer_scenario_projection(bline, conditions, "flow_head_10mm")
+
     diagnostics.update({
         "Mplus_assemblies_reviewed": len(review),
-        "Mplus_conditional_rows": len(mplus_conditions),
+        "Mplus_canonical_rows": len(mplus),
+        "Mplus_conditional_rows": len(_mplus_rows(conditions)),
+        "canonical_customer_ready_rows": int(
+            _series(mplus, "ready_for_customer_view", False).map(_truthy).sum()
+        ),
+        "no_selection_customer_ready_rows": int(
+            _series(no_selection, "customer_ready_for_selected_scenario", False).map(_truthy).sum()
+        ),
+        "runtime_10mm_customer_ready_rows": int(
+            _series(runtime_10, "customer_ready_for_selected_scenario", False).map(_truthy).sum()
+        ),
+        "runtime_20mm_customer_ready_rows": int(
+            _series(runtime_20, "customer_ready_for_selected_scenario", False).map(_truthy).sum()
+        ),
+        "runtime_10mm_0_40_rows": int(
+            _series(runtime_10, "flow_rate_lps").map(lambda value: _numeric_equal(value, 0.40)).sum()
+        ),
+        "runtime_20mm_0_46_rows": int(
+            _series(runtime_20, "flow_rate_lps").map(lambda value: _numeric_equal(value, 0.46)).sum()
+        ),
         "default_blocked_rows": int(review.get("check_default_benchmark_blocked", pd.Series(dtype=bool)).sum()),
         "scenario_10mm_ready_rows": int(review.get("check_scenario_10mm_ready", pd.Series(dtype=bool)).sum()),
         "scenario_20mm_ready_rows": int(review.get("check_scenario_20mm_ready", pd.Series(dtype=bool)).sum()),
@@ -293,6 +342,12 @@ def workbook_diagnostics(
         "invalid_conditional_rows": int(review.get("classification", pd.Series(dtype=str)).eq(INVALID).sum()),
         "selected_scalar_defaults": int(
             (~review.get("check_selected_default_empty", pd.Series(dtype=bool))).sum()
+        ),
+        "unconditional_scalar_defaults": int(
+            _series(mplus, "flow_rate_lps").map(lambda value: not _empty(value)).sum()
+        ),
+        "Bline_customer_ready_rows": int(
+            _series(bline_runtime, "customer_ready_for_selected_scenario", False).map(_truthy).sum()
         ),
     })
     return diagnostics
@@ -322,7 +377,7 @@ def print_report(review: pd.DataFrame, diagnostics: Mapping[str, Any], xlsx: Pat
     print("ACO ShowerDrain M+ conditional customer policy review")
     print("Mode: read-only policy evaluation")
     print(f"Workbook: {xlsx}")
-    print("Policy: M+ is scoreable only after explicit condition selection.")
+    print("Policy: M+ is customer-presentable only after explicit condition selection.")
     print("Customer presentation: show the selected flow and its condition together.")
     print("Default policy: no unconditional scalar default is allowed; canonical default rows remain blocked.")
     print()
@@ -335,13 +390,16 @@ def print_report(review: pd.DataFrame, diagnostics: Mapping[str, Any], xlsx: Pat
             print(f"  failures: {row['blocking_reasons']}")
     print()
     labels = (
-        ("M+ assemblies reviewed", "Mplus_assemblies_reviewed"),
-        ("default blocked rows", "default_blocked_rows"),
-        ("10 mm scenario-ready rows", "scenario_10mm_ready_rows"),
-        ("20 mm scenario-ready rows", "scenario_20mm_ready_rows"),
-        ("customer-view-enabled M+ rows", "customer_view_enabled_mplus_rows"),
+        ("M+ canonical rows", "Mplus_canonical_rows"),
+        ("canonical customer-ready rows", "canonical_customer_ready_rows"),
+        ("no-selection customer-ready rows", "no_selection_customer_ready_rows"),
+        ("10 mm selected customer-ready rows", "runtime_10mm_customer_ready_rows"),
+        ("20 mm selected customer-ready rows", "runtime_20mm_customer_ready_rows"),
+        ("10 mm resolved flow values (0.40)", "runtime_10mm_0_40_rows"),
+        ("20 mm resolved flow values (0.46)", "runtime_20mm_0_46_rows"),
+        ("unconditional scalar defaults", "unconditional_scalar_defaults"),
+        ("B-line customer-ready rows", "Bline_customer_ready_rows"),
         ("invalid conditional rows", "invalid_conditional_rows"),
-        ("selected scalar defaults", "selected_scalar_defaults"),
     )
     for label, key in labels:
         print(f"{label}: {diagnostics[key]}")
