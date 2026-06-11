@@ -1248,6 +1248,113 @@ def _has_aco_export_context(*dfs: pd.DataFrame) -> bool:
             return True
     return False
 
+BLINE_BLOCKING_REASON = "blocked_pending_conditional_flow_default_scoring_resolution"
+BLINE_PRODUCTION_STATUS_NOTE = (
+    "approved direct integral finished-set product; conditional 10 mm and 20 mm flow values "
+    "are preserved without selecting a default"
+)
+
+
+def _bline_product_id(article_number: Any) -> str:
+    article = str(article_number or "").strip().lower().replace(".", "-")
+    return f"aco-showerdrain-b-finished-set-{article}" if article else ""
+
+
+def _append_bline_direct_finished_set_rows(
+    products_df: pd.DataFrame,
+    comparison_df: pd.DataFrame,
+    bline_source_evidence_df: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Promote approved B-line evidence as direct article-level finished sets.
+
+    These rows are deliberately not assembly-prefixed and carry no body/grate
+    identifiers, so they cannot enter BOM or base_x_grate generation paths.
+    """
+    products_df = pd.DataFrame() if products_df is None else products_df.copy()
+    comparison_df = pd.DataFrame() if comparison_df is None else comparison_df.copy()
+    evidence = pd.DataFrame() if bline_source_evidence_df is None else bline_source_evidence_df
+    if evidence.empty:
+        return products_df, comparison_df
+
+    product_rows: list[dict[str, Any]] = []
+    comparison_rows: list[dict[str, Any]] = []
+    for _, source in evidence.iterrows():
+        article = str(source.get("product_article_number") or "").strip()
+        product_id = _bline_product_id(article)
+        if not product_id:
+            continue
+        name = f"ACO ShowerDrain B finished set {article}"
+        common = {
+            "manufacturer": "aco",
+            "product_id": product_id,
+            "product_name": name,
+            "product_article_number": article,
+            "article_number": article,
+            "candidate_type": "drain",
+            "product_family": "showerdrain_b",
+            "family": "showerdrain_b",
+            "complete_system": "yes",
+            "system_role": "finished_set",
+            "assembly_model": "integral_all_in_one_set",
+            "assembled_from_bom": False,
+            "promote_to_product": "yes",
+            "promotion_reason": "manually_approved_integral_finished_set_evidence",
+            "why_not_product_reason": "",
+            "body_article_number": "",
+            "grate_article_number": "",
+            "matched_component_ids": "",
+            "variant_condition": source.get("variant_condition", ""),
+            "length_l1_mm": source.get("length_l1_mm", ""),
+            "length_l2_mm": source.get("length_l2_mm", ""),
+            "width_mm": source.get("width_mm", ""),
+            "flow_rate_lps": "",
+            "flow_rate_status": "conditional",
+            "flow_rate_10mm_lps": source.get("flow_rate_10mm_lps", ""),
+            "flow_rate_20mm_lps": source.get("flow_rate_20mm_lps", ""),
+            "water_seal_mm": source.get("water_seal_mm", ""),
+            "outlet_dn": source.get("outlet_dn", ""),
+            "installation_height_mm": source.get("installation_height_mm", ""),
+            "height_adj_min_mm": "",
+            "height_adj_max_mm": "",
+            "is_complete_technical_data": False,
+            "missing_technical_fields": "flow_rate_lps",
+            "data_quality_status": "conditional_parameter_available_production_blocked",
+            "safe_to_generate": False,
+            "ready_for_benchmark": False,
+            "ready_for_customer_view": False,
+            "customer_view_enabled": False,
+            "blocked_reason": BLINE_BLOCKING_REASON,
+            "blocking_reason": BLINE_BLOCKING_REASON,
+            "source_status_note": BLINE_PRODUCTION_STATUS_NOTE,
+            "production_status_note": BLINE_PRODUCTION_STATUS_NOTE,
+            "product_url": source.get("source_url", ""),
+            "source_url": source.get("source_url", ""),
+            "sources": source.get("source_url", ""),
+        }
+        product_rows.append(common)
+        comparison_rows.append(common.copy())
+
+    def upsert(frame: pd.DataFrame, rows: list[dict[str, Any]]) -> pd.DataFrame:
+        for row in rows:
+            product_id = row["product_id"]
+            matches = (
+                frame["product_id"].fillna("").astype(str).str.strip().eq(product_id)
+                if "product_id" in frame.columns else pd.Series(False, index=frame.index)
+            )
+            if matches.any():
+                for column, value in row.items():
+                    if column not in frame.columns:
+                        frame[column] = ""
+                    elif isinstance(value, bool):
+                        frame[column] = frame[column].astype(object)
+                    frame.loc[matches, column] = value
+            else:
+                frame = pd.concat([frame, pd.DataFrame([row])], ignore_index=True, sort=False)
+        return frame
+
+    return upsert(products_df, product_rows), upsert(comparison_df, comparison_rows)
+
+
 def _append_mplus_final_assembly_rows(
     products_df: pd.DataFrame,
     comparison_df: pd.DataFrame,
@@ -1572,7 +1679,10 @@ def _append_cplus_production_rows(
         bom_options_df = pd.concat([bom_options_df, pd.DataFrame(bom_rows)], ignore_index=True, sort=False)
     return products_df, comparison_df, bom_options_df
 
-def _extract_conditional_technical_values(mplus_compound_mappings_df: pd.DataFrame) -> pd.DataFrame:
+def _extract_conditional_technical_values(
+    mplus_compound_mappings_df: pd.DataFrame,
+    bline_source_evidence_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """Return diagnostic-only condition-specific technical values for proposal rows.
 
     M+ flow-rate values are source-backed at different head-water levels.  This
@@ -1580,8 +1690,8 @@ def _extract_conditional_technical_values(mplus_compound_mappings_df: pd.DataFra
     feeding the values into Products.flow_rate_lps, scoring, or BOM generation.
     """
     rows: list[dict[str, Any]] = []
-    if mplus_compound_mappings_df is None or mplus_compound_mappings_df.empty:
-        return pd.DataFrame(columns=CONDITIONAL_TECHNICAL_VALUES_COLUMNS)
+    mplus_compound_mappings_df = pd.DataFrame() if mplus_compound_mappings_df is None else mplus_compound_mappings_df
+    bline_source_evidence_df = pd.DataFrame() if bline_source_evidence_df is None else bline_source_evidence_df
 
     for _, mapping in mplus_compound_mappings_df.iterrows():
         for variant in MPLUS_CONDITIONAL_FLOW_VARIANTS:
@@ -1620,6 +1730,41 @@ def _extract_conditional_technical_values(mplus_compound_mappings_df: pd.DataFra
                     "production_status_note": MPLUS_PRODUCTION_STATUS_NOTE,
                 }
             )
+
+    for _, evidence in bline_source_evidence_df.iterrows():
+        for source_column, condition_value, condition_label in (
+            ("flow_rate_10mm_lps", 10, "10 mm head water level"),
+            ("flow_rate_20mm_lps", 20, "20 mm head water level"),
+        ):
+            rows.append({
+                "set_id": _bline_product_id(evidence.get("product_article_number", "")),
+                "product_family": "showerdrain_b",
+                "assembly_model": "integral_all_in_one_set",
+                "parameter_name": "flow_rate_lps",
+                "value": evidence.get(source_column, ""),
+                "unit": "l/s",
+                "condition_type": "head_water_level",
+                "condition_value": condition_value,
+                "condition_unit": "mm",
+                "condition_label": condition_label,
+                "channel_body_id": "",
+                "drain_body_id": "",
+                "grate_id": "",
+                "source_url_channel_body": evidence.get("source_url", ""),
+                "source_url_drain_body": "",
+                "source_url_grate": "",
+                "evidence_type": "Bline_Source_Evidence",
+                "confidence": evidence.get("compatibility_confidence", ""),
+                "attribution_scope": "article_specific_integral_finished_set",
+                "article_specific": True,
+                "data_quality_status": "conditional_parameter_available_production_blocked",
+                "safe_to_generate": False,
+                "ready_for_benchmark": False,
+                "ready_for_customer_view": False,
+                "blocking_reason": BLINE_BLOCKING_REASON,
+                "recommended_next_action": "Implement and approve conditional scenario scoring before benchmark or customer publication.",
+                "production_status_note": BLINE_PRODUCTION_STATUS_NOTE,
+            })
 
     return pd.DataFrame(rows, columns=CONDITIONAL_TECHNICAL_VALUES_COLUMNS)
 
@@ -1750,9 +1895,11 @@ def export_excel(
             comparison_df,
             mplus_compound_mappings_df,
         )
-    # Imported lazily to avoid coupling the core exporter to the report CLI at module import time.
+    # Imported lazily to avoid coupling the core exporter to report modules at import time.
     from tools.report_cplus_compatible_grate_evidence import build_export_evidence_dataframe
+    from tools.report_bline_source_evidence import build_export_evidence_dataframe as build_bline_evidence
 
+    bline_source_evidence_df = build_bline_evidence()
     cplus_compatible_grate_evidence_df = build_export_evidence_dataframe(products_df, components_df)
     products_df, comparison_df, bom_options_df = _append_cplus_production_rows(
         products_df,
@@ -1761,6 +1908,10 @@ def export_excel(
         components_df,
         cplus_compatible_grate_evidence_df,
     )
+    if _has_aco_export_context(registry_df, products_df, comparison_df, components_df, bom_options_df):
+        products_df, comparison_df = _append_bline_direct_finished_set_rows(
+            products_df, comparison_df, bline_source_evidence_df
+        )
     final_assemblies_df = _extract_final_assemblies(products_df)
     final_set_details_df = _extract_final_set_details(final_assemblies_df, bom_options_df, components_df)
     eplus_proposal_mappings_df = _extract_eplus_proposal_mappings(
@@ -1769,11 +1920,11 @@ def export_excel(
         final_set_details_df,
     )
     from tools.report_eplus_compatible_grate_evidence import build_export_evidence_dataframe as build_eplus_evidence
-    from tools.report_bline_source_evidence import build_export_evidence_dataframe as build_bline_evidence
 
     eplus_compatible_grate_evidence_df = build_eplus_evidence(eplus_proposal_mappings_df)
-    bline_source_evidence_df = build_bline_evidence()
-    conditional_technical_values_df = _extract_conditional_technical_values(mplus_compound_mappings_df)
+    conditional_technical_values_df = _extract_conditional_technical_values(
+        mplus_compound_mappings_df, bline_source_evidence_df
+    )
     scoring_scenarios_df = scoring_scenarios_dataframe()
     comparison_flow_head_10mm_df = build_scenario_comparison(
         comparison_df, conditional_technical_values_df, "flow_head_10mm"

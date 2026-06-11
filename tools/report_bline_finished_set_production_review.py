@@ -1,8 +1,8 @@
 """Read-only production review for ACO ShowerDrain B integral finished-set evidence.
 
 The report evaluates whether the eight diagnostic B-line article rows are technically
-eligible to enter a *manual* direct-product production review. It never promotes rows,
-changes policy flags, or writes to the inspected XLSX. B-line must remain modeled as an
+correctly represented in the manually approved direct-product production state. It never
+changes policy flags or writes to the inspected XLSX. B-line must remain modeled as an
 integral article-level finished set rather than as a generated base_x_grate assembly.
 """
 from __future__ import annotations
@@ -30,9 +30,9 @@ EXPECTED_ARTICLES = frozenset({
     "3018175",
 })
 EXPECTED_SHEET_COUNTS = {
-    "Products": 80,
-    "Comparison": 80,
-    "Scoring_Field_Coverage": 80,
+    "Products": 88,
+    "Comparison": 88,
+    "Scoring_Field_Coverage": 88,
     "Candidates_All": 118,
     "Components": 100,
     "BOM_Options": 251,
@@ -44,10 +44,10 @@ EXPECTED_SHEET_COUNTS = {
     "Eplus_Compatible_Grate_Evidence": 3,
     "Cplus_Compatible_Grate_Evidence": 30,
     "Bline_Source_Evidence": 8,
-    "Conditional_Technical_Values": 8,
+    "Conditional_Technical_Values": 24,
     "Scoring_Scenarios": 3,
-    "Comparison_flow_head_10mm": 80,
-    "Comparison_flow_head_20mm": 80,
+    "Comparison_flow_head_10mm": 88,
+    "Comparison_flow_head_20mm": 88,
 }
 REQUIRED_SHEETS = tuple(EXPECTED_SHEET_COUNTS)
 PRODUCTION_SHEETS = (
@@ -60,13 +60,13 @@ PRODUCTION_SHEETS = (
 
 ELIGIBLE = "eligible_for_finished_set_production_review"
 BLOCKED = "blocked_for_finished_set_production"
-MANUAL_APPROVAL = "requires_manual_approval"
+APPROVED = "approved_finished_set_production"
 EASYFLOW_MISSING_TECHNICAL_FIELDS = (
     "flow_rate_lps,height_adj_min_mm,height_adj_max_mm"
 )
 RECOMMENDED_NEXT_ACTION = (
-    "Approve direct finished-set product modelling before promotion; do not generate "
-    "body × grate or base_x_grate assemblies."
+    "Retain direct finished-set product modelling and conditional flow values; do not generate "
+    "body × grate or base_x_grate assemblies or select a default flow."
 )
 
 
@@ -188,12 +188,25 @@ def build_bline_finished_set_production_review(
     frames = {name: pd.DataFrame(sheets[name]).copy(deep=True) for name in REQUIRED_SHEETS}
     evidence = frames["Bline_Source_Evidence"]
     article_counts = _series(evidence, "product_article_number").map(_text).value_counts()
+    product_rows = _bline_production_rows(frames["Products"], "Products")
+    comparison_rows = _bline_production_rows(frames["Comparison"], "Comparison")
 
     records: list[dict[str, Any]] = []
     for index, row in evidence.iterrows():
         checks = _row_checks(row)
         article = _text(row.get("product_article_number"))
         checks["finished_set_article_unique"] = article_counts.get(article, 0) == 1
+        for sheet_label, production_rows in (("product", product_rows), ("comparison", comparison_rows)):
+            matches = production_rows[_series(production_rows, "product_article_number").map(_text).eq(article)]
+            checks[f"{sheet_label}_row_present_once"] = len(matches) == 1
+            if len(matches) == 1:
+                promoted = matches.iloc[0]
+                checks[f"{sheet_label}_integral_finished_set_model"] = _text(promoted.get("assembly_model")) == "integral_all_in_one_set"
+                checks[f"{sheet_label}_body_article_number_empty"] = _empty(promoted.get("body_article_number"))
+                checks[f"{sheet_label}_grate_article_number_empty"] = _empty(promoted.get("grate_article_number"))
+                checks[f"{sheet_label}_unconditional_flow_empty"] = _empty(promoted.get("flow_rate_lps"))
+                checks[f"{sheet_label}_benchmark_blocked"] = _falsey(promoted.get("ready_for_benchmark"))
+                checks[f"{sheet_label}_customer_blocked"] = _falsey(promoted.get("ready_for_customer_view")) and _falsey(promoted.get("customer_view_enabled"))
         passed = all(checks.values())
         failed = [name for name, result in checks.items() if not result]
         records.append({
@@ -202,7 +215,7 @@ def build_bline_finished_set_production_review(
             "product_article_number": article,
             "variant_condition": _text(row.get("variant_condition")),
             "classification": ELIGIBLE if passed else BLOCKED,
-            "production_gate": MANUAL_APPROVAL if passed else BLOCKED,
+            "production_gate": APPROVED if passed else BLOCKED,
             "blocking_reasons": ",".join(failed),
             "recommended_next_action": RECOMMENDED_NEXT_ACTION,
             **checks,
@@ -292,8 +305,8 @@ def load_review_sheets(path: str | Path) -> dict[str, pd.DataFrame]:
 
 def _baseline_ok(diagnostics: Mapping[str, Any]) -> bool:
     return all(diagnostics[name] == expected for name, expected in EXPECTED_SHEET_COUNTS.items()) and all((
-        diagnostics["Bline_Products"] == 0,
-        diagnostics["Bline_Comparison"] == 0,
+        diagnostics["Bline_Products"] == 8,
+        diagnostics["Bline_Comparison"] == 8,
         diagnostics["Bline_BOM_Options"] == 0,
         diagnostics["Bline_Final_Assemblies"] == 0,
         diagnostics["Bline_Final_Set_Details"] == 0,
@@ -310,7 +323,7 @@ def _review_ok(review: pd.DataFrame) -> bool:
         len(review) == 8
         and set(review["product_article_number"]) == EXPECTED_ARTICLES
         and review["classification"].eq(ELIGIBLE).all()
-        and review["production_gate"].eq(MANUAL_APPROVAL).all()
+        and review["production_gate"].eq(APPROVED).all()
     )
 
 
@@ -329,7 +342,7 @@ def print_report(path: Path, review: pd.DataFrame, diagnostics: Mapping[str, Any
             f"- {row.product_article_number}: {row.classification}; "
             f"production_gate={row.production_gate}{suffix}"
         )
-    overall = MANUAL_APPROVAL if _baseline_ok(diagnostics) and _review_ok(review) else BLOCKED
+    overall = APPROVED if _baseline_ok(diagnostics) and _review_ok(review) else BLOCKED
     print(f"\nOVERALL: {overall}")
     print(f"Production gate: {overall}")
     print(f"Recommended next action: {RECOMMENDED_NEXT_ACTION}")

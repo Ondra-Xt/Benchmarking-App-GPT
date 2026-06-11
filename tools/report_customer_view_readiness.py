@@ -74,11 +74,12 @@ EPLUS_ACTION = (
     "Collect explicit article-level E+ body-to-grate compatibility before generating products."
 )
 BLINE_REASON = (
-    "B-line evidence describes integral all-in-one finished-set articles, not generated "
-    "base_x_grate production assemblies."
+    "B-line is an approved direct integral finished-set product, but its flow remains conditional "
+    "at 10 mm and 20 mm head with no default scoring value."
 )
 BLINE_ACTION = (
-    "Model verified finished-set articles directly if approved; do not generate base_x_grate rows."
+    "Retain customer-view blocking until conditional flow/default scoring policy is approved; "
+    "do not generate base_x_grate rows."
 )
 
 
@@ -179,8 +180,12 @@ def _classify_assembly(
         ready_for_benchmark and ready_for_customer_view and customer_view_enabled and complete
     ):
         category, reason, action = "customer_view_ready", CPLUS_REASON, CPLUS_ACTION
-    elif family == "showerdrain_mplus" or row_id in conditional_set_ids or set_id in conditional_set_ids:
-        category, reason, action = "blocked_conditional", MPLUS_REASON, MPLUS_ACTION
+    elif family in {"showerdrain_mplus", "showerdrain_b"} or row_id in conditional_set_ids or set_id in conditional_set_ids:
+        category, reason, action = (
+            "blocked_conditional",
+            BLINE_REASON if family == "showerdrain_b" else MPLUS_REASON,
+            BLINE_ACTION if family == "showerdrain_b" else MPLUS_ACTION,
+        )
     elif family == "easyflow":
         category, reason, action = "blocked_partial", EASYFLOW_REASON, EASYFLOW_ACTION
     elif ready_for_benchmark and ready_for_customer_view and complete:
@@ -264,8 +269,18 @@ def build_customer_view_readiness_report(
                     conditional_set_ids=conditional_set_ids,
                 )
             )
-    for source_sheet in ("Eplus_Compatible_Grate_Evidence", "Bline_Source_Evidence"):
-        records.extend(_diagnostic_rows(frames[source_sheet], source_sheet))
+    bline_products = frames["Products"][
+        _column(frames["Products"], "product_family").fillna("").astype(str).str.strip().str.lower().eq("showerdrain_b")
+        & _column(frames["Products"], "product_article_number").fillna("").astype(str).str.strip().ne("")
+    ]
+    for _, row in bline_products.iterrows():
+        records.append(_classify_assembly(
+            row, source_sheet="Products", product_policy=product_policy,
+            conditional_set_ids=conditional_set_ids,
+        ))
+    records.extend(_diagnostic_rows(frames["Eplus_Compatible_Grate_Evidence"], "Eplus_Compatible_Grate_Evidence"))
+    if bline_products.empty:
+        records.extend(_diagnostic_rows(frames["Bline_Source_Evidence"], "Bline_Source_Evidence"))
 
     report = pd.DataFrame.from_records(records)
     if report.empty:

@@ -8,9 +8,9 @@ import pandas as pd
 
 # Configurable baseline expectations
 EXPECTED_SHEET_COUNTS = {
-    "Products": 80,
-    "Comparison": 80,
-    "Scoring_Field_Coverage": 80,
+    "Products": 88,
+    "Comparison": 88,
+    "Scoring_Field_Coverage": 88,
     "Candidates_All": 118,
     "Components": 100,
     "BOM_Options": 251,
@@ -19,11 +19,11 @@ EXPECTED_SHEET_COUNTS = {
     "Mplus_Compound_Mappings": 4,
     "Eplus_Proposal_Mappings": 3,
     "Eplus_Compatible_Grate_Evidence": 3,
-    "Conditional_Technical_Values": 8,
+    "Conditional_Technical_Values": 24,
     "Article_Variants": 76,
     "Scoring_Scenarios": 3,
-    "Comparison_flow_head_10mm": 80,
-    "Comparison_flow_head_20mm": 80,
+    "Comparison_flow_head_10mm": 88,
+    "Comparison_flow_head_20mm": 88,
     "Cplus_Compatible_Grate_Evidence": 30,
     "Bline_Source_Evidence": 8,
 }
@@ -386,17 +386,17 @@ class CheckResult:
 
 
 APP_EXPORT_EXPECTED_COUNTS = {
-    "Products": 80,
-    "Comparison": 80,
-    "Scoring_Field_Coverage": 80,
+    "Products": 88,
+    "Comparison": 88,
+    "Scoring_Field_Coverage": 88,
     "Candidates_All": 118,
     "Components": 100,
     "BOM_Options": 251,
     "Final_Assemblies": 62,
     "Final_Set_Details": 62,
     "Cplus_Compatible_Grate_Evidence": 30,
-    "Comparison_flow_head_10mm": 80,
-    "Comparison_flow_head_20mm": 80,
+    "Comparison_flow_head_10mm": 88,
+    "Comparison_flow_head_20mm": 88,
 }
 
 APP_EXPORT_EXPECTED_ASSEMBLED_FAMILY_COUNTS = {
@@ -704,9 +704,19 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
             for column in ("safe_to_generate", "ready_for_benchmark", "ready_for_customer_view"):
                 bad = int((~_bool_series_eq(bline_evidence, column, False)).sum())
                 results.append(CheckResult(f"bline_evidence_false:{column}", bad == 0, f"actual_bad={bad} expected=false"))
-            production_ids = set(_norm_series(products, "product_id")) | set(_norm_series(final_assemblies, "product_id")) | set(_norm_series(final_set_details, "set_id"))
-            overlap = sorted(evidence_ids & production_ids)
-            results.append(CheckResult("bline_evidence_diagnostic_only_no_overlap", not overlap, f"overlap={overlap}"))
+            bline_products = products[_norm_series(products, "product_family").eq("showerdrain_b") & _norm_series(products, "product_article_number").isin(set(article_numbers))]
+            bline_comparison = comparison[_norm_series(comparison, "product_family").eq("showerdrain_b") & _norm_series(comparison, "product_article_number").isin(set(article_numbers))]
+            enforce_bline_promotion = EXPECTED_SHEET_COUNTS.get("Products") == 88 or not bline_products.empty or not bline_comparison.empty
+            if enforce_bline_promotion:
+                for sheet_name, frame in (("Products", bline_products), ("Comparison", bline_comparison)):
+                    results.append(CheckResult(f"bline_promoted_rows:{sheet_name}", len(frame) == 8, f"actual={len(frame)} expected=8"))
+                    results.append(CheckResult(f"bline_promoted_articles:{sheet_name}", set(_norm_series(frame, "product_article_number")) == set(article_numbers), f"actual={sorted(set(_norm_series(frame, 'product_article_number')))}"))
+                    results.append(CheckResult(f"bline_integral_model:{sheet_name}", _norm_series(frame, "assembly_model").eq("integral_all_in_one_set").all(), "all rows must be direct integral sets"))
+                    results.append(CheckResult(f"bline_no_body_article:{sheet_name}", _empty_series(frame, "body_article_number").all(), "body article must remain empty"))
+                    results.append(CheckResult(f"bline_no_grate_article:{sheet_name}", _empty_series(frame, "grate_article_number").all(), "grate article must remain empty"))
+                    results.append(CheckResult(f"bline_no_default_flow:{sheet_name}", _empty_series(frame, "flow_rate_lps").all(), "default flow must remain empty"))
+            bline_bom = bom[_norm_series(bom, "product_family").eq("showerdrain_b") | _norm_series(bom, "parent_family").eq("showerdrain_b") | _norm_series(bom, "option_family").eq("showerdrain_b")]
+            results.append(CheckResult("bline_no_bom_rows", bline_bom.empty, f"actual={len(bline_bom)} expected=0"))
             b_assembled = _norm_series(final_assemblies, "product_id").str.startswith("aco-assembled-showerdrain-b-").sum()
             results.append(CheckResult("bline_no_production_assemblies", int(b_assembled) == 0, f"actual={int(b_assembled)} expected=0"))
 
@@ -825,6 +835,20 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
         results.append(CheckResult(f"scenario_mplus_resolution_source:{sheet_name}", source_bad == 0, f"actual_bad={source_bad} expected=Conditional_Technical_Values"))
         results.append(CheckResult(f"scenario_mplus_resolution_status:{sheet_name}", status_bad == 0, f"actual_bad={status_bad} expected=resolved_from_condition"))
         results.append(CheckResult(f"scenario_mplus_ready:{sheet_name}", ready_bad == 0, f"actual_bad={ready_bad} expected=true"))
+
+        if EXPECTED_SHEET_COUNTS.get("Products") == 88:
+            bline_scenario = scenario_df[
+                _norm_series(scenario_df, "product_family").str.lower().eq("showerdrain_b")
+            ]
+            bline_flow = pd.to_numeric(bline_scenario.get("flow_rate_lps"), errors="coerce")
+            bline_flow_ok = len(bline_scenario) == 8 and bline_flow.notna().all() and bline_flow.round(2).eq(expected_flow).all()
+            results.append(CheckResult(f"scenario_bline_flow:{sheet_name}", bline_flow_ok, f"rows={len(bline_scenario)} actual={bline_flow.tolist()} expected={[expected_flow] * 8}"))
+            bline_source_bad = int((~_string_series_eq(bline_scenario, "flow_rate_resolution_source", "Conditional_Technical_Values")).sum())
+            bline_status_bad = int((~_string_series_eq(bline_scenario, "flow_rate_resolution_status", "resolved_from_condition")).sum())
+            bline_ready_bad = int((~_bool_series_eq(bline_scenario, "scenario_ready_for_benchmark", False)).sum())
+            results.append(CheckResult(f"scenario_bline_resolution_source:{sheet_name}", bline_source_bad == 0, f"actual_bad={bline_source_bad} expected=Conditional_Technical_Values"))
+            results.append(CheckResult(f"scenario_bline_resolution_status:{sheet_name}", bline_status_bad == 0, f"actual_bad={bline_status_bad} expected=resolved_from_condition"))
+            results.append(CheckResult(f"scenario_bline_default_blocked:{sheet_name}", bline_ready_bad == 0, f"actual_bad={bline_ready_bad} expected=false"))
 
         expected_cplus_rows = EXPECTED_ASSEMBLED_PREFIX_COUNTS.get("aco-assembled-showerdrain-cplus", 0)
         if expected_cplus_rows:
@@ -1124,6 +1148,28 @@ def validate_xlsx(path: str) -> Tuple[bool, List[CheckResult]]:
         results.append(CheckResult("conditional_technical_values_linked_to_mplus_products", len(product_overlap) == expected_mplus_promoted, f"overlap={product_overlap} expected_count={expected_mplus_promoted}"))
         results.append(CheckResult("conditional_technical_values_linked_to_mplus_final_assemblies", len(final_overlap) == expected_mplus_promoted, f"overlap={final_overlap} expected_count={expected_mplus_promoted}"))
         results.append(CheckResult("conditional_technical_values_linked_to_mplus_final_set_details", len(detail_overlap) == expected_mplus_promoted, f"overlap={detail_overlap} expected_count={expected_mplus_promoted}"))
+
+        if EXPECTED_SHEET_COUNTS.get("Products") == 88:
+            bline_conditional = conditional_technical_values[
+                _norm_series(conditional_technical_values, "product_family").str.lower().eq("showerdrain_b")
+            ]
+            results.append(CheckResult("conditional_technical_values_bline_row_count", len(bline_conditional) == 16, f"actual={len(bline_conditional)} expected=16"))
+            bad_bline_set_ids: list[str] = []
+            for set_id, rows in bline_conditional.groupby(_norm_series(bline_conditional, "set_id")):
+                variants = set(zip(
+                    pd.to_numeric(rows.get("condition_value"), errors="coerce").dropna().astype(int),
+                    pd.to_numeric(rows.get("value"), errors="coerce").dropna().round(2),
+                ))
+                if len(rows) != 2 or variants != expected_variants:
+                    bad_bline_set_ids.append(str(set_id))
+            results.append(CheckResult("conditional_technical_values_two_flow_rows_per_bline_product", not bad_bline_set_ids and bline_conditional["set_id"].nunique() == 8, f"bad_set_ids={bad_bline_set_ids} actual_set_ids={bline_conditional['set_id'].nunique()} expected_set_ids=8"))
+            bline_set_ids = set(_norm_series(bline_conditional, "set_id")) - {""}
+            bline_product_overlap = bline_set_ids & set(_norm_series(products, "product_id"))
+            bline_final_overlap = bline_set_ids & set(_norm_series(final_assemblies, "product_id")) if final_assemblies is not None else set()
+            bline_detail_overlap = bline_set_ids & (set(_norm_series(final_set_details, "set_id")) | set(_norm_series(final_set_details, "assembled_product_id"))) if final_set_details is not None else set()
+            results.append(CheckResult("conditional_technical_values_linked_to_bline_products", len(bline_product_overlap) == 8, f"overlap={sorted(bline_product_overlap)} expected_count=8"))
+            results.append(CheckResult("conditional_technical_values_not_linked_to_bline_final_assemblies", not bline_final_overlap, f"overlap={sorted(bline_final_overlap)}"))
+            results.append(CheckResult("conditional_technical_values_not_linked_to_bline_final_set_details", not bline_detail_overlap, f"overlap={sorted(bline_detail_overlap)}"))
 
 
     if "Article_Variants" in required_sheets or "Article_Variants" in xls.sheet_names:

@@ -315,12 +315,15 @@ class PipelineExportTests(unittest.TestCase):
             self.assertEqual(set(df["safe_to_generate"]), {False})
             conditional_rows = self._sheet_rows(out, "Conditional_Technical_Values")
             conditional_df = pd.DataFrame(conditional_rows[1:], columns=conditional_rows[0])
-            self.assertEqual(len(conditional_df), 8)
+            self.assertEqual(len(conditional_df), 24)
             self.assertEqual(set(conditional_df["parameter_name"]), {"flow_rate_lps"})
             self.assertEqual(set(conditional_df["condition_value"]), {10, 20})
             self.assertEqual(set(conditional_df["value"]), {0.4, 0.46})
-            self.assertEqual(conditional_df.groupby("set_id").size().to_dict(), {set_id: 2 for set_id in df["set_id"]})
-            self.assertTrue(conditional_df["production_status_note"].str.contains("conditional flow values available in Conditional_Technical_Values").all())
+            mplus_conditional = conditional_df[conditional_df["product_family"] == "showerdrain_mplus"]
+            bline_conditional = conditional_df[conditional_df["product_family"] == "showerdrain_b"]
+            self.assertEqual(mplus_conditional.groupby("set_id").size().to_dict(), {set_id: 2 for set_id in df["set_id"]})
+            self.assertEqual(len(bline_conditional), 16)
+            self.assertTrue(mplus_conditional["production_status_note"].str.contains("conditional flow values available in Conditional_Technical_Values").all())
             scenarios = pd.DataFrame(
                 self._sheet_rows(out, "Scoring_Scenarios")[1:],
                 columns=self._sheet_rows(out, "Scoring_Scenarios")[0],
@@ -335,6 +338,10 @@ class PipelineExportTests(unittest.TestCase):
                 self.assertTrue(pd.to_numeric(mplus_scenario["flow_rate_lps"]).round(2).eq(expected_flow).all())
                 self.assertTrue(mplus_scenario["scenario_ready_for_benchmark"].eq(True).all())
                 self.assertTrue(mplus_scenario["flow_rate_resolution_source"].eq("Conditional_Technical_Values").all())
+                bline_scenario = scenario_df[scenario_df["product_family"] == "showerdrain_b"]
+                self.assertEqual(len(bline_scenario), 8)
+                self.assertTrue(pd.to_numeric(bline_scenario["flow_rate_lps"]).round(2).eq(expected_flow).all())
+                self.assertTrue(bline_scenario["flow_rate_resolution_source"].eq("Conditional_Technical_Values").all())
             eplus_rows = self._sheet_rows(out, "Eplus_Proposal_Mappings")
             eplus_df = pd.DataFrame(eplus_rows[1:], columns=eplus_rows[0])
             self.assertEqual(len(eplus_df), 3)
@@ -362,7 +369,7 @@ class PipelineExportTests(unittest.TestCase):
             final_rows = self._sheet_rows(out, "Final_Assemblies")
             final_df = pd.DataFrame(final_rows[1:], columns=final_rows[0])
             self.assertTrue(set(eplus_evidence_df["set_id"]).isdisjoint(set(final_df["product_id"])))
-            self.assertEqual(len(self._sheet_rows(out, "Products")) - 1, 5)
+            self.assertEqual(len(self._sheet_rows(out, "Products")) - 1, 13)
             self.assertEqual(len(self._sheet_rows(out, "Final_Assemblies")) - 1, 4)
             self.assertEqual(len(self._sheet_rows(out, "Final_Set_Details")) - 1, 4)
 
@@ -1753,9 +1760,9 @@ class PipelineExportTests(unittest.TestCase):
                 self.assertEqual(raw_row["data_quality_status"], "conditional_parameter_available_production_blocked")
 
             counts = {
-                "Products": 5,
-                "Comparison": 5,
-                "Scoring_Field_Coverage": 5,
+                "Products": 13,
+                "Comparison": 13,
+                "Scoring_Field_Coverage": 13,
                 "Candidates_All": 0,
                 "Components": 0,
                 "BOM_Options": 0,
@@ -1764,8 +1771,13 @@ class PipelineExportTests(unittest.TestCase):
                 "Mplus_Compound_Mappings": 4,
                 "Eplus_Proposal_Mappings": 3,
                 "Eplus_Compatible_Grate_Evidence": 3,
-                "Conditional_Technical_Values": 8,
+                "Conditional_Technical_Values": 24,
                 "Article_Variants": 0,
+                "Bline_Source_Evidence": 8,
+                "Cplus_Compatible_Grate_Evidence": 2,
+                "Scoring_Scenarios": 3,
+                "Comparison_flow_head_10mm": 13,
+                "Comparison_flow_head_20mm": 13,
             }
             with (
                 patch.object(validate_xlsx_export, "EXPECTED_SHEET_COUNTS", counts),
@@ -1877,7 +1889,7 @@ class PipelineExportTests(unittest.TestCase):
             product_rows = self._sheet_rows(out, "Products")
             final_rows = self._sheet_rows(out, "Final_Assemblies")
             detail_rows = self._sheet_rows(out, "Final_Set_Details")
-            self.assertEqual(len(product_rows) - 1, len(products) + 4)
+            self.assertEqual(len(product_rows) - 1, len(products) + 12)
             self.assertEqual(len(final_rows) - 1, 9)
             self.assertEqual(len(detail_rows) - 1, 9)
 
@@ -2134,23 +2146,24 @@ def _write_app_preflight_workbook(path: Path, *, partial: bool = False) -> None:
         bom = pd.DataFrame({"option_type": ["optional_accessory"] * 72})
     else:
         counts = {
-            "Products": 80,
-            "Comparison": 80,
-            "Scoring_Field_Coverage": 80,
+            "Products": 88,
+            "Comparison": 88,
+            "Scoring_Field_Coverage": 88,
             "Candidates_All": 118,
             "Components": 100,
             "BOM_Options": 251,
             "Final_Assemblies": 62,
             "Final_Set_Details": 62,
             "Cplus_Compatible_Grate_Evidence": 30,
-            "Comparison_flow_head_10mm": 80,
-            "Comparison_flow_head_20mm": 80,
+            "Comparison_flow_head_10mm": 88,
+            "Comparison_flow_head_20mm": 88,
         }
         product_ids = (
             [f"aco-assembled-showerdrain-splus-base-{index}__drain-{index}" for index in range(16)]
             + [f"aco-assembled-showerdrain-c-base-{index}__grate-{index}" for index in range(4)]
             + [f"aco-assembled-showerdrain-mplus-channel__drain-{index}__grate" for index in range(4)]
             + [f"aco-assembled-showerdrain-cplus-base-{index}__grate-{index}" for index in range(30)]
+            + [f"aco-showerdrain-b-finished-set-{index}" for index in range(8)]
             + [f"canonical-product-{index}" for index in range(26)]
         )
         products = pd.DataFrame({"product_id": product_ids})
@@ -2205,14 +2218,14 @@ def test_streamlit_export_blocks_partial_34_16_72_session(monkeypatch, tmp_path)
 
     message = str(exc_info.value)
     assert "current Streamlit session is not the canonical full benchmark state" in message
-    assert "Products: actual=34 expected=80" in message
+    assert "Products: actual=34 expected=88" in message
     assert "BOM_Options: actual=72 expected=251" in message
     assert "Final_Assemblies: actual=16 expected=62" in message
     assert not destination.exists()
     assert not list(tmp_path.glob("*.tmp.xlsx"))
 
 
-def test_streamlit_export_publishes_only_canonical_80_62_251_workbook(monkeypatch, tmp_path):
+def test_streamlit_export_publishes_only_canonical_88_62_251_workbook(monkeypatch, tmp_path):
     from src import app_export
     from tools.validate_xlsx_export import validate_app_export_baseline
 
@@ -2243,7 +2256,7 @@ def test_streamlit_export_publishes_only_canonical_80_62_251_workbook(monkeypatc
     passed, results = validate_app_export_baseline(str(destination))
     assert passed, [f"{result.name}: {result.detail}" for result in results if not result.passed]
     details = {result.name: result.detail for result in results}
-    assert details["app_export_row_count:Products"] == "actual=80 expected=80"
+    assert details["app_export_row_count:Products"] == "actual=88 expected=88"
     assert details["app_export_row_count:BOM_Options"] == "actual=251 expected=251"
     assert details["app_export_row_count:Final_Assemblies"] == "actual=62 expected=62"
     assert details["app_export_assembled_family_count:showerdrain_splus"] == "actual=16 expected=16"

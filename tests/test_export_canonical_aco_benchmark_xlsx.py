@@ -13,6 +13,7 @@ def _write_canonical_summary_workbook(path: Path) -> None:
         + [f"aco-assembled-showerdrain-c-base-{index}__grate-{index}" for index in range(4)]
         + [f"aco-assembled-showerdrain-mplus-channel__drain-{index}__grate" for index in range(4)]
         + [f"aco-assembled-showerdrain-cplus-base-{index}__grate-{index}" for index in range(30)]
+        + [f"aco-showerdrain-b-finished-set-{index}" for index in range(8)]
         + [f"canonical-product-{index}" for index in range(26)]
     )
     products = pd.DataFrame({"product_id": product_ids})
@@ -144,7 +145,7 @@ def test_canonical_aco_cli_creates_expected_workbook_and_summary(monkeypatch, tm
     assert passed, [result.detail for result in results if not result.passed]
 
     with pd.ExcelFile(destination, engine="openpyxl") as xls:
-        assert len(pd.read_excel(xls, sheet_name="Products")) == 80
+        assert len(pd.read_excel(xls, sheet_name="Products")) == 88
         assert len(pd.read_excel(xls, sheet_name="BOM_Options")) == 251
         assert len(pd.read_excel(xls, sheet_name="Final_Assemblies")) == 62
         assert len(pd.read_excel(xls, sheet_name="Final_Set_Details")) == 62
@@ -152,7 +153,7 @@ def test_canonical_aco_cli_creates_expected_workbook_and_summary(monkeypatch, tm
         assert len(pd.read_excel(xls, sheet_name="Bline_Source_Evidence")) == 8
         scenario_10 = pd.read_excel(xls, sheet_name="Comparison_flow_head_10mm")
         scenario_20 = pd.read_excel(xls, sheet_name="Comparison_flow_head_20mm")
-        assert len(scenario_10) == len(scenario_20) == 80
+        assert len(scenario_10) == len(scenario_20) == 88
         mplus_10 = scenario_10[scenario_10["product_id"].str.startswith("aco-assembled-showerdrain-mplus-")]
         mplus_20 = scenario_20[scenario_20["product_id"].str.startswith("aco-assembled-showerdrain-mplus-")]
         assert mplus_10["flow_rate_lps"].eq(0.40).all()
@@ -160,7 +161,7 @@ def test_canonical_aco_cli_creates_expected_workbook_and_summary(monkeypatch, tm
 
     output = capsys.readouterr().out
     assert f"Output: {destination}" in output
-    assert "Products: 80" in output
+    assert "Products: 88" in output
     assert "BOM_Options: 251" in output
     assert "Final_Assemblies: 62" in output
     assert "Cplus_Compatible_Grate_Evidence: 30" in output
@@ -307,9 +308,9 @@ def test_actual_canonical_builder_promotes_old_50_32_221_pipeline_state(monkeypa
         eplus_evidence = pd.read_excel(xls, sheet_name="Eplus_Compatible_Grate_Evidence")
         cplus_evidence = pd.read_excel(xls, sheet_name="Cplus_Compatible_Grate_Evidence")
         bline_evidence = pd.read_excel(xls, sheet_name="Bline_Source_Evidence")
-        assert len(exported_products) == 80
-        assert len(exported_comparison) == 80
-        assert len(scoring_coverage) == 80
+        assert len(exported_products) == 88
+        assert len(exported_comparison) == 88
+        assert len(scoring_coverage) == 88
         assert len(candidates) == 118
         assert len(components) == 100
         assert len(exported_bom) == 251
@@ -339,4 +340,4 @@ def test_actual_canonical_builder_promotes_old_50_32_221_pipeline_state(monkeypa
             "Comparison_flow_head_10mm",
             "Comparison_flow_head_20mm",
         ):
-            assert len(pd.read_excel(xls, sheet_name=scenario_sheet)) == 80
+            assert len(pd.read_excel(xls, sheet_name=scenario_sheet)) == 88

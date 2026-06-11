@@ -13,11 +13,12 @@ from tools.report_bline_finished_set_production_review import (
     ELIGIBLE,
     EXPECTED_ARTICLES,
     EXPECTED_SHEET_COUNTS,
-    MANUAL_APPROVAL,
+    APPROVED,
     build_bline_finished_set_production_review,
     workbook_diagnostics,
 )
 from tools.report_bline_source_evidence import build_export_evidence_dataframe
+from src.excel_export import _append_bline_direct_finished_set_rows
 
 
 def _rows(count: int, **values: object) -> pd.DataFrame:
@@ -40,6 +41,9 @@ def _stable_sheets() -> dict[str, pd.DataFrame]:
     sheets["Comparison"].loc[0, ["product_family", "product_id", "article_number"]] = [
         "showerdrain_b", "aco-showerdrain-b-family", "9010.78.70"
     ]
+    sheets["Products"], sheets["Comparison"] = _append_bline_direct_finished_set_rows(
+        sheets["Products"], sheets["Comparison"], sheets["Bline_Source_Evidence"]
+    )
     sheets["BOM_Options"] = _rows(251, product_family="other", option_family="other")
 
     final_rows: list[dict[str, object]] = []
@@ -102,7 +106,7 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def test_all_eight_integral_articles_are_eligible_but_require_manual_approval() -> None:
+def test_all_eight_integral_articles_are_approved_direct_products() -> None:
     sheets = _stable_sheets()
     originals = {name: frame.copy(deep=True) for name, frame in sheets.items()}
 
@@ -112,7 +116,7 @@ def test_all_eight_integral_articles_are_eligible_but_require_manual_approval() 
     assert len(review) == 8
     assert set(review["product_article_number"]) == EXPECTED_ARTICLES
     assert review["classification"].eq(ELIGIBLE).all()
-    assert review["production_gate"].eq(MANUAL_APPROVAL).all()
+    assert review["production_gate"].eq(APPROVED).all()
     assert review["blocking_reasons"].eq("").all()
     assert review["body_article_number_empty"].all()
     assert review["grate_article_number_empty"].all()
@@ -125,8 +129,8 @@ def test_all_eight_integral_articles_are_eligible_but_require_manual_approval() 
     assert not review.columns.str.contains("no_bline_production_rows").any()
 
     assert {name: diagnostics[name] for name in EXPECTED_SHEET_COUNTS} == EXPECTED_SHEET_COUNTS
-    assert diagnostics["Bline_Products"] == 0
-    assert diagnostics["Bline_Comparison"] == 0
+    assert diagnostics["Bline_Products"] == 8
+    assert diagnostics["Bline_Comparison"] == 8
     assert diagnostics["Bline_BOM_Options"] == 0
     assert diagnostics["Bline_Final_Assemblies"] == 0
     assert diagnostics["Bline_Final_Set_Details"] == 0
@@ -163,7 +167,7 @@ def test_invalid_or_base_x_grate_evidence_is_blocked() -> None:
     assert "unconditional_flow_empty" in row["blocking_reasons"]
 
 
-def test_existing_xlsx_is_not_mutated_and_cli_reports_manual_gate(tmp_path: Path) -> None:
+def test_existing_xlsx_is_not_mutated_and_cli_reports_approved_gate(tmp_path: Path) -> None:
     workbook = tmp_path / "benchmark_output.xlsx"
     _write_workbook(workbook, _stable_sheets())
     before = _sha256(workbook)
@@ -185,11 +189,11 @@ def test_existing_xlsx_is_not_mutated_and_cli_reports_manual_gate(tmp_path: Path
     assert _sha256(workbook) == before
     assert "Mode: read-only diagnostic" in result.stdout
     assert "base_x_grate is prohibited" in result.stdout
-    assert f"OVERALL: {MANUAL_APPROVAL}" in result.stdout
-    assert f"Production gate: {MANUAL_APPROVAL}" in result.stdout
-    assert "Approve direct finished-set product modelling before promotion" in result.stdout
-    assert "- Bline_Products: 0" in result.stdout
-    assert "- Bline_Comparison: 0" in result.stdout
+    assert f"OVERALL: {APPROVED}" in result.stdout
+    assert f"Production gate: {APPROVED}" in result.stdout
+    assert "Retain direct finished-set product modelling" in result.stdout
+    assert "- Bline_Products: 8" in result.stdout
+    assert "- Bline_Comparison: 8" in result.stdout
     assert "- Bline_BOM_Options: 0" in result.stdout
     assert "- Bline_Final_Assemblies: 0" in result.stdout
     assert "- Bline_Final_Set_Details: 0" in result.stdout
@@ -197,4 +201,4 @@ def test_existing_xlsx_is_not_mutated_and_cli_reports_manual_gate(tmp_path: Path
     assert "- review_rows: 8" in result.stdout
     assert "- eligible_review_rows: 8" in result.stdout
     assert "- blocked_review_rows: 0" in result.stdout
-    assert result.stdout.count(f"production_gate={MANUAL_APPROVAL}") == 8
+    assert result.stdout.count(f"production_gate={APPROVED}") == 8

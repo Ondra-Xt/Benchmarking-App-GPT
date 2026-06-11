@@ -177,3 +177,38 @@ def test_existing_workbook_report_is_read_only_and_cli_prints_actions(tmp_path):
     assert "validated 30-assembly scope" in result.stdout
     assert "approved C+ customer-view flags are enabled" in result.stdout
     assert before_hash == hashlib.sha256(workbook.read_bytes()).hexdigest()
+
+
+def test_approved_bline_products_are_reported_as_blocked_conditional_products():
+    from src.excel_export import (
+        _append_bline_direct_finished_set_rows,
+        _extract_conditional_technical_values,
+    )
+    from tools.report_bline_source_evidence import build_export_evidence_dataframe
+
+    sheets = _stable_sheets()
+    evidence = build_export_evidence_dataframe()
+    products, _ = _append_bline_direct_finished_set_rows(
+        sheets["Products"], pd.DataFrame(), evidence
+    )
+    sheets["Products"] = products
+    sheets["Conditional_Technical_Values"] = pd.concat(
+        [
+            sheets["Conditional_Technical_Values"],
+            _extract_conditional_technical_values(pd.DataFrame(), evidence),
+        ],
+        ignore_index=True,
+        sort=False,
+    )
+    sheets["Bline_Source_Evidence"] = evidence
+
+    report = build_customer_view_readiness_report(sheets)
+    bline = report[report["assembled_family"].eq("showerdrain_b")]
+
+    assert len(bline) == 8
+    assert bline["source_sheet"].eq("Products").all()
+    assert bline["category"].eq("blocked_conditional").all()
+    assert bline["ready_for_benchmark"].eq(False).all()
+    assert bline["ready_for_customer_view"].eq(False).all()
+    assert bline["customer_view_enabled"].eq(False).all()
+    assert not report["source_sheet"].eq("Bline_Source_Evidence").any()

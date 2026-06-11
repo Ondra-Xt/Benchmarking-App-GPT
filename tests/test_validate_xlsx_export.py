@@ -536,9 +536,9 @@ def test_default_baseline_counts_updated():
     mod = _load_validator_module()
     assert mod.EXPECTED_SHEET_COUNTS["Candidates_All"] == 118
     assert mod.EXPECTED_SHEET_COUNTS["Components"] == 100
-    assert mod.EXPECTED_SHEET_COUNTS["Products"] == 80
-    assert mod.EXPECTED_SHEET_COUNTS["Comparison"] == 80
-    assert mod.EXPECTED_SHEET_COUNTS["Scoring_Field_Coverage"] == 80
+    assert mod.EXPECTED_SHEET_COUNTS["Products"] == 88
+    assert mod.EXPECTED_SHEET_COUNTS["Comparison"] == 88
+    assert mod.EXPECTED_SHEET_COUNTS["Scoring_Field_Coverage"] == 88
     assert mod.EXPECTED_SHEET_COUNTS["BOM_Options"] == 251
     assert mod.EXPECTED_SHEET_COUNTS["Final_Assemblies"] == 62
     assert mod.EXPECTED_SHEET_COUNTS["Final_Set_Details"] == 62
@@ -547,11 +547,11 @@ def test_default_baseline_counts_updated():
     assert mod.EXPECTED_SHEET_COUNTS["Mplus_Compound_Mappings"] == 4
     assert mod.EXPECTED_SHEET_COUNTS["Eplus_Proposal_Mappings"] == 3
     assert mod.EXPECTED_SHEET_COUNTS["Eplus_Compatible_Grate_Evidence"] == 3
-    assert mod.EXPECTED_SHEET_COUNTS["Conditional_Technical_Values"] == 8
+    assert mod.EXPECTED_SHEET_COUNTS["Conditional_Technical_Values"] == 24
     assert mod.EXPECTED_SHEET_COUNTS["Article_Variants"] == 76
     assert mod.EXPECTED_SHEET_COUNTS["Scoring_Scenarios"] == 3
-    assert mod.EXPECTED_SHEET_COUNTS["Comparison_flow_head_10mm"] == 80
-    assert mod.EXPECTED_SHEET_COUNTS["Comparison_flow_head_20mm"] == 80
+    assert mod.EXPECTED_SHEET_COUNTS["Comparison_flow_head_10mm"] == 88
+    assert mod.EXPECTED_SHEET_COUNTS["Comparison_flow_head_20mm"] == 88
     assert mod.EXPECTED_FINAL_SET_DETAILS_ROW_COUNT == 62
     assert mod.EXPECTED_ASSEMBLED_PREFIX_COUNTS["aco-assembled-showerdrain-cplus"] == 30
     assert mod.EXPECTED_ASSEMBLED_PREFIX_COUNTS["aco-assembled-showerdrain-eplus"] == 0
@@ -707,7 +707,7 @@ def test_final_assemblies_baseline_expectations():
     assert mod.EXPECTED_SHEET_COUNTS["Final_Set_Details"] == 62
     assert mod.EXPECTED_SHEET_COUNTS["Mplus_Compound_Mappings"] == 4
     assert mod.EXPECTED_SHEET_COUNTS["Eplus_Proposal_Mappings"] == 3
-    assert mod.EXPECTED_SHEET_COUNTS["Conditional_Technical_Values"] == 8
+    assert mod.EXPECTED_SHEET_COUNTS["Conditional_Technical_Values"] == 24
     assert mod.EXPECTED_SHEET_COUNTS["Article_Variants"] == 76
     assert mod.EXPECTED_FINAL_SET_DETAILS_ROW_COUNT == 62
     assert mod.EXPECTED_FINAL_ASSEMBLIES_FAMILY_COUNTS == {
