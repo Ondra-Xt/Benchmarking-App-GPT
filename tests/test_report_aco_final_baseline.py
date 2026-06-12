@@ -25,17 +25,38 @@ def _assembly_rows() -> list[dict[str, object]]:
             row: dict[str, object] = {
                 "product_id": f"aco-assembled-{family}-{index}",
                 "assembled_family": family,
+                "assembled_from_bom": "TRUE",
                 "data_quality_status": status,
-                "ready_for_benchmark": ready,
-                "ready_for_customer_view": ready if family != "showerdrain_mplus" else False,
-                "customer_view_enabled": ready if family != "showerdrain_mplus" else False,
+                "is_complete_technical_data": "TRUE" if ready else "FALSE",
+                "ready_for_benchmark": "TRUE" if ready else "FALSE",
+                "ready_for_customer_view": "TRUE" if ready and family != "showerdrain_mplus" else "FALSE",
+                "customer_view_enabled": "TRUE" if ready and family != "showerdrain_mplus" else "FALSE",
                 "flow_rate_lps": 0.7 if ready else "",
                 "height_adj_min_mm": 10 if ready else "",
                 "height_adj_max_mm": 100 if ready else "",
             }
+            if family == "showerdrain_cplus":
+                base_id = (
+                    "aco-showerdrain-cplus-standard-h92"
+                    if index < 15 else "aco-showerdrain-cplus-low-h69"
+                )
+                hydraulics = mod.CPLUS_BASE_HYDRAULICS[base_id]
+                row.update({
+                    "product_id": f"aco-assembled-showerdrain-cplus-{index}",
+                    "product_family": "showerdrain_cplus",
+                    "family": "showerdrain_cplus",
+                    "assembly_model": "base_x_grate",
+                    "base_id": base_id,
+                    "base_article_number": "9010.85.10" if index < 15 else "9010.85.20",
+                    "grate_id": f"aco-cplus-design-grate-{index % 15}",
+                    "grate_article_number": f"9010.88.{index % 15:02d}",
+                    "product_name": f"C+ approved grate {index}",
+                    **hydraulics,
+                })
             if family == "easyflow":
                 row.update({
                     "flow_rate_lps": "", "height_adj_min_mm": "", "height_adj_max_mm": "",
+                    "is_complete_technical_data": "FALSE",
                     "missing_technical_fields": "flow_rate_lps,height_adj_min_mm,height_adj_max_mm",
                 })
             rows.append(row)
@@ -73,6 +94,21 @@ def _products(assemblies: pd.DataFrame) -> pd.DataFrame:
             "grate_article_number": "",
             "blocked_reason": "blocked_pending_conditional_parameter_scoring",
         })
+    rows.append({
+        "product_id": "aco-showerdrain-b-family-discovery",
+        "product_family": "showerdrain_b",
+        "family": "showerdrain_b",
+        "candidate_type": "family_navigation",
+        "assembly_model": "",
+        "flow_rate_lps": "0.90",
+        "selected_default_flow_rate_lps": "",
+        "ready_for_benchmark": "FALSE",
+        "ready_for_customer_view": "FALSE",
+        "customer_view_enabled": "FALSE",
+        "product_article_number": "",
+        "body_article_number": "",
+        "grate_article_number": "",
+    })
     while len(rows) < 88:
         index = len(rows)
         rows.append({
@@ -95,8 +131,9 @@ def _details(assemblies: pd.DataFrame) -> pd.DataFrame:
             "set_id": assembly["product_id"],
             "assembled_product_id": assembly["product_id"],
             "assembled_family": family,
-            "ready_for_benchmark": ready,
-            "ready_for_customer_view": ready,
+            "ready_for_benchmark": "TRUE" if ready else "FALSE",
+            "ready_for_customer_view": "TRUE" if ready else "FALSE",
+            "base_product_id": "aco-easyflow-complete-dn50-ws50" if family == "easyflow" else "",
             "base_article_number": "",
             "article_number": "",
             "selected_article_number": "",
@@ -107,7 +144,10 @@ def _details(assemblies: pd.DataFrame) -> pd.DataFrame:
 
 def _conditions(products: pd.DataFrame) -> pd.DataFrame:
     rows = []
-    conditional = products[products["product_family"].isin(["showerdrain_mplus", "showerdrain_b"])]
+    conditional = products[
+        products["product_family"].eq("showerdrain_mplus")
+        | products.apply(mod.is_approved_bline_finished_set_candidate, axis=1)
+    ]
     for _, product in conditional.iterrows():
         for head, flow in ((10, 0.40), (20, 0.46)):
             rows.append({
@@ -139,11 +179,11 @@ def _canonical_sheets() -> dict[str, pd.DataFrame]:
                 "base_id": base_id,
                 "grate_id": f"aco-cplus-design-grate-{index}",
                 "grate_article_number": f"9010.88.{index:02d}",
-                "flow_rate_lps": values[0],
-                "water_seal_mm": values[1],
-                "outlet_dn": values[2],
-                "height_adj_min_mm": values[3],
-                "height_adj_max_mm": values[4],
+                "flow_rate_lps": values["flow_rate_lps"],
+                "water_seal_mm": values["water_seal_mm"],
+                "outlet_dn": values["outlet_dn"],
+                "height_adj_min_mm": values["height_adj_min_mm"],
+                "height_adj_max_mm": values["height_adj_max_mm"],
                 "article_level_compatibility_found": True,
                 "safe_to_generate": True,
                 "ready_for_benchmark": True,
@@ -162,12 +202,31 @@ def _canonical_sheets() -> dict[str, pd.DataFrame]:
          "product_family": "other", "option_type": "optional_accessory"}
         for i in range(221)
     ])
+    raw_easyflow_articles = (
+        "2500.00.00", "2500.00.77", "2500.05.00", "2500.05.77", "2500.55.00",
+        "2500.55.77", "2505.00.00", "2505.00.77", "2505.05.00", "2505.05.77",
+    )
     variants = pd.DataFrame([
-        {"product_family": "easyflow", "variant_type": "candidate_body_variant", "article_number": article}
-        for article in sorted(mod.EASYFLOW_ARTICLES)
+        {
+            "product_family": "easyflow",
+            "variant_type": "candidate_body_variant",
+            "article_number": article,
+            "base_product_id": (
+                "aco-easyflow-complete-dn50-ws50"
+                if article in mod.EASYFLOW_ARTICLES else "aco-easyflow-other-variant-scope"
+            ),
+            "source_url": f"https://example.test/easyflow/{article}",
+            "attribution_status": "candidate_variant",
+            "water_seal_mm": 50,
+            "outlet_dn": "DN50",
+            "flow_rate_lps": 1.0 if article == "2500.05.00" else 1.5,
+            "height_adj_min_mm": 7 if article == "2500.05.00" else 15,
+            "height_adj_max_mm": 75 if article == "2500.05.00" else 96,
+        }
+        for article in raw_easyflow_articles
     ] + [
         {"product_family": "other", "variant_type": "other", "article_number": f"9999.{i:02d}.00"}
-        for i in range(73)
+        for i in range(66)
     ])
     eplus_evidence = pd.DataFrame([
         {
@@ -213,8 +272,17 @@ def _sha256(path: Path) -> str:
 
 
 def test_final_baseline_counts_classifications_and_customer_states() -> None:
-    report = mod.audit_frames(_canonical_sheets())
+    sheets = _canonical_sheets()
+    raw_easyflow = sheets["Article_Variants"][
+        sheets["Article_Variants"]["product_family"].eq("easyflow")
+    ]
+    raw_bline = sheets["Products"][
+        sheets["Products"]["product_family"].eq("showerdrain_b")
+    ]
+    report = mod.audit_frames(sheets)
 
+    assert len(raw_easyflow) == 10
+    assert len(raw_bline) == 9
     assert report.overall == mod.STABLE
     assert report.sheet_counts == mod.EXPECTED_SHEET_COUNTS
     assert report.family_counts == mod.EXPECTED_FINAL_FAMILY_COUNTS
@@ -235,7 +303,7 @@ def test_final_baseline_counts_classifications_and_customer_states() -> None:
 
 def test_cplus_approved_state_and_protected_hydraulics_are_required() -> None:
     sheets = _canonical_sheets()
-    sheets["Cplus_Compatible_Grate_Evidence"].loc[0, "flow_rate_lps"] = 9.99
+    sheets["Final_Assemblies"].loc[sheets["Final_Assemblies"]["assembled_family"].eq("showerdrain_cplus").idxmax(), "flow_rate_lps"] = 9.99
 
     report = mod.audit_frames(sheets)
 
@@ -261,6 +329,21 @@ def test_mplus_and_bline_conditional_runtime_readiness_and_zero_defaults() -> No
     products.loc[index, "selected_default_flow_rate_lps"] = "0.40"
     broken = mod.audit_frames(sheets)
     assert not next(check for check in broken.checks if check.name == "mplus_zero_scalar_defaults").passed
+
+
+def test_malformed_approved_bline_identity_is_in_scope_and_fails_closed() -> None:
+    sheets = _canonical_sheets()
+    products = sheets["Products"]
+    approved = products["product_article_number"].eq("9010.78.70")
+    products.loc[approved, "assembly_model"] = "base_x_grate"
+
+    report = mod.audit_frames(sheets)
+    checks = {check.name: check.passed for check in report.checks}
+
+    assert not checks["bline_assembly_model"]
+    assert not checks["bline_direct_integral_finished_sets"]
+    assert not checks["runtime_bline_10mm"]
+    assert report.overall == mod.UNSTABLE
 
 
 def test_easyflow_unresolved_and_eplus_diagnostic_only_states_are_required() -> None:

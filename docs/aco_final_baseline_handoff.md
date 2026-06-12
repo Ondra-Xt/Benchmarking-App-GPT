@@ -86,7 +86,7 @@ scope. Each base has 15 explicit compatibility rows:
 | Base | Flow | Water seal | Outlet | Height range |
 |---|---:|---:|---|---:|
 | `aco-showerdrain-cplus-standard-h92` | 0.91 l/s | 50 mm | DN50 | 80–128 mm |
-| `aco-showerdrain-cplus-low-h69` | 0.62 l/s | 25 mm | DN50 | 57–128 mm |
+| `aco-showerdrain-cplus-low-h69` | 0.62 l/s | 25 mm | DN40 | 57–128 mm |
 
 The final audit rejects changed hydraulic values, an altered base scope, a
 missing/extra explicit evidence row, a missing/extra compatible-grate BOM row,

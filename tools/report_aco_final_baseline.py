@@ -15,10 +15,23 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from src.customer_scenario_view import (
+    APPROVED_BLINE_ARTICLES,
+    APPROVED_BLINE_PRODUCT_IDS,
     FLOW_HEAD_10MM,
     FLOW_HEAD_20MM,
     NO_SCENARIO_SELECTED,
     build_customer_scenario_projection,
+    is_approved_bline_finished_set_candidate,
+)
+from tools.report_easyflow_article_level_attribution import assess_easyflow_article_attribution
+from tools.validate_xlsx_export import (
+    CPLUS_EXPECTED,
+    _actual_assembly_mask,
+    _assembled_family_series,
+    _bool_series_eq,
+    _numeric_series_eq,
+    _norm_series,
+    _string_series_eq,
 )
 
 STABLE = "ACO_BASELINE_STABLE"
@@ -55,14 +68,8 @@ EXPECTED_FINAL_FAMILY_COUNTS = {
     "showerdrain_eplus": 0,
 }
 EASYFLOW_ARTICLES = {"2500.00.00", "2500.05.00", "2500.55.00"}
-CPLUS_BASE_HYDRAULICS = {
-    "aco-showerdrain-cplus-standard-h92": (0.91, 50.0, "DN50", 80.0, 128.0),
-    "aco-showerdrain-cplus-low-h69": (0.62, 25.0, "DN50", 57.0, 128.0),
-}
-BLINE_ARTICLES = {
-    "9010.78.70", "9010.78.71", "9010.78.72", "9010.78.73",
-    "3018172", "3018173", "3018174", "3018175",
-}
+CPLUS_BASE_HYDRAULICS = CPLUS_EXPECTED
+BLINE_ARTICLES = set(APPROVED_BLINE_ARTICLES)
 
 
 @dataclass(frozen=True)
@@ -130,6 +137,17 @@ def _family(frame: pd.DataFrame, *, assembled: bool = False) -> pd.Series:
     return values
 
 
+def _actual_assembly_families(frame: pd.DataFrame) -> pd.Series:
+    """Resolve families only for production assembly rows using validator scope."""
+    actual = _actual_assembly_mask(frame)
+    families = _assembled_family_series(frame)
+    declared = _series(frame, "assembled_family").str.lower()
+    allowed = set(EXPECTED_FINAL_FAMILY_COUNTS)
+    fill = actual & families.eq("") & declared.isin(allowed)
+    families.loc[fill] = declared.loc[fill]
+    return families.where(actual, "")
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -179,7 +197,7 @@ def audit_frames(sheets: Mapping[str, pd.DataFrame]) -> AuditReport:
     eplus_evidence = frames.get("Eplus_Compatible_Grate_Evidence", pd.DataFrame())
     cplus_evidence = frames.get("Cplus_Compatible_Grate_Evidence", pd.DataFrame())
 
-    assembly_families = _family(assemblies, assembled=True)
+    assembly_families = _actual_assembly_families(assemblies)
     family_counts = {
         family: int(assembly_families.eq(family).sum())
         for family in EXPECTED_FINAL_FAMILY_COUNTS
@@ -190,12 +208,15 @@ def audit_frames(sheets: Mapping[str, pd.DataFrame]) -> AuditReport:
 
     detail_families = _family(details, assembled=True)
     product_families = _family(products)
+    approved_bline_mask = products.apply(
+        is_approved_bline_finished_set_candidate, axis=1
+    )
     customer_counts = {
         "canonical_final_set_details": _ready_count(details),
         "cplus": _ready_count(details[detail_families.eq("showerdrain_cplus")]),
         "easyflow": _ready_count(details[detail_families.eq("easyflow")]),
         "mplus": _ready_count(details[detail_families.eq("showerdrain_mplus")]),
-        "bline": _ready_count(products[product_families.eq("showerdrain_b")]),
+        "bline": _ready_count(products[approved_bline_mask]),
         "eplus": _ready_count(products[product_families.eq("showerdrain_eplus")]),
     }
     expected_customer = {
@@ -211,11 +232,14 @@ def audit_frames(sheets: Mapping[str, pd.DataFrame]) -> AuditReport:
     # three candidates retained and no selected article or protected scalar.
     easy_a = assemblies[assembly_families.eq("easyflow")]
     easy_d = details[detail_families.eq("easyflow")]
-    easy_v = variants[
-        _family(variants).eq("easyflow")
-        & _series(variants, "variant_type").str.lower().eq("candidate_body_variant")
-    ]
-    found_articles = set(_series(easy_v, "article_number")) - {""}
+    easyflow_attribution = assess_easyflow_article_attribution(
+        assemblies, details, variants
+    )
+    found_articles = {
+        article
+        for result in easyflow_attribution.assembly_results
+        for article in result.candidate_article_numbers
+    }
     selected_article_columns = [
         column for column in ("base_article_number", "article_number", "selected_article_number")
         if column in easy_d.columns
@@ -239,50 +263,67 @@ def audit_frames(sheets: Mapping[str, pd.DataFrame]) -> AuditReport:
     # Complete unconditional families.
     for family, expected in (("easyflowplus", 6), ("showerdrain_splus", 16), ("showerdrain_c", 4)):
         rows = assemblies[assembly_families.eq(family)]
-        family_details = details[detail_families.eq(family)]
-        passed = (len(rows) == expected and _bool_series(rows, "ready_for_benchmark").all()
-                  and _bool_series(family_details, "ready_for_customer_view").all())
+        assembly_ids = set(_series(rows, "product_id")) - {""}
+        family_details = details[
+            _series(details, "assembled_product_id").isin(assembly_ids)
+        ]
+        complete = _bool_series_eq(rows, "is_complete_technical_data", True).all()
+        customer_ready = _bool_series_eq(
+            family_details, "ready_for_customer_view", True
+        ).all()
+        passed = len(rows) == expected and len(family_details) == expected and complete and customer_ready
         _add(checks, f"complete_customer_family:{family}", passed,
-             f"assemblies={len(rows)} customer_ready={_ready_count(family_details)} expected={expected}")
+             f"assemblies={len(rows)} complete={int(_bool_series(rows, 'is_complete_technical_data').sum())} customer_ready={_ready_count(family_details)} expected={expected}")
 
-    # C+ approved matrix scope, hydraulics, BOM, and customer state.
+    # C+ uses the same actual-assembly scope and normalization as the XLSX validator.
     cplus_a = assemblies[assembly_families.eq("showerdrain_cplus")]
-    cplus_d = details[detail_families.eq("showerdrain_cplus")]
+    cplus_ids = _norm_series(cplus_a, "product_id")
+    cplus_d = details[
+        _series(details, "assembled_product_id").isin(set(cplus_ids))
+    ]
     cplus_bom = bom[_family(bom).eq("showerdrain_cplus")]
     compatible_bom = cplus_bom[_series(cplus_bom, "option_type").str.lower().eq("compatible_grate")]
-    cplus_base_ids = set(_series(cplus_evidence, "base_id")) - {""}
-    cplus_no_tile = not pd.concat([
-        _series(cplus_evidence, "grate_id"), _series(cplus_evidence, "grate_article_number"),
-        _series(cplus_evidence, "grate_name"), _series(compatible_bom, "component_id"),
-    ], ignore_index=True).str.lower().str.contains("tile").any()
+    cplus_base_ids = set(_norm_series(cplus_a, "base_id")) - {""}
+    cplus_no_tile = not (
+        _norm_series(cplus_a, "product_name").str.contains("tile", case=False, regex=False)
+        | _norm_series(cplus_a, "grate_article_number").str.contains("tile", case=False, regex=False)
+    ).any()
     protected_hydraulics = True
     for base_id, expected_values in CPLUS_BASE_HYDRAULICS.items():
-        rows = cplus_evidence[_series(cplus_evidence, "base_id").eq(base_id)]
-        actual = (
-            _numeric(rows, "flow_rate_lps"), _numeric(rows, "water_seal_mm"),
-            _series(rows, "outlet_dn"), _numeric(rows, "height_adj_min_mm"),
-            _numeric(rows, "height_adj_max_mm"),
-        )
-        protected_hydraulics &= bool(len(rows) == 15
-            and actual[0].round(2).eq(expected_values[0]).all()
-            and actual[1].eq(expected_values[1]).all()
-            and actual[2].eq(expected_values[2]).all()
-            and actual[3].eq(expected_values[3]).all()
-            and actual[4].eq(expected_values[4]).all())
+        rows = cplus_a[_norm_series(cplus_a, "base_id").eq(base_id)]
+        protected_hydraulics &= len(rows) == 15
+        for field, expected_value in expected_values.items():
+            matches = (
+                _string_series_eq(rows, field, expected_value)
+                if isinstance(expected_value, str)
+                else _numeric_series_eq(rows, field, expected_value)
+            )
+            protected_hydraulics &= bool(matches.all())
     _add(checks, "cplus_approved_scope", len(cplus_a) == 30 and len(cplus_evidence) == 30
          and len(compatible_bom) == 30 and cplus_base_ids == set(CPLUS_BASE_HYDRAULICS)
-         and cplus_no_tile, f"assemblies={len(cplus_a)} evidence={len(cplus_evidence)} compatible_bom={len(compatible_bom)}")
+         and cplus_ids.nunique() == 30 and cplus_no_tile,
+         f"assemblies={len(cplus_a)} evidence={len(cplus_evidence)} compatible_bom={len(compatible_bom)}")
     _add(checks, "cplus_protected_hydraulics", protected_hydraulics,
-         "expected 15 standard H92 rows and 15 low H69 rows with protected values")
-    _add(checks, "cplus_customer_approved_enabled", _ready_count(cplus_d) == 30
-         and _bool_series(cplus_a, "ready_for_benchmark").all()
-         and _bool_series(cplus_a, "customer_view_enabled").all(),
-         f"customer_ready={_ready_count(cplus_d)}")
+         "expected 15 standard H92 rows and 15 low H69 rows with validator-protected values")
+    cplus_assembly_approved = all(
+        _bool_series_eq(cplus_a, field, True).all()
+        for field in (
+            "ready_for_benchmark", "ready_for_customer_view", "customer_view_enabled"
+        )
+    )
+    cplus_details_approved = (
+        len(cplus_d) == 30
+        and _bool_series_eq(cplus_d, "ready_for_customer_view", True).all()
+    )
+    _add(checks, "cplus_customer_approved_enabled", len(cplus_a) == 30
+         and cplus_assembly_approved and cplus_details_approved,
+         f"assemblies={len(cplus_a)} detail_rows={len(cplus_d)} customer_ready={_ready_count(cplus_d)}")
 
     # M+ and B-line are conditional only: no canonical/default scalar and exact
     # scenario-specific runtime readiness at 10 mm and 20 mm.
-    mplus_products = products[product_families.eq("showerdrain_mplus")]
-    bline_products = products[product_families.eq("showerdrain_b")]
+    product_assembly_families = _actual_assembly_families(products)
+    mplus_products = products[product_assembly_families.eq("showerdrain_mplus")]
+    bline_products = products[approved_bline_mask].copy(deep=True)
     for label, rows, expected, model in (
         ("mplus", mplus_products, 4, "channel_body_x_drain_body_x_grate"),
         ("bline", bline_products, 8, "integral_all_in_one_set"),
@@ -295,10 +336,13 @@ def audit_frames(sheets: Mapping[str, pd.DataFrame]) -> AuditReport:
              and _series(rows, "assembly_model").eq(model).all(),
              f"expected={model}")
 
-    bline_ids = set(_series(bline_products, "product_article_number")) - {""}
+    bline_articles = set(_series(bline_products, "product_article_number")) - {""}
+    bline_product_ids = set(_series(bline_products, "product_id")) - {""}
     bline_bom = bom[_family(bom).eq("showerdrain_b")]
     _add(checks, "bline_direct_integral_finished_sets", len(bline_products) == 8
-         and bline_ids == BLINE_ARTICLES and len(bline_bom) == 0
+         and bline_articles == BLINE_ARTICLES
+         and bline_product_ids == set(APPROVED_BLINE_PRODUCT_IDS) and len(bline_bom) == 0
+         and _series(bline_products, "assembly_model").eq("integral_all_in_one_set").all()
          and family_counts["showerdrain_b"] == 0
          and _series(bline_products, "body_article_number").eq("").all()
          and _series(bline_products, "grate_article_number").eq("").all(),
