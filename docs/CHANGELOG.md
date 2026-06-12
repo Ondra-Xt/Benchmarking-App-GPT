@@ -1,5 +1,9 @@
 # Changelog - Current Stable ACO Benchmark Baseline
 
+## Final ACO baseline audit milestone — June 12, 2026
+
+Added a read-only final baseline audit, regression coverage, and a complete manufacturer handoff. The canonical 88-product / 62-assembly / 251-BOM state is unchanged; Easyflow article attribution and E+ compatibility remain nonblocking unresolved evidence gaps, with neither family promoted.
+
 ## Status
 
 Stable and validated as of June 11, 2026.
