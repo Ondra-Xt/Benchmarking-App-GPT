@@ -14,7 +14,8 @@ import os
 from src.config import load_config, save_config, default_config, EQUIVALENCE_KEYS, FINAL_KEYS, validate_sum_100
 from src.run_manager import utc_run_id, create_run_dirs
 from src.pipeline import run_discovery, run_update
-from src.app_export import AppExportValidationError, export_streamlit_workbook
+from src.app_export import AppExportValidationError
+from src.canonical_aco_export import export_canonical_aco_workbook
 from src.connectors import CONNECTORS
 from src.connectors import aco as aco_connector
 from src.excel_export import (
@@ -38,6 +39,7 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 CONFIG_PATH = DATA_DIR / "config" / "weights.json"
 TEMPLATE_PATH = DATA_DIR / "templates" / "benchmark_template.xlsx"
+CANONICAL_ACO_DOWNLOAD_KEY = "canonical_aco_workbook_bytes"
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.title(APP_TITLE)
@@ -82,6 +84,10 @@ def _http_probe(url: str, timeout: int = 10) -> dict[str, str]:
             "bytes": "0",
             "error": f"{type(exc).__name__}: {exc}",
         }
+
+
+def _invalidate_canonical_aco_download() -> None:
+    st.session_state.pop(CANONICAL_ACO_DOWNLOAD_KEY, None)
 
 
 def _clear_app_session_state() -> None:
@@ -215,7 +221,7 @@ with col1:
 with col2:
     run_update_btn = st.button("Run update", width='stretch')
 with col3:
-    export_btn = st.button("Export Excel", width='stretch')
+    export_btn = st.button("Build canonical ACO Excel", width='stretch')
 
 # Session state
 if "registry" not in st.session_state:
@@ -255,6 +261,7 @@ def _reset_update_state() -> None:
 
 # Run discovery
 if run_discovery_btn:
+    _invalidate_canonical_aco_download()
     run_id = utc_run_id("discovery")
     rp = create_run_dirs(DATA_DIR, run_id)
     # snapshot weights
@@ -280,6 +287,7 @@ if run_discovery_btn:
 
 # Run update
 if run_update_btn:
+    _invalidate_canonical_aco_download()
     run_id = utc_run_id("update")
     rp = create_run_dirs(DATA_DIR, run_id)
     save_config(rp.run_dir / "weights.json", cfg)
@@ -408,46 +416,35 @@ st.subheader("Evidence (audit)")
 if not st.session_state["evidence"].empty:
     st.dataframe(st.session_state["evidence"].tail(200), width='stretch', height=240)
 
-# Export Excel
+# Canonical ACO Excel export
+st.info(
+    "Canonical ACO export is independent of selected connectors and current session results."
+)
 if export_btn:
-    if st.session_state["comparison"].empty and st.session_state["registry"].empty:
-        st.warning("Nothing to export. Run discovery/update.")
+    _invalidate_canonical_aco_download()
+    run_id = utc_run_id("export")
+    rp = create_run_dirs(DATA_DIR, run_id)
+    out_path = rp.outputs_dir / "benchmark_aco_canonical.xlsx"
+    try:
+        export_canonical_aco_workbook(
+            TEMPLATE_PATH,
+            out_path,
+            default_config(),
+        )
+        workbook_bytes = out_path.read_bytes()
+    except AppExportValidationError as exc:
+        st.error(str(exc))
     else:
-        run_id = utc_run_id("export")
-        rp = create_run_dirs(DATA_DIR, run_id)
-        save_config(rp.run_dir / "weights.json", cfg)
-
-        out_path = rp.outputs_dir / "benchmark_output.xlsx"
-        try:
-            export_streamlit_workbook(
-                TEMPLATE_PATH,
-                out_path,
-                cfg,
-                registry=st.session_state["registry"],
-                products=st.session_state["products"],
-                comparison=st.session_state["comparison"],
-                excluded=st.session_state["excluded"],
-                evidence=st.session_state["evidence"],
-                bom_options=st.session_state["bom_options"],
-            )
-        except AppExportValidationError as exc:
-            st.error(str(exc))
-            st.warning(
-                "Current session is incomplete for canonical benchmark export. Use "
-                "tools/export_canonical_aco_benchmark_xlsx.py, or run a full canonical "
-                "ACO update. No XLSX was created."
-            )
-            st.stop()
-
-        st.session_state["registry"].to_csv(rp.outputs_dir / "registry.csv", index=False)
-        st.session_state["products"].to_csv(rp.outputs_dir / "products.csv", index=False)
-        st.session_state["comparison"].to_csv(rp.outputs_dir / "comparison.csv", index=False)
-        st.session_state["excluded"].to_csv(rp.outputs_dir / "excluded.csv", index=False)
-        st.session_state["evidence"].to_csv(rp.outputs_dir / "evidence.csv", index=False)
-        st.session_state["bom_options"].to_csv(rp.outputs_dir / "bom_options.csv", index=False)
+        st.session_state[CANONICAL_ACO_DOWNLOAD_KEY] = workbook_bytes
         st.session_state["last_run_dir"] = str(rp.run_dir)
-        st.success("Excel export completed.")
-        with open(out_path, "rb") as f:
-            st.download_button("Download Excel", data=f, file_name="benchmark_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.success("Canonical ACO Excel generation completed.")
+
+if CANONICAL_ACO_DOWNLOAD_KEY in st.session_state:
+    st.download_button(
+        "Download canonical ACO Excel",
+        data=st.session_state[CANONICAL_ACO_DOWNLOAD_KEY],
+        file_name="benchmark_aco_canonical.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 st.caption(f"Data folder: {DATA_DIR} | Last run: {st.session_state['last_run_dir']}")

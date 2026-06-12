@@ -2264,15 +2264,17 @@ def test_streamlit_export_publishes_only_canonical_88_62_251_workbook(monkeypatc
     assert details["app_export_assembled_family_count:showerdrain_cplus"] == "actual=30 expected=30"
 
 
-def test_streamlit_app_uses_shared_workbook_export_entrypoint():
+def test_streamlit_app_uses_canonical_aco_workbook_entrypoint():
     app_source = (Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8")
-    assert "from src.app_export import AppExportValidationError, export_streamlit_workbook" in app_source
-    assert "export_streamlit_workbook(" in app_source
-    assert "tools/export_canonical_aco_benchmark_xlsx.py" in app_source
-    assert "all connectors" not in app_source.lower()
+    assert "from src.canonical_aco_export import export_canonical_aco_workbook" in app_source
+    assert "export_canonical_aco_workbook(" in app_source
+    assert "default_config()," in app_source
+    assert "export_streamlit_workbook(" not in app_source
+    assert 'st.button("Build canonical ACO Excel"' in app_source
+    assert "Canonical ACO export is independent of selected connectors and current session results." in app_source
+    assert 'file_name="benchmark_aco_canonical.xlsx"' in app_source
     assert "except AppExportValidationError" in app_source
     assert "st.error(str(exc))" in app_source
-    assert "st.stop()" in app_source
     assert "components_df=None" not in app_source
 
 
