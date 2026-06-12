@@ -1,7 +1,7 @@
 """Read-only customer projection for explicitly selected technical conditions.
 
 The canonical product frames intentionally describe the no-scenario state.  This
-module resolves approved M+ flow values only in a runtime customer projection;
+module resolves approved M+ and B-line flow values only in a runtime customer projection;
 it never writes a conditional value or readiness flag back to canonical data.
 """
 from __future__ import annotations
@@ -148,16 +148,7 @@ def _blocked(
     return projected
 
 
-def _canonical_non_mplus_projection(row: pd.Series, scenario_id: str) -> dict[str, Any]:
-    family = _family(row)
-    if family == BLINE_FAMILY:
-        return _blocked(
-            row,
-            scenario_id,
-            "bline_customer_policy_not_approved",
-            "B-line remains unavailable in customer output pending separate policy approval.",
-        )
-
+def _canonical_unconditional_projection(row: pd.Series, scenario_id: str) -> dict[str, Any]:
     ready = _truthy(row.get("ready_for_customer_view")) and _truthy(
         row.get("customer_view_enabled", row.get("ready_for_customer_view"))
     )
@@ -177,47 +168,68 @@ def _canonical_non_mplus_projection(row: pd.Series, scenario_id: str) -> dict[st
         "flow_rate_resolution_source": "canonical",
         "flow_rate_condition_label": "unconditional",
         "customer_ready_for_selected_scenario": True,
-        "customer_presentation_note": "Canonical customer-approved value; no M+ condition was applied.",
+        "customer_presentation_note": "Canonical customer-approved value; no conditional flow was applied.",
     })
     return projected
 
 
-def _mplus_projection(
+def _conditional_identity_valid(row: pd.Series) -> bool:
+    family = _family(row)
+    product_id = _product_id(row)
+    if not product_id:
+        return False
+    if family == MPLUS_FAMILY:
+        return _text(row.get("assembly_model")) == "channel_body_x_drain_body_x_grate"
+    if family != BLINE_FAMILY or _text(row.get("assembly_model")) != "integral_all_in_one_set":
+        return False
+    article = _text(row.get("product_article_number")) or _text(row.get("article_number"))
+    if not article:
+        return False
+    normalized_article = article.lower().replace(".", "-")
+    return product_id.lower().endswith(normalized_article)
+
+
+def _conditional_flow_projection(
     row: pd.Series,
     conditional_values: pd.DataFrame,
     scenario_id: str,
 ) -> dict[str, Any]:
+    family = _family(row)
+    family_label = "M+" if family == MPLUS_FAMILY else "B-line"
     if _has_value(row.get("flow_rate_lps")) or _has_value(row.get("selected_default_flow_rate_lps")):
         return _blocked(
             row,
             scenario_id,
-            "unexpected_mplus_scalar_default_present",
-            "M+ is blocked because an unconditional scalar/default flow was found.",
+            f"unexpected_{'mplus' if family == MPLUS_FAMILY else 'bline'}_scalar_default_present",
+            f"{family_label} is blocked because an unconditional scalar/default flow was found.",
         )
-
+    if not _conditional_identity_valid(row):
+        return _blocked(
+            row,
+            scenario_id,
+            "mismatched_conditional_product_identity",
+            f"{family_label} product identity/model does not match its approved conditional policy.",
+        )
     if scenario_id == NO_SCENARIO_SELECTED:
         return _blocked(
             row,
             scenario_id,
             SELECTION_REQUIRED,
-            "Select 10 mm or 20 mm head water level to display the M+ flow rate.",
+            f"Select 10 mm or 20 mm head water level to display the {family_label} flow rate.",
         )
 
     condition = _SCENARIO_CONDITIONS[scenario_id]
-    if conditional_values.empty or "set_id" not in conditional_values.columns:
+    required_columns = {"set_id", "product_family", "assembly_model", "parameter_name", "condition_value"}
+    if conditional_values.empty or not required_columns.issubset(conditional_values.columns):
         matches = conditional_values.iloc[0:0]
     else:
         matches = conditional_values[
             conditional_values["set_id"].map(_text).eq(_product_id(row))
+            & conditional_values["product_family"].map(_text).eq(family)
+            & conditional_values["assembly_model"].map(_text).eq(_text(row.get("assembly_model")))
+            & conditional_values["parameter_name"].map(_text).eq("flow_rate_lps")
         ]
-        if "parameter_name" in matches.columns:
-            matches = matches[matches["parameter_name"].map(_text).eq("flow_rate_lps")]
-        else:
-            matches = matches.iloc[0:0]
-        numeric_conditions = pd.to_numeric(
-            matches.get("condition_value", pd.Series(index=matches.index, dtype=float)),
-            errors="coerce",
-        )
+        numeric_conditions = pd.to_numeric(matches["condition_value"], errors="coerce")
         matches = matches[numeric_conditions.eq(condition["condition_value"])]
 
     if len(matches) == 0:
@@ -225,7 +237,7 @@ def _mplus_projection(
             row,
             scenario_id,
             "missing_matching_conditional_flow_value",
-            "No exact conditional M+ flow value exists for the selected head water level.",
+            f"No exact conditional {family_label} flow value exists for the selected head water level.",
             condition=condition,
             source=CONDITIONAL_SOURCE,
         )
@@ -234,7 +246,7 @@ def _mplus_projection(
             row,
             scenario_id,
             "duplicate_matching_conditional_flow_values",
-            "Multiple conditional M+ flow values matched; customer presentation is blocked.",
+            f"Multiple conditional {family_label} flow values matched; customer presentation is blocked.",
             condition=condition,
             source=CONDITIONAL_SOURCE,
         )
@@ -253,7 +265,7 @@ def _mplus_projection(
             row,
             scenario_id,
             "invalid_conditional_flow_metadata_or_value",
-            "Conditional M+ flow metadata/value did not exactly match the approved policy.",
+            f"Conditional {family_label} flow metadata/value did not exactly match the approved policy.",
             condition=condition,
             source=CONDITIONAL_SOURCE,
         )
@@ -296,10 +308,10 @@ def build_customer_scenario_projection(
                 "unknown_customer_scenario_id",
                 "Unknown customer scenario; no conditional value was applied.",
             ))
-        elif _family(row) == MPLUS_FAMILY:
-            rows.append(_mplus_projection(row, conditions, scenario_id))
+        elif _family(row) in {MPLUS_FAMILY, BLINE_FAMILY}:
+            rows.append(_conditional_flow_projection(row, conditions, scenario_id))
         else:
-            rows.append(_canonical_non_mplus_projection(row, scenario_id))
+            rows.append(_canonical_unconditional_projection(row, scenario_id))
     return pd.DataFrame(rows, columns=CUSTOMER_PROJECTION_COLUMNS)
 
 

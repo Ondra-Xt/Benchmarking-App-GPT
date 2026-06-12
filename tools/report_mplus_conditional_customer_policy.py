@@ -55,7 +55,8 @@ INVALID = "blocked_invalid_or_missing_condition"
 POLICY_GATE = "approved_conditional_customer_presentation"
 BLOCKED_REASON_FRAGMENT = "conditional_parameter_scoring"
 RECOMMENDED_NEXT_ACTION = (
-    "present M+ only after an explicit 10 mm or 20 mm selection; keep canonical scalar flow empty."
+    "present M+ and B-line only after an explicit 10 mm or 20 mm selection; "
+    "keep canonical scalar flow empty."
 )
 
 
@@ -305,33 +306,25 @@ def workbook_diagnostics(
     products = pd.DataFrame(sheets["Products"])
     conditions = pd.DataFrame(sheets["Conditional_Technical_Values"])
     mplus = _mplus_rows(products)
-    no_selection = build_customer_scenario_projection(mplus, conditions, "no_scenario_selected")
-    runtime_10 = build_customer_scenario_projection(mplus, conditions, "flow_head_10mm")
-    runtime_20 = build_customer_scenario_projection(mplus, conditions, "flow_head_20mm")
     bline = products[_series(products, "product_family").map(_text).eq("showerdrain_b")]
-    bline_runtime = build_customer_scenario_projection(bline, conditions, "flow_head_10mm")
+
+    projections: dict[tuple[str, str], pd.DataFrame] = {}
+    for family_name, frame in (("Mplus", mplus), ("Bline", bline)):
+        for scenario in ("no_scenario_selected", "flow_head_10mm", "flow_head_20mm"):
+            projections[(family_name, scenario)] = build_customer_scenario_projection(
+                frame, conditions, scenario
+            )
 
     diagnostics.update({
         "Mplus_assemblies_reviewed": len(review),
         "Mplus_canonical_rows": len(mplus),
+        "Bline_canonical_rows": len(bline),
         "Mplus_conditional_rows": len(_mplus_rows(conditions)),
-        "canonical_customer_ready_rows": int(
+        "Mplus_canonical_customer_ready_rows": int(
             _series(mplus, "ready_for_customer_view", False).map(_truthy).sum()
         ),
-        "no_selection_customer_ready_rows": int(
-            _series(no_selection, "customer_ready_for_selected_scenario", False).map(_truthy).sum()
-        ),
-        "runtime_10mm_customer_ready_rows": int(
-            _series(runtime_10, "customer_ready_for_selected_scenario", False).map(_truthy).sum()
-        ),
-        "runtime_20mm_customer_ready_rows": int(
-            _series(runtime_20, "customer_ready_for_selected_scenario", False).map(_truthy).sum()
-        ),
-        "runtime_10mm_0_40_rows": int(
-            _series(runtime_10, "flow_rate_lps").map(lambda value: _numeric_equal(value, 0.40)).sum()
-        ),
-        "runtime_20mm_0_46_rows": int(
-            _series(runtime_20, "flow_rate_lps").map(lambda value: _numeric_equal(value, 0.46)).sum()
+        "Bline_canonical_customer_ready_rows": int(
+            _series(bline, "ready_for_customer_view", False).map(_truthy).sum()
         ),
         "default_blocked_rows": int(review.get("check_default_benchmark_blocked", pd.Series(dtype=bool)).sum()),
         "scenario_10mm_ready_rows": int(review.get("check_scenario_10mm_ready", pd.Series(dtype=bool)).sum()),
@@ -339,27 +332,84 @@ def workbook_diagnostics(
         "customer_view_enabled_mplus_rows": int(
             (~review.get("check_customer_view_disabled", pd.Series(dtype=bool))).sum()
         ),
-        "invalid_conditional_rows": int(review.get("classification", pd.Series(dtype=str)).eq(INVALID).sum()),
         "selected_scalar_defaults": int(
             (~review.get("check_selected_default_empty", pd.Series(dtype=bool))).sum()
         ),
+    })
+    for family_name in ("Mplus", "Bline"):
+        prefix = family_name
+        no_selection = projections[(family_name, "no_scenario_selected")]
+        runtime_10 = projections[(family_name, "flow_head_10mm")]
+        runtime_20 = projections[(family_name, "flow_head_20mm")]
+        diagnostics.update({
+            f"{prefix}_no_selection_customer_ready_rows": int(
+                _series(no_selection, "customer_ready_for_selected_scenario", False).map(_truthy).sum()
+            ),
+            f"{prefix}_runtime_10mm_customer_ready_rows": int(
+                _series(runtime_10, "customer_ready_for_selected_scenario", False).map(_truthy).sum()
+            ),
+            f"{prefix}_runtime_20mm_customer_ready_rows": int(
+                _series(runtime_20, "customer_ready_for_selected_scenario", False).map(_truthy).sum()
+            ),
+            f"{prefix}_runtime_10mm_0_40_rows": int(
+                _series(runtime_10, "flow_rate_lps").map(lambda value: _numeric_equal(value, 0.40)).sum()
+            ),
+            f"{prefix}_runtime_20mm_0_46_rows": int(
+                _series(runtime_20, "flow_rate_lps").map(lambda value: _numeric_equal(value, 0.46)).sum()
+            ),
+        })
+
+    selected_runtime = pd.concat([
+        projections[(family, scenario)]
+        for family in ("Mplus", "Bline")
+        for scenario in ("flow_head_10mm", "flow_head_20mm")
+    ], ignore_index=True)
+    diagnostics.update({
+        # Backward-compatible M+ diagnostic names.
+        "canonical_customer_ready_rows": diagnostics["Mplus_canonical_customer_ready_rows"],
+        "no_selection_customer_ready_rows": diagnostics["Mplus_no_selection_customer_ready_rows"],
+        "runtime_10mm_customer_ready_rows": diagnostics["Mplus_runtime_10mm_customer_ready_rows"],
+        "runtime_20mm_customer_ready_rows": diagnostics["Mplus_runtime_20mm_customer_ready_rows"],
+        "runtime_10mm_0_40_rows": diagnostics["Mplus_runtime_10mm_0_40_rows"],
+        "runtime_20mm_0_46_rows": diagnostics["Mplus_runtime_20mm_0_46_rows"],
+        "Bline_customer_ready_rows": diagnostics["Bline_runtime_10mm_customer_ready_rows"],
         "unconditional_scalar_defaults": int(
-            _series(mplus, "flow_rate_lps").map(lambda value: not _empty(value)).sum()
+            pd.concat([_series(mplus, "flow_rate_lps"), _series(bline, "flow_rate_lps")])
+            .map(lambda value: not _empty(value)).sum()
         ),
-        "Bline_customer_ready_rows": int(
-            _series(bline_runtime, "customer_ready_for_selected_scenario", False).map(_truthy).sum()
+        "invalid_conditional_rows": int(
+            _series(selected_runtime, "customer_ready_for_selected_scenario", False)
+            .map(lambda value: not _truthy(value)).sum()
         ),
     })
     return diagnostics
 
-
-def policy_gate(review: pd.DataFrame) -> str:
+def policy_gate(
+    review: pd.DataFrame, diagnostics: Mapping[str, Any] | None = None
+) -> str:
     expected_ids = len(review) == 4 and review["assembly_id"].nunique() == 4
-    return (
-        POLICY_GATE
-        if expected_ids and review["classification"].eq(CUSTOMER_APPROVAL_REQUIRED).all()
-        else INVALID
-    )
+    mplus_valid = expected_ids and review["classification"].eq(CUSTOMER_APPROVAL_REQUIRED).all()
+    if diagnostics is None:
+        return POLICY_GATE if mplus_valid else INVALID
+    runtime_valid = all((
+        diagnostics.get("Mplus_canonical_rows") == 4,
+        diagnostics.get("Bline_canonical_rows") == 8,
+        diagnostics.get("Mplus_canonical_customer_ready_rows") == 0,
+        diagnostics.get("Bline_canonical_customer_ready_rows") == 0,
+        diagnostics.get("Mplus_no_selection_customer_ready_rows") == 0,
+        diagnostics.get("Bline_no_selection_customer_ready_rows") == 0,
+        diagnostics.get("Mplus_runtime_10mm_customer_ready_rows") == 4,
+        diagnostics.get("Bline_runtime_10mm_customer_ready_rows") == 8,
+        diagnostics.get("Mplus_runtime_20mm_customer_ready_rows") == 4,
+        diagnostics.get("Bline_runtime_20mm_customer_ready_rows") == 8,
+        diagnostics.get("Mplus_runtime_10mm_0_40_rows") == 4,
+        diagnostics.get("Bline_runtime_10mm_0_40_rows") == 8,
+        diagnostics.get("Mplus_runtime_20mm_0_46_rows") == 4,
+        diagnostics.get("Bline_runtime_20mm_0_46_rows") == 8,
+        diagnostics.get("unconditional_scalar_defaults") == 0,
+        diagnostics.get("invalid_conditional_rows") == 0,
+    ))
+    return POLICY_GATE if mplus_valid and runtime_valid else INVALID
 
 
 def load_workbook_sheets(path: str | Path) -> dict[str, pd.DataFrame]:
@@ -374,10 +424,10 @@ def load_workbook_sheets(path: str | Path) -> dict[str, pd.DataFrame]:
 
 
 def print_report(review: pd.DataFrame, diagnostics: Mapping[str, Any], xlsx: Path) -> None:
-    print("ACO ShowerDrain M+ conditional customer policy review")
+    print("ACO ShowerDrain M+ and B-line conditional customer policy review")
     print("Mode: read-only policy evaluation")
     print(f"Workbook: {xlsx}")
-    print("Policy: M+ is customer-presentable only after explicit condition selection.")
+    print("Policy: M+ and B-line are customer-presentable only after explicit condition selection.")
     print("Customer presentation: show the selected flow and its condition together.")
     print("Default policy: no unconditional scalar default is allowed; canonical default rows remain blocked.")
     print()
@@ -391,20 +441,26 @@ def print_report(review: pd.DataFrame, diagnostics: Mapping[str, Any], xlsx: Pat
     print()
     labels = (
         ("M+ canonical rows", "Mplus_canonical_rows"),
-        ("canonical customer-ready rows", "canonical_customer_ready_rows"),
-        ("no-selection customer-ready rows", "no_selection_customer_ready_rows"),
-        ("10 mm selected customer-ready rows", "runtime_10mm_customer_ready_rows"),
-        ("20 mm selected customer-ready rows", "runtime_20mm_customer_ready_rows"),
-        ("10 mm resolved flow values (0.40)", "runtime_10mm_0_40_rows"),
-        ("20 mm resolved flow values (0.46)", "runtime_20mm_0_46_rows"),
+        ("B-line canonical rows", "Bline_canonical_rows"),
+        ("canonical M+ customer-ready rows", "Mplus_canonical_customer_ready_rows"),
+        ("canonical B-line customer-ready rows", "Bline_canonical_customer_ready_rows"),
+        ("no-selection M+ customer-ready rows", "Mplus_no_selection_customer_ready_rows"),
+        ("no-selection B-line customer-ready rows", "Bline_no_selection_customer_ready_rows"),
+        ("10 mm selected M+ customer-ready rows", "Mplus_runtime_10mm_customer_ready_rows"),
+        ("10 mm selected B-line customer-ready rows", "Bline_runtime_10mm_customer_ready_rows"),
+        ("20 mm selected M+ customer-ready rows", "Mplus_runtime_20mm_customer_ready_rows"),
+        ("20 mm selected B-line customer-ready rows", "Bline_runtime_20mm_customer_ready_rows"),
+        ("10 mm M+ resolved flow values (0.40)", "Mplus_runtime_10mm_0_40_rows"),
+        ("10 mm B-line resolved flow values (0.40)", "Bline_runtime_10mm_0_40_rows"),
+        ("20 mm M+ resolved flow values (0.46)", "Mplus_runtime_20mm_0_46_rows"),
+        ("20 mm B-line resolved flow values (0.46)", "Bline_runtime_20mm_0_46_rows"),
         ("unconditional scalar defaults", "unconditional_scalar_defaults"),
-        ("B-line customer-ready rows", "Bline_customer_ready_rows"),
         ("invalid conditional rows", "invalid_conditional_rows"),
     )
     for label, key in labels:
         print(f"{label}: {diagnostics[key]}")
     print()
-    print(f"OVERALL: {policy_gate(review)}")
+    print(f"OVERALL: {policy_gate(review, diagnostics)}")
     print(f"Recommended next action: {RECOMMENDED_NEXT_ACTION}")
 
 
@@ -425,7 +481,7 @@ def main(argv: list[str] | None = None) -> int:
     if before != after:
         print("ERROR: report execution mutated the input XLSX", file=sys.stderr)
         return 1
-    return 0 if policy_gate(review) == POLICY_GATE else 1
+    return 0 if policy_gate(review, diagnostics) == POLICY_GATE else 1
 
 
 if __name__ == "__main__":

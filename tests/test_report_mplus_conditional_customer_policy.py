@@ -182,7 +182,13 @@ def test_policy_report_validates_all_four_assemblies_without_mutating_frames() -
     assert diagnostics["runtime_10mm_0_40_rows"] == 4
     assert diagnostics["runtime_20mm_0_46_rows"] == 4
     assert diagnostics["unconditional_scalar_defaults"] == 0
-    assert diagnostics["Bline_customer_ready_rows"] == 0
+    assert diagnostics["Bline_canonical_rows"] == 8
+    assert diagnostics["Bline_canonical_customer_ready_rows"] == 0
+    assert diagnostics["Bline_no_selection_customer_ready_rows"] == 0
+    assert diagnostics["Bline_runtime_10mm_customer_ready_rows"] == 8
+    assert diagnostics["Bline_runtime_20mm_customer_ready_rows"] == 8
+    assert diagnostics["Bline_runtime_10mm_0_40_rows"] == 8
+    assert diagnostics["Bline_runtime_20mm_0_46_rows"] == 8
     assert diagnostics["invalid_conditional_rows"] == 0
     assert diagnostics["selected_scalar_defaults"] == 0
 
@@ -268,15 +274,36 @@ def test_cli_is_read_only_and_prints_approved_runtime_policy(tmp_path: Path) -> 
     assert result.returncode == 0, result.stderr
     assert "Mode: read-only policy evaluation" in result.stdout
     assert "M+ canonical rows: 4" in result.stdout
-    assert "canonical customer-ready rows: 0" in result.stdout
-    assert "no-selection customer-ready rows: 0" in result.stdout
-    assert "10 mm selected customer-ready rows: 4" in result.stdout
-    assert "20 mm selected customer-ready rows: 4" in result.stdout
-    assert "10 mm resolved flow values (0.40): 4" in result.stdout
-    assert "20 mm resolved flow values (0.46): 4" in result.stdout
+    assert "B-line canonical rows: 8" in result.stdout
+    assert "canonical M+ customer-ready rows: 0" in result.stdout
+    assert "canonical B-line customer-ready rows: 0" in result.stdout
+    assert "no-selection M+ customer-ready rows: 0" in result.stdout
+    assert "no-selection B-line customer-ready rows: 0" in result.stdout
+    assert "10 mm selected M+ customer-ready rows: 4" in result.stdout
+    assert "10 mm selected B-line customer-ready rows: 8" in result.stdout
+    assert "20 mm selected M+ customer-ready rows: 4" in result.stdout
+    assert "20 mm selected B-line customer-ready rows: 8" in result.stdout
+    assert "10 mm M+ resolved flow values (0.40): 4" in result.stdout
+    assert "10 mm B-line resolved flow values (0.40): 8" in result.stdout
+    assert "20 mm M+ resolved flow values (0.46): 4" in result.stdout
+    assert "20 mm B-line resolved flow values (0.46): 8" in result.stdout
     assert "unconditional scalar defaults: 0" in result.stdout
-    assert "B-line customer-ready rows: 0" in result.stdout
     assert "invalid conditional rows: 0" in result.stdout
     assert f"OVERALL: {POLICY_GATE}" in result.stdout
     assert "keep canonical scalar flow empty" in result.stdout
     assert hashlib.sha256(workbook.read_bytes()).hexdigest() == before
+
+
+def test_bline_runtime_policy_fails_closed_without_changing_mplus_review() -> None:
+    sheets = _canonical_sheets()
+    bline_condition = sheets["Conditional_Technical_Values"]["product_family"].eq("showerdrain_b")
+    first_bline_index = sheets["Conditional_Technical_Values"].index[bline_condition][0]
+    sheets["Conditional_Technical_Values"].loc[first_bline_index, "condition_unit"] = "cm"
+
+    review = build_mplus_conditional_customer_policy_report(sheets)
+    diagnostics = workbook_diagnostics(sheets, review)
+
+    assert policy_gate(review) == POLICY_GATE
+    assert diagnostics["invalid_conditional_rows"] == 1
+    assert diagnostics["Bline_runtime_10mm_customer_ready_rows"] == 7
+    assert policy_gate(review, diagnostics) == INVALID

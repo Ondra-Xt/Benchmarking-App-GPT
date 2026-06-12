@@ -358,11 +358,11 @@ else:
 
 st.subheader("Customer presentation")
 selected_customer_scenario = st.selectbox(
-    "Water head condition for M+",
+    "Water head condition for M+ and B-line",
     options=list(CUSTOMER_SCENARIO_OPTIONS),
     format_func=CUSTOMER_SCENARIO_OPTIONS.get,
     key=CUSTOMER_SCENARIO_STATE_KEY,
-    help="M+ has no default flow condition. Select 10 mm or 20 mm explicitly.",
+    help="M+ and B-line have no default flow condition. Select 10 mm or 20 mm explicitly.",
 )
 customer_projection = build_customer_scenario_projection(
     st.session_state["customer_canonical_frame"],
@@ -371,21 +371,29 @@ customer_projection = build_customer_scenario_projection(
 )
 if selected_customer_scenario == NO_SCENARIO_SELECTED:
     st.warning(
-        "M+ requires an explicit head-water-level selection. No M+ flow rate is "
-        "shown and M+ remains blocked in customer output."
+        "M+ and B-line require an explicit head-water-level selection. No conditional "
+        "flow rate is shown and both families remain blocked in customer output."
     )
 else:
     selected_label = CUSTOMER_SCENARIO_OPTIONS[selected_customer_scenario]
-    st.success(f"Selected M+ condition: {selected_label}")
-    ready_mplus = customer_projection[
-        customer_projection["product_family"].eq("showerdrain_mplus")
-        & customer_projection["customer_ready_for_selected_scenario"].eq(True)
-    ]
-    if not ready_mplus.empty:
-        st.metric(
-            f"M+ flow at {selected_label}",
-            f"{float(ready_mplus.iloc[0]['flow_rate_lps']):.2f} l/s",
-        )
+    st.success(f"Selected customer condition: {selected_label}")
+    family_models = {
+        "showerdrain_mplus": ("M+", "channel_body_x_drain_body_x_grate"),
+        "showerdrain_b": ("B-line", "integral_all_in_one_set"),
+    }
+    metric_columns = st.columns(len(family_models))
+    for metric_column, (family, (label, model)) in zip(metric_columns, family_models.items()):
+        ready_family = customer_projection[
+            customer_projection["product_family"].eq(family)
+            & customer_projection["customer_ready_for_selected_scenario"].eq(True)
+        ]
+        if not ready_family.empty:
+            flow = float(ready_family.iloc[0]["flow_rate_lps"])
+            metric_column.metric(
+                f"{label} · {model}",
+                f"{flow:.2f} l/s at {selected_label}",
+                help=f"{len(ready_family)} customer-ready {label} products",
+            )
 
 if customer_projection.empty:
     st.info("No customer projection is available yet. Run update first.")
