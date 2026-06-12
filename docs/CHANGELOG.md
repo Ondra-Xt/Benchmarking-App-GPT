@@ -162,6 +162,8 @@ attribution, so a unique article and safe defaults cannot be selected.
 are not promoted into the canonical product universe. Easyflow is neither
 benchmark-ready nor customer-view-ready.
 
+The stricter second-stage record-level review and required promotion evidence are documented in [ACO Easyflow article-level attribution review v2](aco_easyflow_article_level_attribution_review_v2.md).
+
 ## Historical milestones retained
 
 ### C+ production assembly milestone (80-product baseline)
