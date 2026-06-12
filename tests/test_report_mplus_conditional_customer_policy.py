@@ -79,7 +79,7 @@ def _canonical_sheets() -> dict[str, pd.DataFrame]:
         "showerdrain_splus": 16,
         "showerdrain_c": 4,
         "easyflowplus": 6,
-        "catalog_other": 18,
+        "catalog_other": 17,
     }
     for family, count in family_counts.items():
         for index in range(count):
@@ -117,6 +117,26 @@ def _canonical_sheets() -> dict[str, pd.DataFrame]:
     products, comparison = _append_bline_direct_finished_set_rows(
         products, comparison, bline_evidence
     )
+    extra_bline_family_row = pd.DataFrame([{
+        "manufacturer": "aco",
+        "product_id": "aco-showerdrain-b-family-discovery",
+        "product_name": "ACO ShowerDrain B family discovery row",
+        "product_family": "showerdrain_b",
+        "family": "showerdrain_b",
+        "assembled_family": "",
+        "product_article_number": "",
+        "article_number": "",
+        "assembly_model": "",
+        "flow_rate_lps": 0.90,
+        "ready_for_benchmark": False,
+        "ready_for_customer_view": False,
+        "customer_view_enabled": False,
+        "candidate_type": "family_navigation",
+        "body_article_number": "",
+        "grate_article_number": "",
+    }])
+    products = pd.concat([products, extra_bline_family_row], ignore_index=True)
+    comparison = pd.concat([comparison, extra_bline_family_row], ignore_index=True)
     conditional = _extract_conditional_technical_values(mappings, bline_evidence)
     final = _extract_final_assemblies(products)
     details = final.copy(deep=True)
@@ -182,7 +202,13 @@ def test_policy_report_validates_all_four_assemblies_without_mutating_frames() -
     assert diagnostics["runtime_10mm_0_40_rows"] == 4
     assert diagnostics["runtime_20mm_0_46_rows"] == 4
     assert diagnostics["unconditional_scalar_defaults"] == 0
-    assert diagnostics["Bline_customer_ready_rows"] == 0
+    assert diagnostics["Bline_canonical_rows"] == 8
+    assert diagnostics["Bline_canonical_customer_ready_rows"] == 0
+    assert diagnostics["Bline_no_selection_customer_ready_rows"] == 0
+    assert diagnostics["Bline_runtime_10mm_customer_ready_rows"] == 8
+    assert diagnostics["Bline_runtime_20mm_customer_ready_rows"] == 8
+    assert diagnostics["Bline_runtime_10mm_0_40_rows"] == 8
+    assert diagnostics["Bline_runtime_20mm_0_46_rows"] == 8
     assert diagnostics["invalid_conditional_rows"] == 0
     assert diagnostics["selected_scalar_defaults"] == 0
 
@@ -225,8 +251,13 @@ def test_canonical_counts_and_adjacent_family_states_remain_unchanged() -> None:
     bline = products[products["product_family"].eq("showerdrain_b")]
     eplus = sheets["Eplus_Compatible_Grate_Evidence"]
     assert len(cplus) == 30 and cplus["ready_for_customer_view"].eq(True).all()
-    assert len(bline) == 8 and bline["assembly_model"].eq("integral_all_in_one_set").all()
-    assert bline["flow_rate_lps"].fillna("").eq("").all()
+    assert len(bline) == 9
+    approved_bline = bline[bline["product_article_number"].fillna("").ne("")]
+    assert len(approved_bline) == 8
+    assert approved_bline["assembly_model"].eq("integral_all_in_one_set").all()
+    assert approved_bline["flow_rate_lps"].fillna("").eq("").all()
+    extra_bline = bline[bline["product_article_number"].fillna("").eq("")]
+    assert len(extra_bline) == 1 and extra_bline["flow_rate_lps"].eq(0.90).all()
     assert len(easyflow) == 2 and easyflow["ready_for_benchmark"].eq(False).all()
     assert eplus["ready_for_benchmark"].eq(False).all()
     assert eplus["ready_for_customer_view"].eq(False).all()
@@ -268,15 +299,61 @@ def test_cli_is_read_only_and_prints_approved_runtime_policy(tmp_path: Path) -> 
     assert result.returncode == 0, result.stderr
     assert "Mode: read-only policy evaluation" in result.stdout
     assert "M+ canonical rows: 4" in result.stdout
-    assert "canonical customer-ready rows: 0" in result.stdout
-    assert "no-selection customer-ready rows: 0" in result.stdout
-    assert "10 mm selected customer-ready rows: 4" in result.stdout
-    assert "20 mm selected customer-ready rows: 4" in result.stdout
-    assert "10 mm resolved flow values (0.40): 4" in result.stdout
-    assert "20 mm resolved flow values (0.46): 4" in result.stdout
+    assert "B-line canonical rows: 8" in result.stdout
+    assert "canonical M+ customer-ready rows: 0" in result.stdout
+    assert "canonical B-line customer-ready rows: 0" in result.stdout
+    assert "no-selection M+ customer-ready rows: 0" in result.stdout
+    assert "no-selection B-line customer-ready rows: 0" in result.stdout
+    assert "10 mm selected M+ customer-ready rows: 4" in result.stdout
+    assert "10 mm selected B-line customer-ready rows: 8" in result.stdout
+    assert "20 mm selected M+ customer-ready rows: 4" in result.stdout
+    assert "20 mm selected B-line customer-ready rows: 8" in result.stdout
+    assert "10 mm M+ resolved flow values (0.40): 4" in result.stdout
+    assert "10 mm B-line resolved flow values (0.40): 8" in result.stdout
+    assert "20 mm M+ resolved flow values (0.46): 4" in result.stdout
+    assert "20 mm B-line resolved flow values (0.46): 8" in result.stdout
     assert "unconditional scalar defaults: 0" in result.stdout
-    assert "B-line customer-ready rows: 0" in result.stdout
     assert "invalid conditional rows: 0" in result.stdout
     assert f"OVERALL: {POLICY_GATE}" in result.stdout
     assert "keep canonical scalar flow empty" in result.stdout
     assert hashlib.sha256(workbook.read_bytes()).hexdigest() == before
+
+
+def test_bline_runtime_policy_fails_closed_without_changing_mplus_review() -> None:
+    sheets = _canonical_sheets()
+    bline_condition = sheets["Conditional_Technical_Values"]["product_family"].eq("showerdrain_b")
+    first_bline_index = sheets["Conditional_Technical_Values"].index[bline_condition][0]
+    sheets["Conditional_Technical_Values"].loc[first_bline_index, "condition_unit"] = "cm"
+
+    review = build_mplus_conditional_customer_policy_report(sheets)
+    diagnostics = workbook_diagnostics(sheets, review)
+
+    assert policy_gate(review) == POLICY_GATE
+    assert diagnostics["invalid_conditional_rows"] == 1
+    assert diagnostics["Bline_runtime_10mm_customer_ready_rows"] == 7
+    assert policy_gate(review, diagnostics) == INVALID
+
+
+def test_report_ignores_extra_family_level_bline_row_with_scalar_flow() -> None:
+    sheets = _canonical_sheets()
+    products = sheets["Products"]
+    raw_bline = products[products["product_family"].eq("showerdrain_b")]
+    assert len(products) == 88
+    assert len(raw_bline) == 9
+    extra = raw_bline[raw_bline["product_article_number"].fillna("").eq("")]
+    assert len(extra) == 1
+    assert extra.iloc[0]["flow_rate_lps"] == 0.90
+
+    review = build_mplus_conditional_customer_policy_report(sheets)
+    diagnostics = workbook_diagnostics(sheets, review)
+
+    assert diagnostics["Bline_canonical_rows"] == 8
+    assert diagnostics["Bline_canonical_customer_ready_rows"] == 0
+    assert diagnostics["Bline_no_selection_customer_ready_rows"] == 0
+    assert diagnostics["Bline_runtime_10mm_customer_ready_rows"] == 8
+    assert diagnostics["Bline_runtime_20mm_customer_ready_rows"] == 8
+    assert diagnostics["Bline_runtime_10mm_0_40_rows"] == 8
+    assert diagnostics["Bline_runtime_20mm_0_46_rows"] == 8
+    assert diagnostics["unconditional_scalar_defaults"] == 0
+    assert diagnostics["invalid_conditional_rows"] == 0
+    assert policy_gate(review, diagnostics) == POLICY_GATE
