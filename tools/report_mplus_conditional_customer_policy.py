@@ -19,7 +19,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.customer_scenario_view import build_customer_scenario_projection
+from src.customer_scenario_view import (
+    build_customer_scenario_projection,
+    is_approved_bline_finished_set_candidate,
+)
 
 EXPECTED_ARTICLES = frozenset({"9010.81.20", "9010.81.21", "9010.81.22", "9010.81.23"})
 EXPECTED_SHEET_COUNTS = {
@@ -306,7 +309,9 @@ def workbook_diagnostics(
     products = pd.DataFrame(sheets["Products"])
     conditions = pd.DataFrame(sheets["Conditional_Technical_Values"])
     mplus = _mplus_rows(products)
-    bline = products[_series(products, "product_family").map(_text).eq("showerdrain_b")]
+    bline = products[
+        products.apply(is_approved_bline_finished_set_candidate, axis=1)
+    ].copy(deep=True)
 
     projections: dict[tuple[str, str], pd.DataFrame] = {}
     for family_name, frame in (("Mplus", mplus), ("Bline", bline)):

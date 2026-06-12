@@ -29,6 +29,20 @@ CUSTOMER_SCENARIO_RUN_KEY = "customer_water_head_scenario_run_id"
 
 MPLUS_FAMILY = "showerdrain_mplus"
 BLINE_FAMILY = "showerdrain_b"
+APPROVED_BLINE_ARTICLES = frozenset({
+    "9010.78.70",
+    "9010.78.71",
+    "9010.78.72",
+    "9010.78.73",
+    "3018172",
+    "3018173",
+    "3018174",
+    "3018175",
+})
+APPROVED_BLINE_PRODUCT_IDS = frozenset(
+    f"aco-showerdrain-b-finished-set-{article.replace('.', '-')}"
+    for article in APPROVED_BLINE_ARTICLES
+)
 CONDITIONAL_SOURCE = "Conditional_Technical_Values"
 SELECTION_REQUIRED = "explicit_head_water_level_selection_required"
 
@@ -173,6 +187,24 @@ def _canonical_unconditional_projection(row: pd.Series, scenario_id: str) -> dic
     return projected
 
 
+def _bline_article(row: pd.Series) -> str:
+    return _text(row.get("product_article_number")) or _text(row.get("article_number"))
+
+
+def is_approved_bline_finished_set_candidate(row: pd.Series) -> bool:
+    """Identify intended approved B-line rows without admitting family-level records.
+
+    Exact identity validation remains separate so a malformed approved row is
+    projected and blocked rather than silently disappearing from diagnostics.
+    """
+    product_id = _product_id(row)
+    article = _bline_article(row)
+    return product_id in APPROVED_BLINE_PRODUCT_IDS or (
+        _text(row.get("product_family")) == BLINE_FAMILY
+        and article in APPROVED_BLINE_ARTICLES
+    )
+
+
 def _conditional_identity_valid(row: pd.Series) -> bool:
     family = _family(row)
     product_id = _product_id(row)
@@ -180,13 +212,16 @@ def _conditional_identity_valid(row: pd.Series) -> bool:
         return False
     if family == MPLUS_FAMILY:
         return _text(row.get("assembly_model")) == "channel_body_x_drain_body_x_grate"
-    if family != BLINE_FAMILY or _text(row.get("assembly_model")) != "integral_all_in_one_set":
-        return False
-    article = _text(row.get("product_article_number")) or _text(row.get("article_number"))
-    if not article:
-        return False
-    normalized_article = article.lower().replace(".", "-")
-    return product_id.lower().endswith(normalized_article)
+    article = _bline_article(row)
+    expected_id = f"aco-showerdrain-b-finished-set-{article.replace('.', '-')}"
+    return all((
+        _text(row.get("product_family")) == BLINE_FAMILY,
+        _text(row.get("assembly_model")) == "integral_all_in_one_set",
+        article in APPROVED_BLINE_ARTICLES,
+        product_id == expected_id,
+        not _has_value(row.get("body_article_number")),
+        not _has_value(row.get("grate_article_number")),
+    ))
 
 
 def _conditional_flow_projection(
@@ -301,6 +336,11 @@ def build_customer_scenario_projection(
 
     rows: list[dict[str, Any]] = []
     for _, row in canonical.iterrows():
+        family = _family(row)
+        bline_candidate = is_approved_bline_finished_set_candidate(row)
+        if family == BLINE_FAMILY and not bline_candidate:
+            # Family/discovery/catalog/evidence rows are not customer products.
+            continue
         if not known_scenario:
             rows.append(_blocked(
                 row,
@@ -308,7 +348,9 @@ def build_customer_scenario_projection(
                 "unknown_customer_scenario_id",
                 "Unknown customer scenario; no conditional value was applied.",
             ))
-        elif _family(row) in {MPLUS_FAMILY, BLINE_FAMILY}:
+        elif family == MPLUS_FAMILY:
+            rows.append(_conditional_flow_projection(row, conditions, scenario_id))
+        elif bline_candidate:
             rows.append(_conditional_flow_projection(row, conditions, scenario_id))
         else:
             rows.append(_canonical_unconditional_projection(row, scenario_id))

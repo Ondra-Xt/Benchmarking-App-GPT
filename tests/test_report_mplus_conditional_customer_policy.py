@@ -79,7 +79,7 @@ def _canonical_sheets() -> dict[str, pd.DataFrame]:
         "showerdrain_splus": 16,
         "showerdrain_c": 4,
         "easyflowplus": 6,
-        "catalog_other": 18,
+        "catalog_other": 17,
     }
     for family, count in family_counts.items():
         for index in range(count):
@@ -117,6 +117,26 @@ def _canonical_sheets() -> dict[str, pd.DataFrame]:
     products, comparison = _append_bline_direct_finished_set_rows(
         products, comparison, bline_evidence
     )
+    extra_bline_family_row = pd.DataFrame([{
+        "manufacturer": "aco",
+        "product_id": "aco-showerdrain-b-family-discovery",
+        "product_name": "ACO ShowerDrain B family discovery row",
+        "product_family": "showerdrain_b",
+        "family": "showerdrain_b",
+        "assembled_family": "",
+        "product_article_number": "",
+        "article_number": "",
+        "assembly_model": "",
+        "flow_rate_lps": 0.90,
+        "ready_for_benchmark": False,
+        "ready_for_customer_view": False,
+        "customer_view_enabled": False,
+        "candidate_type": "family_navigation",
+        "body_article_number": "",
+        "grate_article_number": "",
+    }])
+    products = pd.concat([products, extra_bline_family_row], ignore_index=True)
+    comparison = pd.concat([comparison, extra_bline_family_row], ignore_index=True)
     conditional = _extract_conditional_technical_values(mappings, bline_evidence)
     final = _extract_final_assemblies(products)
     details = final.copy(deep=True)
@@ -231,8 +251,13 @@ def test_canonical_counts_and_adjacent_family_states_remain_unchanged() -> None:
     bline = products[products["product_family"].eq("showerdrain_b")]
     eplus = sheets["Eplus_Compatible_Grate_Evidence"]
     assert len(cplus) == 30 and cplus["ready_for_customer_view"].eq(True).all()
-    assert len(bline) == 8 and bline["assembly_model"].eq("integral_all_in_one_set").all()
-    assert bline["flow_rate_lps"].fillna("").eq("").all()
+    assert len(bline) == 9
+    approved_bline = bline[bline["product_article_number"].fillna("").ne("")]
+    assert len(approved_bline) == 8
+    assert approved_bline["assembly_model"].eq("integral_all_in_one_set").all()
+    assert approved_bline["flow_rate_lps"].fillna("").eq("").all()
+    extra_bline = bline[bline["product_article_number"].fillna("").eq("")]
+    assert len(extra_bline) == 1 and extra_bline["flow_rate_lps"].eq(0.90).all()
     assert len(easyflow) == 2 and easyflow["ready_for_benchmark"].eq(False).all()
     assert eplus["ready_for_benchmark"].eq(False).all()
     assert eplus["ready_for_customer_view"].eq(False).all()
@@ -307,3 +332,28 @@ def test_bline_runtime_policy_fails_closed_without_changing_mplus_review() -> No
     assert diagnostics["invalid_conditional_rows"] == 1
     assert diagnostics["Bline_runtime_10mm_customer_ready_rows"] == 7
     assert policy_gate(review, diagnostics) == INVALID
+
+
+def test_report_ignores_extra_family_level_bline_row_with_scalar_flow() -> None:
+    sheets = _canonical_sheets()
+    products = sheets["Products"]
+    raw_bline = products[products["product_family"].eq("showerdrain_b")]
+    assert len(products) == 88
+    assert len(raw_bline) == 9
+    extra = raw_bline[raw_bline["product_article_number"].fillna("").eq("")]
+    assert len(extra) == 1
+    assert extra.iloc[0]["flow_rate_lps"] == 0.90
+
+    review = build_mplus_conditional_customer_policy_report(sheets)
+    diagnostics = workbook_diagnostics(sheets, review)
+
+    assert diagnostics["Bline_canonical_rows"] == 8
+    assert diagnostics["Bline_canonical_customer_ready_rows"] == 0
+    assert diagnostics["Bline_no_selection_customer_ready_rows"] == 0
+    assert diagnostics["Bline_runtime_10mm_customer_ready_rows"] == 8
+    assert diagnostics["Bline_runtime_20mm_customer_ready_rows"] == 8
+    assert diagnostics["Bline_runtime_10mm_0_40_rows"] == 8
+    assert diagnostics["Bline_runtime_20mm_0_46_rows"] == 8
+    assert diagnostics["unconditional_scalar_defaults"] == 0
+    assert diagnostics["invalid_conditional_rows"] == 0
+    assert policy_gate(review, diagnostics) == POLICY_GATE
