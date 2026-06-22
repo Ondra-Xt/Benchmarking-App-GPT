@@ -208,3 +208,19 @@ def test_tece_source_pack_does_not_add_rows_to_aco_canonical_frames(monkeypatch)
         pd.testing.assert_frame_equal(frame, before[name])
     assert report.source_pack is not None
     assert all(row.article_number for row in report.source_pack.rows)
+
+
+def test_tece_source_pack_report_includes_manifest_metadata_and_scope_counts(monkeypatch):
+    monkeypatch.setattr(report_mod.tece, "discover_candidates", lambda **_kwargs: ([], []))
+
+    report = report_mod.build_report(source_pack="tests/fixtures/tece/source_pack")
+
+    assert report.source_pack is not None
+    assert report.source_pack.manifest is not None
+    assert report.source_pack.manifest["sources"][0]["approved_for_benchmark_evidence"] is False
+    assert report.source_pack.evidence_scope_counts["article_data"] == 1
+    assert report.source_pack.evidence_scope_counts["technical_datasheet"] == 1
+    assert report.source_pack.cover_grate_matrix_evidence_exists is False
+    assert report.source_pack.assembly_matrix_evidence_exists is False
+    assert report.source_pack.production_promotion_blocked is True
+    assert report.production_promotion_blocked is True

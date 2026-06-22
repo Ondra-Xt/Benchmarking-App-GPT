@@ -69,6 +69,10 @@ class TeceSourcePackReport:
     ready_for_customer_view: bool
     recommended_next_action: str
     rows: list[TeceSourcePackRow]
+    manifest: dict[str, Any] | None = None
+    evidence_scope_counts: dict[str, int] | None = None
+    cover_grate_matrix_evidence_exists: bool = False
+    assembly_matrix_evidence_exists: bool = False
 
 @dataclass(frozen=True)
 class TeceInventoryRow:
@@ -230,6 +234,8 @@ def _diagnostics_from_debug(debug: list[dict[str, Any]], candidate_count: int, r
 
 
 SOURCE_PACK_EXTENSIONS = {".html", ".htm", ".txt", ".pdf", ".json", ".csv"}
+SOURCE_PACK_MANIFEST = "tece_source_pack_manifest.json"
+EVIDENCE_SCOPES = {"article_data", "technical_datasheet", "cover_grate_matrix", "assembly_matrix", "unknown"}
 SOURCE_PACK_TECHNICAL_FIELDS = (
     "nominal_length_mm",
     "flow_rate_lps",
@@ -349,13 +355,43 @@ def _extract_source_pack_row(path: Path, root: Path) -> TeceSourcePackRow | None
     )
 
 
+def _read_source_pack_manifest(root: Path) -> dict[str, Any] | None:
+    manifest_path = root / SOURCE_PACK_MANIFEST if root.is_dir() else root.parent / SOURCE_PACK_MANIFEST
+    if not manifest_path.exists():
+        return None
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    sources = payload.get("sources", payload if isinstance(payload, list) else [])
+    normalized_sources = []
+    for item in sources if isinstance(sources, list) else []:
+        if not isinstance(item, dict):
+            continue
+        copied = dict(item)
+        copied.setdefault("approved_for_benchmark_evidence", False)
+        normalized_sources.append(copied)
+    return {"manifest_file": SOURCE_PACK_MANIFEST, "sources": normalized_sources}
+
+
+def _manifest_sources_by_file(manifest: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    if not manifest:
+        return {}
+    return {str(item.get("source_file")): item for item in manifest.get("sources", []) if item.get("source_file")}
+
+
 def load_source_pack(path: str | Path) -> TeceSourcePackReport:
     root = Path(path)
-    files = sorted(p for p in (root.rglob("*") if root.is_dir() else [root]) if p.is_file() and p.suffix.lower() in SOURCE_PACK_EXTENSIONS)
+    manifest = _read_source_pack_manifest(root)
+    files = sorted(p for p in (root.rglob("*") if root.is_dir() else [root]) if p.is_file() and p.name != SOURCE_PACK_MANIFEST and p.suffix.lower() in SOURCE_PACK_EXTENSIONS)
     rows = [row for file in files if (row := _extract_source_pack_row(file, root if root.is_dir() else root.parent)) is not None]
     coverage = {field: sum(1 for row in rows if _clean(getattr(row, field)) != "") for field in SOURCE_PACK_TECHNICAL_FIELDS}
     missing_counts = {field: sum(1 for row in rows if field in row.missing_fields) for field in SOURCE_PACK_TECHNICAL_FIELDS}
-    has_compat = any(row.article_level_compatibility_evidence_exists for row in rows)
+    manifest_by_file = _manifest_sources_by_file(manifest)
+    scope_counts = {scope: 0 for scope in sorted(EVIDENCE_SCOPES)}
+    for source in manifest_by_file.values():
+        scope = source.get("evidence_scope") or "unknown"
+        scope_counts[scope] = scope_counts.get(scope, 0) + 1
+    cover_matrix = scope_counts.get("cover_grate_matrix", 0) > 0
+    assembly_matrix = scope_counts.get("assembly_matrix", 0) > 0
+    has_compat = cover_matrix or assembly_matrix or any(row.article_level_compatibility_evidence_exists for row in rows)
     status = "explicit_article_level_compatibility_evidence_found" if has_compat else "missing_article_level_compatibility_matrix"
     return TeceSourcePackReport(
         source_pack_path=str(root),
@@ -371,6 +407,10 @@ def load_source_pack(path: str | Path) -> TeceSourcePackReport:
         ready_for_customer_view=False,
         recommended_next_action="Add real TECE article data, technical datasheets, and cover/grate compatibility matrix; keep production promotion blocked.",
         rows=rows,
+        manifest=manifest,
+        evidence_scope_counts=scope_counts,
+        cover_grate_matrix_evidence_exists=cover_matrix,
+        assembly_matrix_evidence_exists=assembly_matrix,
     )
 
 def build_report(target_length_mm: int = 1200, tolerance_mm: int = 100, *, max_candidates: int | None = None, source_pack: str | Path | None = None) -> TeceInventoryReport:
@@ -479,6 +519,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"source_pack_technical_field_coverage: {json.dumps(report.source_pack.technical_field_coverage, sort_keys=True)}")
             print(f"source_pack_missing_field_counts: {json.dumps(report.source_pack.missing_field_counts, sort_keys=True)}")
             print(f"source_pack_compatibility_evidence_status: {report.source_pack.compatibility_evidence_status}")
+            print(f"source_pack_evidence_scope_counts: {json.dumps(report.source_pack.evidence_scope_counts or {}, sort_keys=True)}")
+            print(f"source_pack_cover_grate_matrix_evidence_exists: {report.source_pack.cover_grate_matrix_evidence_exists}")
+            print(f"source_pack_assembly_matrix_evidence_exists: {report.source_pack.assembly_matrix_evidence_exists}")
         print(f"technical_field_coverage: {json.dumps(report.technical_field_coverage, sort_keys=True)}")
         print(f"evidence_source_counts: {json.dumps(report.evidence_source_counts, sort_keys=True)}")
         print(f"production_promotion_blocked: {report.production_promotion_blocked}")

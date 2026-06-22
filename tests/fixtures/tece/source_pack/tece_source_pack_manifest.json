@@ -1,0 +1,28 @@
+{
+  "sources": [
+    {
+      "source_file": "tece_test_product.html",
+      "source_type": "html",
+      "source_origin": "unknown",
+      "source_url": "https://example.invalid/tece/test-fixture-600100",
+      "source_date": "2026-06-22",
+      "document_title": "TEST FIXTURE ONLY - synthetic TECE product snippet",
+      "product_family_hint": "TECEdrainline",
+      "evidence_scope": "article_data",
+      "approved_for_benchmark_evidence": false,
+      "notes": "Synthetic test-only fixture; not production evidence."
+    },
+    {
+      "source_file": "tece_test_notes.txt",
+      "source_type": "txt",
+      "source_origin": "unknown",
+      "source_url": "https://example.invalid/tece/test-fixture-650001",
+      "source_date": "2026-06-22",
+      "document_title": "TEST FIXTURE ONLY - synthetic TECE notes snippet",
+      "product_family_hint": "TECEdrainprofile",
+      "evidence_scope": "technical_datasheet",
+      "approved_for_benchmark_evidence": false,
+      "notes": "Synthetic test-only fixture; not production evidence."
+    }
+  ]
+}
