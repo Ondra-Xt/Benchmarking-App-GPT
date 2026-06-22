@@ -144,3 +144,67 @@ def test_tece_candidates_still_keep_production_promotion_blocked(monkeypatch):
     assert all(row.production_promotion_blocked for row in report.rows)
     assert all(row.ready_for_benchmark is False for row in report.rows)
     assert all(row.ready_for_customer_view is False for row in report.rows)
+
+
+def test_tece_source_pack_loader_reads_html_and_txt_fixtures():
+    report = report_mod.load_source_pack("tests/fixtures/tece/source_pack")
+
+    assert report.source_pack_file_count >= 2
+    assert report.source_pack_candidate_count >= 2
+    assert "600100" in report.article_numbers
+    assert "650001" in report.article_numbers
+    assert report.technical_field_coverage["nominal_length_mm"] >= 1
+    assert report.technical_field_coverage["flow_rate_lps"] >= 1
+    assert report.production_promotion_blocked is True
+    assert report.ready_for_benchmark is False
+    assert report.ready_for_customer_view is False
+    assert report.article_level_compatibility_evidence_exists is False
+    assert report.compatibility_evidence_status == "missing_article_level_compatibility_matrix"
+    assert all(row.production_promotion_blocked for row in report.rows)
+    assert all(row.ready_for_benchmark is False for row in report.rows)
+
+
+def test_tece_report_supports_source_pack_and_stays_incomplete(monkeypatch, capsys):
+    debug = [
+        {"method": "produktdaten_seed", "seed_url": "seed-a", "status_code": 202, "final_url": "seed-a", "candidates_found": 0},
+        {"method": "final", "candidates_found": 0, "after_length_filter": 0},
+    ]
+    monkeypatch.setattr(report_mod.tece, "discover_candidates", lambda **_kwargs: ([], debug))
+
+    report = report_mod.build_report(source_pack="tests/fixtures/tece/source_pack")
+
+    assert report.candidate_count == 0
+    assert report.source_pack is not None
+    assert report.source_pack.source_pack_candidate_count >= 2
+    assert report.source_pack.production_promotion_blocked is True
+    assert report.overall_status == "TECE_SOURCE_PACK_INVENTORY_INCOMPLETE"
+    assert report.production_promotion_blocked is True
+    assert report.ready_for_benchmark is False
+    assert report.ready_for_customer_view is False
+
+    assert report_mod.main(["--source-pack", "tests/fixtures/tece/source_pack"]) == 0
+    out = capsys.readouterr().out
+    assert "source_pack_candidate_count" in out
+    assert "source_pack_compatibility_evidence_status: missing_article_level_compatibility_matrix" in out
+    assert "OVERALL: TECE_SOURCE_PACK_INVENTORY_INCOMPLETE" in out
+
+
+def test_tece_source_pack_does_not_add_rows_to_aco_canonical_frames(monkeypatch):
+    monkeypatch.setattr(report_mod.tece, "discover_candidates", lambda **_kwargs: ([], []))
+
+    baseline = CanonicalAcoFrames(
+        registry=pd.DataFrame({"product_id": ["aco-1"], "manufacturer": ["aco"]}),
+        products=pd.DataFrame({"product_id": ["aco-1"], "manufacturer": ["aco"], "ready_for_benchmark": [True]}),
+        comparison=pd.DataFrame({"product_id": ["aco-1"], "manufacturer": ["aco"]}),
+        excluded=pd.DataFrame(),
+        evidence=pd.DataFrame(),
+        bom_options=pd.DataFrame(),
+    )
+    before = {name: frame.copy(deep=True) for name, frame in baseline.__dict__.items()}
+
+    report = report_mod.build_report(source_pack="tests/fixtures/tece/source_pack")
+
+    for name, frame in baseline.__dict__.items():
+        pd.testing.assert_frame_equal(frame, before[name])
+    assert report.source_pack is not None
+    assert all(row.article_number for row in report.source_pack.rows)

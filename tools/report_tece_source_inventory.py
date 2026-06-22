@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
+import re
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -25,6 +27,48 @@ PRODUCTION_STATUS_NOTE = (
     "TECE production promotion blocked pending article-level compatibility evidence and complete technical evidence"
 )
 
+
+@dataclass(frozen=True)
+class TeceSourcePackRow:
+    source_file: str
+    source_type: str
+    product_family: str
+    product_name: str
+    article_number: str
+    source_url: str
+    nominal_length_mm: Any
+    flow_rate_lps: Any
+    water_seal_mm: Any
+    outlet_dn: Any
+    height_adj_min_mm: Any
+    height_adj_max_mm: Any
+    installation_height_mm: Any
+    evidence_text: str
+    missing_fields: list[str]
+    confidence: float
+    compatibility_evidence_type: str
+    article_level_compatibility_evidence_exists: bool
+    production_promotion_blocked: bool
+    ready_for_benchmark: bool
+    ready_for_customer_view: bool
+    recommended_next_action: str
+
+
+@dataclass(frozen=True)
+class TeceSourcePackReport:
+    source_pack_path: str
+    source_pack_file_count: int
+    source_pack_candidate_count: int
+    article_numbers: list[str]
+    technical_field_coverage: dict[str, int]
+    missing_field_counts: dict[str, int]
+    compatibility_evidence_status: str
+    article_level_compatibility_evidence_exists: bool
+    production_promotion_blocked: bool
+    ready_for_benchmark: bool
+    ready_for_customer_view: bool
+    recommended_next_action: str
+    rows: list[TeceSourcePackRow]
 
 @dataclass(frozen=True)
 class TeceInventoryRow:
@@ -79,6 +123,7 @@ class TeceInventoryReport:
     ready_for_customer_view: bool
     discovery_debug: list[dict[str, Any]]
     rows: list[TeceInventoryRow]
+    source_pack: TeceSourcePackReport | None = None
 
 
 def _clean(value: Any) -> str:
@@ -183,7 +228,152 @@ def _diagnostics_from_debug(debug: list[dict[str, Any]], candidate_count: int, r
         "overall_status": overall,
     }
 
-def build_report(target_length_mm: int = 1200, tolerance_mm: int = 100, *, max_candidates: int | None = None) -> TeceInventoryReport:
+
+SOURCE_PACK_EXTENSIONS = {".html", ".htm", ".txt", ".pdf", ".json", ".csv"}
+SOURCE_PACK_TECHNICAL_FIELDS = (
+    "nominal_length_mm",
+    "flow_rate_lps",
+    "water_seal_mm",
+    "outlet_dn",
+    "height_adj_min_mm",
+    "height_adj_max_mm",
+    "installation_height_mm",
+)
+
+
+def _strip_markup(text: str) -> str:
+    text = re.sub(r"(?is)<script.*?</script>|<style.*?</style>", " ", text)
+    text = re.sub(r"(?is)<[^>]+>", " ", text)
+    return html.unescape(re.sub(r"\s+", " ", text)).strip()
+
+
+def _read_source_pack_file(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
+        try:
+            from pypdf import PdfReader  # type: ignore
+        except ImportError:
+            try:
+                from PyPDF2 import PdfReader  # type: ignore
+            except ImportError:
+                return ""
+        reader = PdfReader(str(path))
+        return "\n".join(page.extract_text() or "" for page in reader.pages)
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def _first_match(patterns: list[str], text: str, *, flags: int = re.I) -> str:
+    for pattern in patterns:
+        match = re.search(pattern, text, flags)
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+def _extract_float(patterns: list[str], text: str) -> Any:
+    value = _first_match(patterns, text)
+    if not value:
+        return ""
+    try:
+        return float(value.replace(",", "."))
+    except ValueError:
+        return value
+
+
+def _extract_int(patterns: list[str], text: str) -> Any:
+    value = _first_match(patterns, text)
+    if not value:
+        return ""
+    try:
+        return int(float(value.replace(",", ".")))
+    except ValueError:
+        return value
+
+
+def _extract_source_url(raw_text: str, text: str) -> str:
+    meta = _first_match([r"(?is)<meta[^>]+(?:name|property)=[\"'](?:source_url|og:url)[\"'][^>]+content=[\"']([^\"']+)", r"(?is)<meta[^>]+content=[\"']([^\"']+)[\"'][^>]+(?:name|property)=[\"'](?:source_url|og:url)[\"']"], raw_text, flags=0)
+    if meta:
+        return meta
+    return _first_match([r"\b(https?://[^\s)<>\"']+)"], text, flags=0)
+
+
+def _extract_source_pack_row(path: Path, root: Path) -> TeceSourcePackRow | None:
+    raw = _read_source_pack_file(path)
+    text = _strip_markup(raw) if path.suffix.lower() in {".html", ".htm"} else re.sub(r"\s+", " ", raw).strip()
+    if not text:
+        return None
+    article = _first_match([r"(?:article|artikel|item)(?:\s*(?:no\.?|number|nr\.?|#))?\s*[:#-]?\s*([0-9]{5,8})", r"\b([0-9]{6})\b"], text)
+    if not article:
+        return None
+    product_family = _first_match([r"(TECE(?:drain|drainline|line|profile)[A-Za-z ]*)"], text) or "TECE"
+    product_name = _first_match([
+        r"(?:product(?: name)?|produkt(?:name)?)\s*[:#-]\s*([^.;\n]+)",
+        r"(TECE[^.;\n]*" + re.escape(article) + r"[^.;\n]*)",
+    ], text) or product_family
+    fields = {
+        "nominal_length_mm": _extract_int([r"(?:nominal\s*)?length\s*[:=]?\s*(\d{3,4})\s*mm", r"L(?:änge|ength)?\s*[:=]?\s*(\d{3,4})\s*mm"], text),
+        "flow_rate_lps": _extract_float([r"flow\s*rate\s*[:=]?\s*([0-9]+[,.]?[0-9]*)\s*(?:l/s|lps)", r"drainage\s*capacity\s*[:=]?\s*([0-9]+[,.]?[0-9]*)\s*(?:l/s|lps)"], text),
+        "water_seal_mm": _extract_int([r"water\s*seal\s*[:=]?\s*(\d{2,3})\s*mm"], text),
+        "outlet_dn": _first_match([r"outlet\s*[:=]?\s*(DN\s*\d{2,3})", r"\b(DN\s*\d{2,3})\b"], text).replace(" ", ""),
+        "height_adj_min_mm": _extract_int([r"height\s*adjust(?:ment|able)?\s*[:=]?\s*(\d{2,4})\s*(?:-|to|–)\s*\d{2,4}\s*mm"], text),
+        "height_adj_max_mm": _extract_int([r"height\s*adjust(?:ment|able)?\s*[:=]?\s*\d{2,4}\s*(?:-|to|–)\s*(\d{2,4})\s*mm"], text),
+        "installation_height_mm": _extract_int([r"installation\s*height\s*[:=]?\s*(\d{2,4})\s*mm"], text),
+    }
+    missing = [field for field in SOURCE_PACK_TECHNICAL_FIELDS if _clean(fields[field]) == ""]
+    compat = bool(re.search(r"(?i)(compatibility\s+matrix|compatible\s+with\s+cover|cover\s*/\s*grate\s+compatibility)", text))
+    evidence = text[:500]
+    confidence = round((1 + sum(1 for v in fields.values() if _clean(v)) + (1 if product_name else 0)) / (len(SOURCE_PACK_TECHNICAL_FIELDS) + 2), 2)
+    return TeceSourcePackRow(
+        source_file=str(path.relative_to(root)),
+        source_type=path.suffix.lower().lstrip(".") or "unknown",
+        product_family=product_family,
+        product_name=product_name,
+        article_number=article,
+        source_url=_extract_source_url(raw, text),
+        nominal_length_mm=fields["nominal_length_mm"],
+        flow_rate_lps=fields["flow_rate_lps"],
+        water_seal_mm=fields["water_seal_mm"],
+        outlet_dn=fields["outlet_dn"],
+        height_adj_min_mm=fields["height_adj_min_mm"],
+        height_adj_max_mm=fields["height_adj_max_mm"],
+        installation_height_mm=fields["installation_height_mm"],
+        evidence_text=evidence,
+        missing_fields=missing,
+        confidence=confidence,
+        compatibility_evidence_type="explicit_matrix" if compat else "missing",
+        article_level_compatibility_evidence_exists=compat,
+        production_promotion_blocked=True,
+        ready_for_benchmark=False,
+        ready_for_customer_view=False,
+        recommended_next_action="Collect official TECE cover/grate article-level compatibility matrix before any production promotion." if not compat else "Manually audit compatibility evidence; production promotion remains blocked in this branch.",
+    )
+
+
+def load_source_pack(path: str | Path) -> TeceSourcePackReport:
+    root = Path(path)
+    files = sorted(p for p in (root.rglob("*") if root.is_dir() else [root]) if p.is_file() and p.suffix.lower() in SOURCE_PACK_EXTENSIONS)
+    rows = [row for file in files if (row := _extract_source_pack_row(file, root if root.is_dir() else root.parent)) is not None]
+    coverage = {field: sum(1 for row in rows if _clean(getattr(row, field)) != "") for field in SOURCE_PACK_TECHNICAL_FIELDS}
+    missing_counts = {field: sum(1 for row in rows if field in row.missing_fields) for field in SOURCE_PACK_TECHNICAL_FIELDS}
+    has_compat = any(row.article_level_compatibility_evidence_exists for row in rows)
+    status = "explicit_article_level_compatibility_evidence_found" if has_compat else "missing_article_level_compatibility_matrix"
+    return TeceSourcePackReport(
+        source_pack_path=str(root),
+        source_pack_file_count=len(files),
+        source_pack_candidate_count=len(rows),
+        article_numbers=sorted({row.article_number for row in rows}),
+        technical_field_coverage=coverage,
+        missing_field_counts=missing_counts,
+        compatibility_evidence_status=status,
+        article_level_compatibility_evidence_exists=has_compat,
+        production_promotion_blocked=True,
+        ready_for_benchmark=False,
+        ready_for_customer_view=False,
+        recommended_next_action="Add real TECE article data, technical datasheets, and cover/grate compatibility matrix; keep production promotion blocked.",
+        rows=rows,
+    )
+
+def build_report(target_length_mm: int = 1200, tolerance_mm: int = 100, *, max_candidates: int | None = None, source_pack: str | Path | None = None) -> TeceInventoryReport:
     candidates, debug = tece.discover_candidates(target_length_mm=target_length_mm, tolerance_mm=tolerance_mm)
     if max_candidates is not None:
         candidates = candidates[:max(0, int(max_candidates))]
@@ -225,6 +415,10 @@ def build_report(target_length_mm: int = 1200, tolerance_mm: int = 100, *, max_c
     missing_counts = {field: sum(1 for row in rows if field in row.missing_fields.split(", ")) for field in TECHNICAL_FIELDS}
     evidence_counts = {name: sum(1 for row in rows if name in row.evidence_sources) for name in ("HTML", "PDF datasheet", "guessed tcdb PDF")}
     diag = _diagnostics_from_debug(debug, len(rows), rows)
+    source_pack_report = load_source_pack(source_pack) if source_pack is not None else None
+    if source_pack_report is not None and source_pack_report.source_pack_candidate_count > 0:
+        diag["overall_status"] = "TECE_SOURCE_PACK_INVENTORY_INCOMPLETE"
+        diag["recommended_next_action"] = source_pack_report.recommended_next_action
     return TeceInventoryReport(
         candidate_count=len(rows),
         article_numbers=sorted({row.article_number for row in rows if row.article_number}),
@@ -252,6 +446,7 @@ def build_report(target_length_mm: int = 1200, tolerance_mm: int = 100, *, max_c
         ready_for_customer_view=False,
         discovery_debug=debug,
         rows=rows,
+        source_pack=source_pack_report,
     )
 
 
@@ -261,8 +456,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--tolerance-mm", type=int, default=100)
     parser.add_argument("--max-candidates", type=int)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--source-pack", help="Path to local TECE source-pack files for read-only diagnostic ingestion.")
     args = parser.parse_args(argv)
-    report = build_report(args.target_length_mm, args.tolerance_mm, max_candidates=args.max_candidates)
+    report = build_report(args.target_length_mm, args.tolerance_mm, max_candidates=args.max_candidates, source_pack=args.source_pack)
     payload = asdict(report)
     if args.json:
         print(json.dumps(payload, indent=2, ensure_ascii=False))
@@ -276,6 +472,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"accepted_candidate_count_after_length_filter: {report.accepted_candidate_count_after_length_filter}")
         print(f"sample_rejected_urls: {json.dumps(report.sample_rejected_urls, ensure_ascii=False)}")
         print(f"article_numbers: {', '.join(report.article_numbers) or '(none)'}")
+        if report.source_pack is not None:
+            print(f"source_pack_file_count: {report.source_pack.source_pack_file_count}")
+            print(f"source_pack_candidate_count: {report.source_pack.source_pack_candidate_count}")
+            print(f"source_pack_article_numbers: {', '.join(report.source_pack.article_numbers) or '(none)'}")
+            print(f"source_pack_technical_field_coverage: {json.dumps(report.source_pack.technical_field_coverage, sort_keys=True)}")
+            print(f"source_pack_missing_field_counts: {json.dumps(report.source_pack.missing_field_counts, sort_keys=True)}")
+            print(f"source_pack_compatibility_evidence_status: {report.source_pack.compatibility_evidence_status}")
         print(f"technical_field_coverage: {json.dumps(report.technical_field_coverage, sort_keys=True)}")
         print(f"evidence_source_counts: {json.dumps(report.evidence_source_counts, sort_keys=True)}")
         print(f"production_promotion_blocked: {report.production_promotion_blocked}")
