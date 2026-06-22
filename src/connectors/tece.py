@@ -352,6 +352,8 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
         st, final, html, err = _safe_get_text(seed, timeout=30)
         final_c = _canonicalize_url(final)
         items, index_only = _extract_produktdaten_candidates_from_html(html, final_c) if (st == 200 and html) else ([], [])
+        is_async_placeholder = st == 202
+        seed_blocked = bool(is_async_placeholder or ((st != 200 or bool(err)) and not items))
         debug.append({
             "site": "tece",
             "seed_url": seed,
@@ -361,11 +363,71 @@ def discover_candidates(target_length_mm: int = 1200, tolerance_mm: int = 100):
             "candidates_found": len(items),
             "method": "produktdaten_seed",
             "is_index": None,
+            "blocked_live_seed": seed_blocked,
+            "async_or_placeholder": is_async_placeholder,
+            "classification": "async_placeholder" if is_async_placeholder else ("blocked_live_seed" if seed_blocked else "ok"),
         })
         collected_items.extend(items)
         for u in index_only:
             if len(sample_index_only_urls) < 20 and u not in sample_index_only_urls:
                 sample_index_only_urls.append(u)
+
+    # Alternative discovery path already supported by this connector: tece.com robots/sitemaps.
+    # This preserves produktdaten parsing above and only adds candidates when page text exposes
+    # an article number and length.
+    try:
+        sitemaps = _robots_sitemaps(TECE_COM_BASE)
+        pages, sm_debug = _crawl_sitemaps(sitemaps, max_sitemaps=40, max_pages=5000)
+        debug.extend(sm_debug)
+        candidate_pages = [u for u in pages if _is_allowed_tece_url(u)]
+        debug.append({
+            "site": "tece",
+            "seed_url": TECE_COM_BASE + "/robots.txt",
+            "status_code": 200,
+            "final_url": TECE_COM_BASE,
+            "error": "",
+            "candidates_found": len(candidate_pages),
+            "method": "tece_com_sitemap_filter",
+            "is_index": None,
+        })
+        for page_url in candidate_pages[:250]:
+            st, final, html, err = _safe_get_text(page_url, timeout=25)
+            final_c = _canonicalize_url(final)
+            heading = _extract_heading_text(html) if (st == 200 and html) else ""
+            full = _clean_text(BeautifulSoup(html, "lxml").get_text(" ", strip=True)) if (st == 200 and html) else ""
+            article = _extract_article_from_text(unquote(final_c) + " " + heading + " " + full[:5000])
+            length_mm = _extract_length_from_url(final_c) or _extract_length_from_text(heading) or _extract_length_near_article(full[:8000])
+            page_debug = {
+                "site": "tece",
+                "seed_url": page_url,
+                "status_code": st,
+                "final_url": final_c,
+                "error": err,
+                "candidates_found": 1 if article else 0,
+                "method": "tece_com_product_page",
+                "is_index": None,
+                "article_found": bool(article),
+                "length_mm": length_mm,
+            }
+            debug.append(page_debug)
+            if article:
+                collected_items.append({
+                    "article": article,
+                    "length_mm": length_mm,
+                    "name": heading or f"TECE article {article}",
+                    "url": final_c,
+                })
+    except Exception as exc:
+        debug.append({
+            "site": "tece",
+            "seed_url": TECE_COM_BASE,
+            "status_code": None,
+            "final_url": TECE_COM_BASE,
+            "error": f"{type(exc).__name__}: {exc}",
+            "candidates_found": 0,
+            "method": "tece_com_sitemap_filter",
+            "is_index": None,
+        })
 
     # dedupe by article
     by_article: Dict[str, Dict[str, Any]] = {}

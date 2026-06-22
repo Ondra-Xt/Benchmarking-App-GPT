@@ -67,6 +67,16 @@ class TeceInventoryReport:
     production_promotion_blocked: bool
     production_status_note: str
     seed_urls: list[str]
+    seed_status_summary: list[dict[str, Any]]
+    blocked_live_seed_count: int
+    async_or_placeholder_seed_count: int
+    discovered_candidate_count_before_length_filter: int
+    accepted_candidate_count_after_length_filter: int
+    sample_rejected_urls: list[dict[str, Any]]
+    recommended_next_action: str
+    overall_status: str
+    ready_for_benchmark: bool
+    ready_for_customer_view: bool
     discovery_debug: list[dict[str, Any]]
     rows: list[TeceInventoryRow]
 
@@ -118,6 +128,61 @@ def _source_urls(candidate: dict[str, Any], params: dict[str, Any], article: str
     return urls
 
 
+
+def _jsonish(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except Exception:
+            return value
+    return value
+
+
+def _diagnostics_from_debug(debug: list[dict[str, Any]], candidate_count: int, rows: list[TeceInventoryRow]) -> dict[str, Any]:
+    seed_rows = [d for d in debug if d.get("method") == "produktdaten_seed"]
+    seed_status_summary = [
+        {
+            "seed_url": d.get("seed_url"),
+            "status_code": d.get("status_code"),
+            "final_url": d.get("final_url"),
+            "candidates_found": d.get("candidates_found", 0),
+            "classification": d.get("classification") or ("async_placeholder" if d.get("status_code") == 202 else "ok"),
+        }
+        for d in seed_rows
+    ]
+    blocked = sum(1 for d in seed_rows if d.get("blocked_live_seed") or d.get("status_code") == 202)
+    async_count = sum(1 for d in seed_rows if d.get("async_or_placeholder") or d.get("status_code") == 202)
+    final = next((d for d in reversed(debug) if d.get("method") == "final"), {})
+    discovered = int(final.get("candidates_found") or sum(int(d.get("candidates_found") or 0) for d in debug if d.get("method") in {"produktdaten_seed", "tece_com_product_page"}))
+    accepted = int(final.get("after_length_filter") or candidate_count)
+    rejected: list[dict[str, Any]] = []
+    for item in _jsonish(final.get("sample_dropped_by_length")) or []:
+        if isinstance(item, dict):
+            rejected.append({"url": item.get("url"), "reason": "missing_length" if item.get("length_mm") is None else "outside_target_length_tolerance", "length_mm": item.get("length_mm")})
+    for url in _jsonish(final.get("sample_index_only_urls")) or []:
+        rejected.append({"url": url, "reason": "index_or_baukasten_not_article_product"})
+    rejected = rejected[:20]
+
+    if candidate_count == 0 and blocked:
+        overall = "TECE_SOURCE_INVENTORY_BLOCKED_LIVE_SOURCE"
+        action = "TECE live seeds are blocked or returned HTTP 202/asynchronous placeholder responses; retry with a browser/session-capable fetch or obtain stable TECE export/API/PDF source URLs before promotion."
+    elif candidate_count > 0 and not any(row.article_level_compatibility_evidence for row in rows):
+        overall = "TECE_SOURCE_INVENTORY_INCOMPLETE"
+        action = "Collect article-level compatibility evidence and missing technical fields; keep TECE diagnostic-only."
+    else:
+        overall = "TECE_SOURCE_INVENTORY_DIAGNOSTIC_ONLY"
+        action = "Review evidence manually; production promotion remains blocked by policy."
+    return {
+        "seed_status_summary": seed_status_summary,
+        "blocked_live_seed_count": blocked,
+        "async_or_placeholder_seed_count": async_count,
+        "discovered_candidate_count_before_length_filter": discovered,
+        "accepted_candidate_count_after_length_filter": accepted,
+        "sample_rejected_urls": rejected,
+        "recommended_next_action": action,
+        "overall_status": overall,
+    }
+
 def build_report(target_length_mm: int = 1200, tolerance_mm: int = 100, *, max_candidates: int | None = None) -> TeceInventoryReport:
     candidates, debug = tece.discover_candidates(target_length_mm=target_length_mm, tolerance_mm=tolerance_mm)
     if max_candidates is not None:
@@ -159,6 +224,7 @@ def build_report(target_length_mm: int = 1200, tolerance_mm: int = 100, *, max_c
     coverage = {field: sum(1 for row in rows if _clean(getattr(row, field)) != "") for field in TECHNICAL_FIELDS}
     missing_counts = {field: sum(1 for row in rows if field in row.missing_fields.split(", ")) for field in TECHNICAL_FIELDS}
     evidence_counts = {name: sum(1 for row in rows if name in row.evidence_sources) for name in ("HTML", "PDF datasheet", "guessed tcdb PDF")}
+    diag = _diagnostics_from_debug(debug, len(rows), rows)
     return TeceInventoryReport(
         candidate_count=len(rows),
         article_numbers=sorted({row.article_number for row in rows if row.article_number}),
@@ -174,6 +240,16 @@ def build_report(target_length_mm: int = 1200, tolerance_mm: int = 100, *, max_c
         production_promotion_blocked=True,
         production_status_note=PRODUCTION_STATUS_NOTE,
         seed_urls=list(tece.PRODUKTDATEN_SEEDS),
+        seed_status_summary=diag["seed_status_summary"],
+        blocked_live_seed_count=diag["blocked_live_seed_count"],
+        async_or_placeholder_seed_count=diag["async_or_placeholder_seed_count"],
+        discovered_candidate_count_before_length_filter=diag["discovered_candidate_count_before_length_filter"],
+        accepted_candidate_count_after_length_filter=diag["accepted_candidate_count_after_length_filter"],
+        sample_rejected_urls=diag["sample_rejected_urls"],
+        recommended_next_action=diag["recommended_next_action"],
+        overall_status=diag["overall_status"],
+        ready_for_benchmark=False,
+        ready_for_customer_view=False,
         discovery_debug=debug,
         rows=rows,
     )
@@ -193,11 +269,21 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("TECE source inventory (diagnostic-only)")
         print(f"candidate_count: {report.candidate_count}")
+        print(f"seed_status_summary: {json.dumps(report.seed_status_summary, ensure_ascii=False)}")
+        print(f"blocked_live_seed_count: {report.blocked_live_seed_count}")
+        print(f"async_or_placeholder_seed_count: {report.async_or_placeholder_seed_count}")
+        print(f"discovered_candidate_count_before_length_filter: {report.discovered_candidate_count_before_length_filter}")
+        print(f"accepted_candidate_count_after_length_filter: {report.accepted_candidate_count_after_length_filter}")
+        print(f"sample_rejected_urls: {json.dumps(report.sample_rejected_urls, ensure_ascii=False)}")
         print(f"article_numbers: {', '.join(report.article_numbers) or '(none)'}")
         print(f"technical_field_coverage: {json.dumps(report.technical_field_coverage, sort_keys=True)}")
         print(f"evidence_source_counts: {json.dumps(report.evidence_source_counts, sort_keys=True)}")
         print(f"production_promotion_blocked: {report.production_promotion_blocked}")
+        print(f"ready_for_benchmark: {report.ready_for_benchmark}")
+        print(f"ready_for_customer_view: {report.ready_for_customer_view}")
+        print(f"recommended_next_action: {report.recommended_next_action}")
         print(report.production_status_note)
+        print(f"OVERALL: {report.overall_status}")
     return 0
 
 

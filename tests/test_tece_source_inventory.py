@@ -91,3 +91,56 @@ def test_tece_inventory_cli_json(monkeypatch, capsys):
     assert '"candidate_count": 1' in out
     assert '"production_promotion_blocked": true' in out
     assert '"ready_for_benchmark": false' in out
+
+
+def test_http_202_seed_responses_are_classified_blocked_async(monkeypatch):
+    debug = [
+        {
+            "method": "produktdaten_seed",
+            "seed_url": "https://produktdaten.tece.de/seed.xhtml",
+            "status_code": 202,
+            "final_url": "https://produktdaten.tece.de/seed.xhtml",
+            "candidates_found": 0,
+            "blocked_live_seed": True,
+            "async_or_placeholder": True,
+            "classification": "async_placeholder",
+        },
+        {"method": "final", "candidates_found": 0, "after_length_filter": 0, "sample_dropped_by_length": "[]", "sample_index_only_urls": "[]"},
+    ]
+    monkeypatch.setattr(report_mod.tece, "discover_candidates", lambda **_kwargs: ([], debug))
+
+    report = report_mod.build_report()
+
+    assert report.candidate_count == 0
+    assert report.blocked_live_seed_count == 1
+    assert report.async_or_placeholder_seed_count == 1
+    assert report.seed_status_summary[0]["classification"] == "async_placeholder"
+
+
+def test_zero_candidates_with_blocked_seeds_has_clear_overall_status(monkeypatch, capsys):
+    debug = [
+        {"method": "produktdaten_seed", "seed_url": "seed-a", "status_code": 202, "final_url": "seed-a", "candidates_found": 0},
+        {"method": "final", "candidates_found": 0, "after_length_filter": 0},
+    ]
+    monkeypatch.setattr(report_mod.tece, "discover_candidates", lambda **_kwargs: ([], debug))
+
+    report = report_mod.build_report()
+    assert report.overall_status == "TECE_SOURCE_INVENTORY_BLOCKED_LIVE_SOURCE"
+    assert "browser/session-capable" in report.recommended_next_action
+
+    assert report_mod.main([]) == 0
+    assert "OVERALL: TECE_SOURCE_INVENTORY_BLOCKED_LIVE_SOURCE" in capsys.readouterr().out
+
+
+def test_tece_candidates_still_keep_production_promotion_blocked(monkeypatch):
+    monkeypatch.setattr(report_mod.tece, "discover_candidates", lambda **_kwargs: (_sample_candidates(), [{"method": "final", "candidates_found": 1, "after_length_filter": 1}]))
+    monkeypatch.setattr(report_mod.tece, "extract_parameters", _sample_params)
+
+    report = report_mod.build_report()
+
+    assert report.production_promotion_blocked is True
+    assert report.ready_for_benchmark is False
+    assert report.ready_for_customer_view is False
+    assert all(row.production_promotion_blocked for row in report.rows)
+    assert all(row.ready_for_benchmark is False for row in report.rows)
+    assert all(row.ready_for_customer_view is False for row in report.rows)
