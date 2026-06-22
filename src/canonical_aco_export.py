@@ -1,9 +1,10 @@
 """Canonical, session-independent ACO benchmark workbook generation."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 import pandas as pd
 
@@ -12,6 +13,53 @@ from src.config import default_config
 from src.pipeline import run_discovery, run_update
 
 ACO_CONNECTORS = ("aco",)
+
+
+PROTECTED_ACO_FIXTURE_SOURCES = {
+    "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/": "aco_splus/splus_family.html",
+    "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/aco-showerdrain-splus-duschrinnenprofil/": "aco_splus/splus_profile.html",
+    "https://www.aco-haustechnik.de/produkte/badentwaesserung/duschrinnen/aco-showerdrain-splus/ablaufkoerper-zu-aco-duschrinnenprofil-showerdrain-splus/": "aco_splus/splus_drain_body.html",
+}
+
+
+def _fixture_root() -> Path:
+    return Path(__file__).resolve().parents[1] / "tests" / "fixtures"
+
+
+def _load_protected_fixture_pages() -> dict[str, str]:
+    fixture_dir = _fixture_root()
+    pages: dict[str, str] = {}
+    missing: list[str] = []
+    for url, filename in PROTECTED_ACO_FIXTURE_SOURCES.items():
+        fixture_path = fixture_dir / filename
+        if not fixture_path.is_file():
+            missing.append(str(fixture_path))
+            continue
+        pages[url] = fixture_path.read_text(encoding="utf-8")
+    if missing:
+        raise FileNotFoundError("S+ canonical source fallback missing: " + ", ".join(missing))
+    return pages
+
+
+@contextmanager
+def _canonical_protected_fixture_fallback() -> Iterator[None]:
+    """Pin protected source pages to checked-in evidence during canonical builds."""
+    from src.connectors import aco
+
+    fixture_pages = _load_protected_fixture_pages()
+    original_get_text = aco._safe_get_text
+
+    def fixture_first_get_text(url: str, timeout: int = 35):
+        canonical = aco._canonicalize_url(url)
+        if canonical in fixture_pages:
+            return 200, canonical, fixture_pages[canonical], "canonical_splus_fixture"
+        return original_get_text(url, timeout=timeout)
+
+    aco._safe_get_text = fixture_first_get_text
+    try:
+        yield
+    finally:
+        aco._safe_get_text = original_get_text
 
 
 @dataclass(frozen=True)
@@ -98,18 +146,19 @@ def build_canonical_aco_frames(
 ) -> CanonicalAcoFrames:
     """Run only the ACO connector and return the canonical exporter inputs."""
     cfg = default_config() if cfg is None else cfg
-    registry, _debug = run_discovery(
-        target_length_mm=target_length_mm,
-        tolerance_mm=tolerance_mm,
-        selected_connectors=ACO_CONNECTORS,
-    )
-    products, comparison, excluded, evidence, bom_options = run_update(
-        registry,
-        cfg,
-        target_length_mm=target_length_mm,
-        tolerance_mm=tolerance_mm,
-        selected_connectors=ACO_CONNECTORS,
-    )
+    with _canonical_protected_fixture_fallback():
+        registry, _debug = run_discovery(
+            target_length_mm=target_length_mm,
+            tolerance_mm=tolerance_mm,
+            selected_connectors=ACO_CONNECTORS,
+        )
+        products, comparison, excluded, evidence, bom_options = run_update(
+            registry,
+            cfg,
+            target_length_mm=target_length_mm,
+            tolerance_mm=tolerance_mm,
+            selected_connectors=ACO_CONNECTORS,
+        )
     products, excluded = apply_cplus_catalog_matrix_inputs(products, excluded)
     return CanonicalAcoFrames(
         registry=registry,
