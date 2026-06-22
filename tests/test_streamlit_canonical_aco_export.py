@@ -160,3 +160,50 @@ def test_discovery_update_and_session_reset_invalidate_stale_download(
     app.run(timeout=30)
     assert DOWNLOAD_KEY not in app.session_state.filtered_state
     assert downloads == []
+
+
+def test_canonical_and_session_snapshot_filenames_are_distinct():
+    app_source = Path("app.py").read_text(encoding="utf-8")
+
+    assert 'file_name="benchmark_aco_canonical.xlsx"' in app_source
+    assert 'file_name="benchmark_session_snapshot.xlsx"' in app_source
+    assert "benchmark_aco_canonical.xlsx" != "benchmark_session_snapshot.xlsx"
+
+
+def test_session_snapshot_bytes_persist_and_clear_after_discovery_update(monkeypatch, tmp_path):
+    from src import app_export, pipeline
+
+    def unused_canonical(_template_path, output_path, _cfg):
+        Path(output_path).write_bytes(b"canonical")
+        return Path(output_path)
+
+    def fake_snapshot(_template_path, output_path, _cfg, **_kwargs):
+        Path(output_path).write_bytes(b"snapshot bytes")
+
+    downloads = _patch_app_dependencies(monkeypatch, tmp_path, unused_canonical)
+    monkeypatch.setattr(app_export, "export_session_snapshot_workbook", fake_snapshot)
+    monkeypatch.setattr(
+        pipeline,
+        "run_discovery",
+        lambda **_kwargs: (pd.DataFrame(), pd.DataFrame()),
+    )
+
+    app = AppTest.from_file("app.py").run(timeout=30)
+    _button(app, "Export current session snapshot").click()
+    app.run(timeout=30)
+    assert app.session_state["session_snapshot_workbook_bytes"] == b"snapshot bytes"
+    assert any(download["file_name"] == "benchmark_session_snapshot.xlsx" for download in downloads)
+
+    downloads.clear()
+    app.run(timeout=30)
+    assert app.session_state["session_snapshot_workbook_bytes"] == b"snapshot bytes"
+    assert any(download["data"] == b"snapshot bytes" for download in downloads)
+
+    _button(app, "Run discovery").click()
+    app.run(timeout=30)
+    assert "session_snapshot_workbook_bytes" not in app.session_state.filtered_state
+
+    app.session_state["session_snapshot_workbook_bytes"] = b"stale"
+    _button(app, "Run update").click()
+    app.run(timeout=30)
+    assert "session_snapshot_workbook_bytes" not in app.session_state.filtered_state
