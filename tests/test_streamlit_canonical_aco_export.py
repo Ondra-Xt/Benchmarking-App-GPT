@@ -163,7 +163,7 @@ def test_discovery_update_and_session_reset_invalidate_stale_download(
 
 
 def test_canonical_and_session_snapshot_filenames_are_distinct():
-    app_source = Path("app.py").read_text()
+    app_source = Path("app.py").read_text(encoding="utf-8")
 
     assert 'file_name="benchmark_aco_canonical.xlsx"' in app_source
     assert 'file_name="benchmark_session_snapshot.xlsx"' in app_source
