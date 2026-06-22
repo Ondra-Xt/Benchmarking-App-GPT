@@ -1,0 +1,7 @@
+TEST FIXTURE ONLY - synthetic snippet, not approved benchmark evidence.
+Product name: TECEdrainprofile test linear drain
+Article no. 650001
+Length: 900 mm
+Installation height: 65 mm
+Drainage capacity: 0.7 l/s
+This text intentionally omits article-level cover or grate pairing evidence.
