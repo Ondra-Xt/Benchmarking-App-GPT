@@ -127,6 +127,50 @@ def test_canonical_aco_export_uses_shared_fail_closed_export(monkeypatch, tmp_pa
     }
 
 
+
+def test_canonical_splus_fixture_fallback_survives_failed_live_source(monkeypatch):
+    from src import canonical_aco_export
+    from src.config import default_config
+    from src.connectors import aco
+
+    def failed_live_get(url, timeout=35):
+        return 503, aco._canonicalize_url(url), "", "simulated live S+ outage"
+
+    monkeypatch.setattr(aco, "_safe_get_text", failed_live_get)
+
+    def discovery_probe(**_kwargs):
+        rows, _debug = aco.discover_candidates(target_length_mm=1200, tolerance_mm=100)
+        registry = pd.DataFrame(rows)
+        splus = registry[registry["product_family"].eq("showerdrain_splus")].copy()
+        assert len(splus[splus["system_role"].eq("profile_channel")]) == 8
+        assert len(splus[splus["system_role"].eq("drain_body")]) == 2
+        return registry, pd.DataFrame()
+
+    def update_probe(registry, _cfg, **_kwargs):
+        from src import pipeline
+
+        with monkeypatch.context() as m2:
+            m2.setitem(pipeline.CONNECTORS, "aco", aco)
+            return pipeline.run_update(registry, default_config(), selected_connectors=("aco",))
+
+    monkeypatch.setattr(canonical_aco_export, "run_discovery", discovery_probe)
+    monkeypatch.setattr(canonical_aco_export, "run_update", update_probe)
+
+    frames = canonical_aco_export.build_canonical_aco_frames(default_config())
+    splus_assemblies = frames.products[
+        frames.products["product_id"].astype(str).str.startswith("aco-assembled-showerdrain-splus-")
+    ].copy()
+    assert len(splus_assemblies) == 16
+    complete_fields = [
+        "flow_rate_lps",
+        "water_seal_mm",
+        "outlet_dn",
+        "height_adj_min_mm",
+        "height_adj_max_mm",
+    ]
+    assert splus_assemblies[complete_fields].notna().all().all()
+
+
 def test_canonical_aco_cli_creates_expected_workbook_and_summary(monkeypatch, tmp_path, capsys):
     from tools import export_canonical_aco_benchmark_xlsx as cli
     from tools.validate_xlsx_export import validate_app_export_baseline
