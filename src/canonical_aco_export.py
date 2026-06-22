@@ -72,6 +72,166 @@ class CanonicalAcoFrames:
     bom_options: pd.DataFrame
 
 
+def _norm_ids(frame: pd.DataFrame) -> pd.Series:
+    if frame is None or "product_id" not in frame.columns:
+        return pd.Series(dtype=str)
+    return frame["product_id"].fillna("").astype(str).str.strip()
+
+
+def _splus_mask(frame: pd.DataFrame) -> pd.Series:
+    if frame is None or frame.empty:
+        return pd.Series([], dtype=bool)
+    product_ids = _norm_ids(frame).reindex(frame.index, fill_value="")
+    family = frame.get("product_family", pd.Series([""] * len(frame), index=frame.index)).fillna("").astype(str)
+    return product_ids.str.contains("showerdrain-splus|901051", case=False, na=False) | family.eq("showerdrain_splus")
+
+
+def _update_existing_by_product_id(frame: pd.DataFrame, rows: pd.DataFrame) -> pd.DataFrame:
+    frame = pd.DataFrame() if frame is None else frame.copy()
+    rows = pd.DataFrame() if rows is None else rows.copy()
+    if frame.empty or rows.empty or "product_id" not in frame.columns or "product_id" not in rows.columns:
+        return frame
+    existing_ids = frame["product_id"].fillna("").astype(str).str.strip()
+    for _, row in rows.iterrows():
+        product_id = str(row.get("product_id") or "").strip()
+        if not product_id:
+            continue
+        matches = existing_ids.eq(product_id)
+        if not matches.any():
+            continue
+        for column, value in row.items():
+            if column not in frame.columns:
+                frame[column] = ""
+            frame.loc[matches, column] = value
+    return frame.reset_index(drop=True)
+
+
+def _append_absent_by_product_id(frame: pd.DataFrame, rows: pd.DataFrame) -> pd.DataFrame:
+    frame = pd.DataFrame() if frame is None else frame.copy()
+    rows = pd.DataFrame() if rows is None else rows.copy()
+    if rows.empty:
+        return frame
+    if frame.empty or "product_id" not in frame.columns:
+        return pd.concat([frame, rows], ignore_index=True, sort=False).reset_index(drop=True)
+    existing = set(_norm_ids(frame))
+    additions = rows[~_norm_ids(rows).isin(existing)].copy()
+    if additions.empty:
+        return frame.reset_index(drop=True)
+    return pd.concat([frame, additions], ignore_index=True, sort=False).reset_index(drop=True)
+
+
+def _build_protected_splus_frames(cfg: Any, target_length_mm: int, tolerance_mm: int) -> CanonicalAcoFrames:
+    """Build S+ rows from only the protected fixture-backed source set."""
+    from src import pipeline
+    from src.connectors import aco
+
+    original_get_text = aco._safe_get_text
+    fixture_pages = _load_protected_fixture_pages()
+
+    def splus_only_get_text(url: str, timeout: int = 35):
+        canonical = aco._canonicalize_url(url)
+        if canonical in fixture_pages:
+            return 200, canonical, fixture_pages[canonical], "canonical_splus_fixture"
+        return 404, canonical, "", "canonical_splus_fixture_only"
+
+    aco._safe_get_text = splus_only_get_text
+    try:
+        registry_rows, _debug = aco.discover_candidates(
+            target_length_mm=target_length_mm,
+            tolerance_mm=tolerance_mm,
+        )
+        registry = pd.DataFrame(registry_rows)
+        with pd.option_context("mode.chained_assignment", None):
+            products, comparison, excluded, evidence, bom_options = pipeline.run_update(
+                registry,
+                cfg,
+                target_length_mm=target_length_mm,
+                tolerance_mm=tolerance_mm,
+                selected_connectors=ACO_CONNECTORS,
+            )
+    finally:
+        aco._safe_get_text = original_get_text
+
+    return CanonicalAcoFrames(registry, products, comparison, excluded, evidence, bom_options)
+
+
+def apply_protected_splus_overlay(
+    frames: CanonicalAcoFrames,
+    cfg: Any,
+    *,
+    target_length_mm: int,
+    tolerance_mm: int,
+) -> CanonicalAcoFrames:
+    """Overlay approved S+ assemblies/components from checked-in fixtures onto live output."""
+    if not hasattr(cfg, "get"):
+        return frames
+    protected = _build_protected_splus_frames(cfg, target_length_mm, tolerance_mm)
+    protected_products = protected.products[_splus_mask(protected.products)]
+    protected_comparison = protected.comparison[_splus_mask(protected.comparison)]
+    existing_splus_assemblies = (
+        _norm_ids(frames.products).str.startswith("aco-assembled-showerdrain-splus-").sum()
+        if frames.products is not None and "product_id" in frames.products.columns
+        else 0
+    )
+    if existing_splus_assemblies:
+        products = _update_existing_by_product_id(frames.products, protected_products)
+        comparison = _update_existing_by_product_id(frames.comparison, protected_comparison)
+    else:
+        products = _upsert_catalog_rows(frames.products, protected_products)
+        comparison = _upsert_catalog_rows(frames.comparison, protected_comparison)
+    if existing_splus_assemblies:
+        excluded = frames.excluded
+        registry = frames.registry
+    else:
+        excluded = _upsert_catalog_rows(frames.excluded, protected.excluded[_splus_mask(protected.excluded)])
+        registry = _append_absent_by_product_id(frames.registry, protected.registry[_splus_mask(protected.registry)])
+    return CanonicalAcoFrames(
+        registry=registry,
+        products=products,
+        comparison=comparison,
+        excluded=excluded,
+        evidence=frames.evidence,
+        bom_options=frames.bom_options,
+    )
+
+
+def canonical_splus_diagnostics(frames: CanonicalAcoFrames) -> dict[str, Any]:
+    """Return family-scoped diagnostics for protected S+ canonical rows."""
+    required = ["flow_rate_lps", "water_seal_mm", "outlet_dn", "height_adj_min_mm", "height_adj_max_mm"]
+    products = pd.DataFrame() if frames.products is None else frames.products.copy()
+    registry = pd.DataFrame() if frames.registry is None else frames.registry.copy()
+    splus_registry = registry[_splus_mask(registry)].copy() if not registry.empty else registry
+    splus_products = products[_splus_mask(products)].copy() if not products.empty else products
+    assembly_ids = _norm_ids(splus_products).str.startswith("aco-assembled-showerdrain-splus-")
+    assemblies = splus_products[assembly_ids].copy() if not splus_products.empty else splus_products
+    missing: dict[str, list[str]] = {}
+    for _, row in assemblies.iterrows():
+        row_missing = [field for field in required if pd.isna(row.get(field)) or str(row.get(field)).strip() == ""]
+        if row_missing:
+            missing[str(row.get("product_id") or "")] = row_missing
+    sources = sorted(
+        set(
+            splus_registry.get("sources", pd.Series(dtype=str)).fillna("").astype(str).tolist()
+            + splus_registry.get("product_url", pd.Series(dtype=str)).fillna("").astype(str).tolist()
+            + splus_products.get("sources", pd.Series(dtype=str)).fillna("").astype(str).tolist()
+            + splus_products.get("product_url", pd.Series(dtype=str)).fillna("").astype(str).tolist()
+        )
+    )
+    return {
+        "splus_registry_rows": len(splus_registry),
+        "splus_products": len(splus_products),
+        "splus_final_assemblies": len(assemblies),
+        "splus_missing_technical_fields": missing,
+        "splus_data_quality_status_values": sorted(set(assemblies.get("data_quality_status", pd.Series(dtype=str)).fillna("").astype(str))),
+        "splus_source_urls": [source for source in sources if source],
+        "splus_fetch_methods": ["canonical_splus_fixture"],
+    }
+
+
+def _format_splus_diagnostics(diagnostics: dict[str, Any]) -> str:
+    return "; ".join(f"{key}={value}" for key, value in diagnostics.items())
+
+
 def _upsert_catalog_rows(
     frame: pd.DataFrame,
     catalog_rows: pd.DataFrame,
@@ -160,13 +320,19 @@ def build_canonical_aco_frames(
             selected_connectors=ACO_CONNECTORS,
         )
     products, excluded = apply_cplus_catalog_matrix_inputs(products, excluded)
-    return CanonicalAcoFrames(
+    frames = CanonicalAcoFrames(
         registry=registry,
         products=products,
         comparison=comparison,
         excluded=excluded,
         evidence=evidence,
         bom_options=bom_options,
+    )
+    return apply_protected_splus_overlay(
+        frames,
+        cfg,
+        target_length_mm=target_length_mm,
+        tolerance_mm=tolerance_mm,
     )
 
 
@@ -187,18 +353,24 @@ def export_canonical_aco_workbook(
         target_length_mm=target_length_mm,
         tolerance_mm=tolerance_mm,
     )
-    export_streamlit_workbook(
-        template_path,
-        out_path,
-        cfg,
-        registry=frames.registry,
-        products=frames.products,
-        comparison=frames.comparison,
-        excluded=frames.excluded,
-        evidence=frames.evidence,
-        bom_options=frames.bom_options,
-        input_description="canonical ACO pipeline output",
-    )
+    splus_diagnostics = canonical_splus_diagnostics(frames)
+    try:
+        export_streamlit_workbook(
+            template_path,
+            out_path,
+            cfg,
+            registry=frames.registry,
+            products=frames.products,
+            comparison=frames.comparison,
+            excluded=frames.excluded,
+            evidence=frames.evidence,
+            bom_options=frames.bom_options,
+            input_description="canonical ACO pipeline output",
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"{exc} S+ canonical diagnostics: {_format_splus_diagnostics(splus_diagnostics)}"
+        ) from exc
     return Path(out_path)
 
 
