@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 
 from src.canonical_aco_export import CanonicalAcoFrames
@@ -262,3 +264,83 @@ def test_tece_source_pack_classification_counts_are_in_json_report(monkeypatch, 
     assert '"family_counts"' in payload
     assert '"classification_confidence_counts"' in payload
     assert '"production_blocking_reason_counts"' in payload
+
+
+def test_tece_evidence_gap_synthetic_fixture_pack_status_and_json(capsys):
+    from tools import report_tece_evidence_gap as gap_mod
+
+    report = gap_mod.build_evidence_gap_report("tests/fixtures/tece/source_pack")
+
+    assert report.overall_status == "OVERALL: TECE_EVIDENCE_GAP_SYNTHETIC_ONLY"
+    assert report.gap_summary["synthetic_fixture_only"] is True
+    assert report.gap_summary["approved_benchmark_evidence_missing"] is True
+    assert report.production_promotion_blocked is True
+    assert report.ready_for_benchmark is False
+    assert report.ready_for_customer_view is False
+
+    assert gap_mod.main(["--source-pack", "tests/fixtures/tece/source_pack", "--json"]) == 0
+    payload = capsys.readouterr().out
+    assert '"gap_summary"' in payload
+    assert '"recommended_next_actions"' in payload
+    assert '"OVERALL: TECE_EVIDENCE_GAP_SYNTHETIC_ONLY"' in payload
+
+
+def test_tece_evidence_gap_missing_cover_grate_matrix_is_blocker(tmp_path):
+    from tools import report_tece_evidence_gap as gap_mod
+
+    (tmp_path / "tece_real_product.txt").write_text(
+        "Product name: TECEdrainline channel body approved sample\n"
+        "Article number: 700100\nProduct family: TECEdrainline\n"
+        "Nominal length: 1200 mm\nFlow rate: 0.8 l/s\nOutlet: DN50\n"
+        "Height adjustment: 95-150 mm\nWater seal: 50 mm\nInstallation height: 95 mm\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_cover.txt").write_text(
+        "Product name: TECEdrainline cover grate approved sample\n"
+        "Article number: 700200\nProduct family: TECEdrainline\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(
+        json.dumps({"sources": [
+            {"source_file": "tece_real_product.txt", "source_type": "txt", "source_origin": "public", "evidence_scope": "article_data", "approved_for_benchmark_evidence": True},
+            {"source_file": "tece_cover.txt", "source_type": "txt", "source_origin": "public", "evidence_scope": "article_data", "approved_for_benchmark_evidence": True},
+        ]}),
+        encoding="utf-8",
+    )
+
+    report = gap_mod.build_evidence_gap_report(tmp_path)
+
+    assert report.overall_status == "OVERALL: TECE_EVIDENCE_GAP_COMPATIBILITY_BLOCKED"
+    assert report.cover_grate_matrix_evidence_exists is False
+    assert report.gap_summary["missing_explicit_cover_grate_compatibility_matrix"] is True
+    assert report.production_promotion_blocked is True
+    assert report.ready_for_benchmark is False
+    assert report.ready_for_customer_view is False
+
+
+def test_tece_evidence_gap_reports_missing_technical_fields(tmp_path):
+    from tools import report_tece_evidence_gap as gap_mod
+
+    (tmp_path / "tece_real_product.txt").write_text(
+        "Product name: TECEdrainline channel body approved sample\n"
+        "Article number: 700100\nProduct family: TECEdrainline\n"
+        "Nominal length: 1200 mm\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_matrix.txt").write_text(
+        "TECEdrainline compatibility matrix compatible with cover article number 700300 and channel 700100. Article number: 700300",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(
+        json.dumps({"sources": [
+            {"source_file": "tece_real_product.txt", "source_type": "txt", "source_origin": "public", "evidence_scope": "article_data", "approved_for_benchmark_evidence": True},
+            {"source_file": "tece_matrix.txt", "source_type": "txt", "source_origin": "public", "evidence_scope": "cover_grate_matrix", "approved_for_benchmark_evidence": True},
+        ]}),
+        encoding="utf-8",
+    )
+
+    report = gap_mod.build_evidence_gap_report(tmp_path)
+
+    assert report.overall_status == "OVERALL: TECE_EVIDENCE_GAP_TECHNICAL_DATA_INCOMPLETE"
+    assert report.missing_field_counts["flow_rate_lps"] >= 1
+    assert report.gap_summary["missing_complete_technical_datasheets"] is True

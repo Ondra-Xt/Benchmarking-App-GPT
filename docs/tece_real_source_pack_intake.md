@@ -107,3 +107,40 @@ Production promotion remains blocked in this branch. A future promotion review w
 - Separate changes to production promotion logic and expected counts in a future branch.
 
 Until then, TECE remains diagnostic-only and production-blocked.
+
+## Evidence-gap report
+
+Use the evidence-gap report after the validator, inventory report, and classification report to summarize what is still missing before any future TECE production-promotion review:
+
+```bash
+python tools/report_tece_evidence_gap.py --source-pack <path>
+python tools/report_tece_evidence_gap.py --source-pack <path> --json
+```
+
+The report consumes the existing source-pack manifest, source-pack ingestion output, and classification summary. It is **diagnostic-only**: it does not write canonical export rows, does not change ACO validation counts, does not infer compatibility, and always keeps:
+
+- `production_promotion_blocked: true`
+- `ready_for_benchmark: false`
+- `ready_for_customer_view: false`
+
+The JSON/plain-text payload includes source-pack counts, article numbers, family and role counts, evidence-scope counts, technical-field coverage, missing-field counts, compatibility/assembly evidence booleans, a `gap_summary`, and prioritized `recommended_next_actions`.
+
+### Gap status interpretation
+
+- `OVERALL: TECE_EVIDENCE_GAP_SYNTHETIC_ONLY` means the pack is the checked-in synthetic fixture set or otherwise contains only synthetic/unapproved fixture evidence. Synthetic fixtures are useful for tests only; they are not production evidence.
+- `OVERALL: TECE_EVIDENCE_GAP_COMPATIBILITY_BLOCKED` means at least one non-synthetic/approved source exists, but explicit cover/grate compatibility matrix evidence is still missing. Compatibility must not be inferred from names, families, lengths, or nearby text.
+- `OVERALL: TECE_EVIDENCE_GAP_TECHNICAL_DATA_INCOMPLETE` means compatibility evidence is present but required technical data is still incomplete or policy review of conditional values is not complete.
+
+This branch intentionally never returns a production-ready TECE gap status. Even if a future local source pack contains better evidence, the report remains a diagnostic checklist for a later, separately reviewed production-promotion branch.
+
+### Recommended next actions
+
+The report always lists the next actions in this priority order:
+
+1. Replace synthetic fixtures with real TECE public/approved source files.
+2. Add article-level TECE channel/body product data.
+3. Add article-level cover/grate product data.
+4. Add explicit cover/grate compatibility matrix.
+5. Add technical datasheets for each production article or complete set.
+6. Preserve all conditional technical values with their conditions.
+7. Run validator, inventory report, classification report, and gap report again.
