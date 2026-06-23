@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import html
 import json
 import re
@@ -14,6 +15,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from src.connectors import tece
+from tools.tece_report_output import write_json_output, write_text_output
 
 TECHNICAL_FIELDS = (
     "flow_rate_lps",
@@ -698,45 +700,48 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--tolerance-mm", type=int, default=100)
     parser.add_argument("--max-candidates", type=int)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--out", help="Write report output to this UTF-8 path instead of stdout.")
     parser.add_argument("--source-pack", help="Path to local TECE source-pack files for read-only diagnostic ingestion.")
     args = parser.parse_args(argv)
     report = build_report(args.target_length_mm, args.tolerance_mm, max_candidates=args.max_candidates, source_pack=args.source_pack)
     payload = asdict(report)
     if args.json:
-        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        write_json_output(payload, args.out)
     else:
-        print("TECE source inventory (diagnostic-only)")
-        print(f"candidate_count: {report.candidate_count}")
-        print(f"seed_status_summary: {json.dumps(report.seed_status_summary, ensure_ascii=False)}")
-        print(f"blocked_live_seed_count: {report.blocked_live_seed_count}")
-        print(f"async_or_placeholder_seed_count: {report.async_or_placeholder_seed_count}")
-        print(f"discovered_candidate_count_before_length_filter: {report.discovered_candidate_count_before_length_filter}")
-        print(f"accepted_candidate_count_after_length_filter: {report.accepted_candidate_count_after_length_filter}")
-        print(f"sample_rejected_urls: {json.dumps(report.sample_rejected_urls, ensure_ascii=False)}")
-        print(f"article_numbers: {', '.join(report.article_numbers) or '(none)'}")
+        stream = io.StringIO()
+        print("TECE source inventory (diagnostic-only)", file=stream)
+        print(f"candidate_count: {report.candidate_count}", file=stream)
+        print(f"seed_status_summary: {json.dumps(report.seed_status_summary, ensure_ascii=False)}", file=stream)
+        print(f"blocked_live_seed_count: {report.blocked_live_seed_count}", file=stream)
+        print(f"async_or_placeholder_seed_count: {report.async_or_placeholder_seed_count}", file=stream)
+        print(f"discovered_candidate_count_before_length_filter: {report.discovered_candidate_count_before_length_filter}", file=stream)
+        print(f"accepted_candidate_count_after_length_filter: {report.accepted_candidate_count_after_length_filter}", file=stream)
+        print(f"sample_rejected_urls: {json.dumps(report.sample_rejected_urls, ensure_ascii=False)}", file=stream)
+        print(f"article_numbers: {', '.join(report.article_numbers) or '(none)'}", file=stream)
         if report.source_pack is not None:
-            print(f"source_pack_file_count: {report.source_pack.source_pack_file_count}")
-            print(f"source_pack_candidate_count: {report.source_pack.source_pack_candidate_count}")
-            print(f"source_pack_article_numbers: {', '.join(report.source_pack.article_numbers) or '(none)'}")
-            print(f"source_pack_technical_field_coverage: {json.dumps(report.source_pack.technical_field_coverage, sort_keys=True)}")
-            print(f"source_pack_missing_field_counts: {json.dumps(report.source_pack.missing_field_counts, sort_keys=True)}")
-            print(f"source_pack_compatibility_evidence_status: {report.source_pack.compatibility_evidence_status}")
-            print(f"source_pack_evidence_scope_counts: {json.dumps(report.source_pack.evidence_scope_counts or {}, sort_keys=True)}")
-            print(f"source_pack_page_range_label_counts: {json.dumps(report.source_pack.page_range_label_counts or {}, sort_keys=True)}")
-            print(f"source_pack_conditional_technical_value_count: {report.source_pack.conditional_technical_value_count}")
-            print(f"source_pack_row_examples_by_label_and_role: {json.dumps(report.source_pack.row_examples_by_label_and_role or {}, sort_keys=True, ensure_ascii=False)}")
-            print(f"source_pack_cover_grate_matrix_evidence_exists: {report.source_pack.cover_grate_matrix_evidence_exists}")
-            print("source_pack_classification_summary:")
-            print(json.dumps(report.source_pack.source_pack_classification_summary or {}, indent=2, sort_keys=True))
-            print(f"source_pack_assembly_matrix_evidence_exists: {report.source_pack.assembly_matrix_evidence_exists}")
-        print(f"technical_field_coverage: {json.dumps(report.technical_field_coverage, sort_keys=True)}")
-        print(f"evidence_source_counts: {json.dumps(report.evidence_source_counts, sort_keys=True)}")
-        print(f"production_promotion_blocked: {report.production_promotion_blocked}")
-        print(f"ready_for_benchmark: {report.ready_for_benchmark}")
-        print(f"ready_for_customer_view: {report.ready_for_customer_view}")
-        print(f"recommended_next_action: {report.recommended_next_action}")
-        print(report.production_status_note)
-        print(f"OVERALL: {report.overall_status}")
+            print(f"source_pack_file_count: {report.source_pack.source_pack_file_count}", file=stream)
+            print(f"source_pack_candidate_count: {report.source_pack.source_pack_candidate_count}", file=stream)
+            print(f"source_pack_article_numbers: {', '.join(report.source_pack.article_numbers) or '(none)'}", file=stream)
+            print(f"source_pack_technical_field_coverage: {json.dumps(report.source_pack.technical_field_coverage, sort_keys=True)}", file=stream)
+            print(f"source_pack_missing_field_counts: {json.dumps(report.source_pack.missing_field_counts, sort_keys=True)}", file=stream)
+            print(f"source_pack_compatibility_evidence_status: {report.source_pack.compatibility_evidence_status}", file=stream)
+            print(f"source_pack_evidence_scope_counts: {json.dumps(report.source_pack.evidence_scope_counts or {}, sort_keys=True)}", file=stream)
+            print(f"source_pack_page_range_label_counts: {json.dumps(report.source_pack.page_range_label_counts or {}, sort_keys=True)}", file=stream)
+            print(f"source_pack_conditional_technical_value_count: {report.source_pack.conditional_technical_value_count}", file=stream)
+            print(f"source_pack_row_examples_by_label_and_role: {json.dumps(report.source_pack.row_examples_by_label_and_role or {}, sort_keys=True, ensure_ascii=False)}", file=stream)
+            print(f"source_pack_cover_grate_matrix_evidence_exists: {report.source_pack.cover_grate_matrix_evidence_exists}", file=stream)
+            print("source_pack_classification_summary:", file=stream)
+            print(json.dumps(report.source_pack.source_pack_classification_summary or {}, indent=2, sort_keys=True), file=stream)
+            print(f"source_pack_assembly_matrix_evidence_exists: {report.source_pack.assembly_matrix_evidence_exists}", file=stream)
+        print(f"technical_field_coverage: {json.dumps(report.technical_field_coverage, sort_keys=True)}", file=stream)
+        print(f"evidence_source_counts: {json.dumps(report.evidence_source_counts, sort_keys=True)}", file=stream)
+        print(f"production_promotion_blocked: {report.production_promotion_blocked}", file=stream)
+        print(f"ready_for_benchmark: {report.ready_for_benchmark}", file=stream)
+        print(f"ready_for_customer_view: {report.ready_for_customer_view}", file=stream)
+        print(f"recommended_next_action: {report.recommended_next_action}", file=stream)
+        print(report.production_status_note, file=stream)
+        print(f"OVERALL: {report.overall_status}", file=stream)
+        write_text_output(stream.getvalue().rstrip("\n"), args.out)
     return 0
 
 

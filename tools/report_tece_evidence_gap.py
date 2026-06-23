@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import sys
 from dataclasses import asdict, dataclass
@@ -12,6 +13,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from tools.report_tece_source_inventory import SOURCE_PACK_TECHNICAL_FIELDS, TeceSourcePackReport, load_source_pack
+from tools.tece_report_output import write_json_output, write_text_output
 
 RECOMMENDED_NEXT_ACTIONS = [
     "Replace synthetic fixtures with real TECE public/approved source files.",
@@ -137,26 +139,29 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Diagnostic-only TECE evidence-gap report.")
     parser.add_argument("--source-pack", required=True, help="Path to local TECE source-pack files.")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--out", help="Write report output to this UTF-8 path instead of stdout.")
     args = parser.parse_args(argv)
 
     report = build_evidence_gap_report(args.source_pack)
     payload = asdict(report)
     if args.json:
-        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        write_json_output(payload, args.out)
     else:
-        print("TECE evidence-gap report (diagnostic-only; production promotion blocked)")
+        stream = io.StringIO()
+        print("TECE evidence-gap report (diagnostic-only; production promotion blocked)", file=stream)
         for key, value in payload.items():
             if key in {"gap_summary", "recommended_next_actions"}:
-                print(f"{key}:")
+                print(f"{key}:", file=stream)
                 if isinstance(value, dict):
                     for sub_key, sub_value in value.items():
-                        print(f"  {sub_key}: {sub_value}")
+                        print(f"  {sub_key}: {sub_value}", file=stream)
                 else:
                     for index, action in enumerate(value, 1):
-                        print(f"  {index}. {action}")
+                        print(f"  {index}. {action}", file=stream)
             elif key != "overall_status":
-                print(f"{key}: {json.dumps(value, sort_keys=True) if isinstance(value, (dict, list)) else value}")
-        print(report.overall_status)
+                print(f"{key}: {json.dumps(value, sort_keys=True) if isinstance(value, (dict, list)) else value}", file=stream)
+        print(report.overall_status, file=stream)
+        write_text_output(stream.getvalue().rstrip("\n"), args.out)
     return 0
 
 

@@ -6,6 +6,9 @@ import pandas as pd
 
 from src.canonical_aco_export import CanonicalAcoFrames
 from tools import report_tece_source_inventory as report_mod
+from tools import report_tece_source_pack_classification as classification_mod
+from tools import report_tece_evidence_gap as gap_mod
+from tools.tece_report_output import write_json_output
 
 
 def _sample_candidates():
@@ -93,6 +96,58 @@ def test_tece_inventory_cli_json(monkeypatch, capsys):
     assert '"candidate_count": 1' in out
     assert '"production_promotion_blocked": true' in out
     assert '"ready_for_benchmark": false' in out
+
+
+def test_tece_json_output_preserves_unicode_in_utf8_file(tmp_path):
+    out = tmp_path / "unicode_report.json"
+
+    write_json_output({"flow_text": "≥ 0.72 l/s"}, out)
+
+    assert out.read_bytes().decode("utf-8")
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["flow_text"] == "≥ 0.72 l/s"
+    assert "\\u2265" not in out.read_text(encoding="utf-8")
+
+
+def test_tece_inventory_json_out_writes_valid_utf8_file(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(report_mod.tece, "discover_candidates", lambda **_kwargs: (_sample_candidates(), []))
+    monkeypatch.setattr(report_mod.tece, "extract_parameters", _sample_params)
+    out = tmp_path / "inventory_report.json"
+
+    assert report_mod.main(["--json", "--out", str(out)]) == 0
+
+    assert capsys.readouterr().out == ""
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["candidate_count"] == 1
+    assert payload["production_promotion_blocked"] is True
+    assert payload["ready_for_benchmark"] is False
+    assert payload["ready_for_customer_view"] is False
+
+
+def test_tece_classification_json_out_writes_valid_utf8_file(tmp_path, capsys):
+    out = tmp_path / "classification_report.json"
+
+    assert classification_mod.main(["--source-pack", "tests/fixtures/tece/source_pack", "--json", "--out", str(out)]) == 0
+
+    assert capsys.readouterr().out == ""
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["source_pack_candidate_count"] >= 2
+    assert payload["production_promotion_blocked"] is True
+    assert payload["ready_for_benchmark"] is False
+    assert payload["ready_for_customer_view"] is False
+
+
+def test_tece_evidence_gap_json_out_writes_valid_utf8_file(tmp_path, capsys):
+    out = tmp_path / "evidence_gap_report.json"
+
+    assert gap_mod.main(["--source-pack", "tests/fixtures/tece/source_pack", "--json", "--out", str(out)]) == 0
+
+    assert capsys.readouterr().out == ""
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["overall_status"] == "OVERALL: TECE_EVIDENCE_GAP_SYNTHETIC_ONLY"
+    assert payload["production_promotion_blocked"] is True
+    assert payload["ready_for_benchmark"] is False
+    assert payload["ready_for_customer_view"] is False
 
 
 def test_http_202_seed_responses_are_classified_blocked_async(monkeypatch):
