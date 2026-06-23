@@ -388,3 +388,80 @@ def test_tece_pdf_page_range_excludes_unrelated_pages_and_reports_metadata(tmp_p
     assert row.production_promotion_blocked is True
     assert row.ready_for_benchmark is False
     assert row.ready_for_customer_view is False
+
+
+def test_source_pack_report_json_outputs_are_not_ingested(tmp_path):
+    (tmp_path / "tece_product.txt").write_text(
+        "Product name: TECEdrainline channel body Article number: 700100 Nominal length: 1200 mm",
+        encoding="utf-8",
+    )
+    for name in ("inventory_report.json", "classification_report.json", "evidence_gap_report.json"):
+        (tmp_path / name).write_text('{"article_number":"999999","product_family":"TECEdrainline"}', encoding="utf-8")
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "tece_product.txt",
+        "source_type": "txt",
+        "source_origin": "unknown",
+        "evidence_scope": "article_data",
+        "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+
+    report = report_mod.load_source_pack(tmp_path)
+
+    assert report.article_numbers == ["700100"]
+    assert all(row.article_number != "999999" for row in report.rows)
+    assert report.production_promotion_blocked is True
+    assert report.ready_for_benchmark is False
+    assert report.ready_for_customer_view is False
+
+
+def test_same_pdf_manifest_entries_extract_independent_page_ranges(tmp_path, monkeypatch):
+    pdf = tmp_path / "catalog.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n% synthetic placeholder")
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [
+        {
+            "source_file": "catalog.pdf",
+            "source_type": "pdf",
+            "source_origin": "manual_download",
+            "evidence_scope": "article_data",
+            "page_start": 1,
+            "page_end": 1,
+            "page_range_label": "TECEdrainline 271-294",
+            "product_family_hint": "TECEdrainline",
+            "approved_for_benchmark_evidence": False,
+        },
+        {
+            "source_file": "catalog.pdf",
+            "source_type": "pdf",
+            "source_origin": "manual_download",
+            "evidence_scope": "technical_datasheet",
+            "page_start": 2,
+            "page_end": 2,
+            "page_range_label": "TECEdrainprofile 257-270",
+            "product_family_hint": "TECEdrainprofile",
+            "approved_for_benchmark_evidence": False,
+        },
+    ]}), encoding="utf-8")
+
+    class Page:
+        def __init__(self, text):
+            self.text = text
+        def extract_text(self):
+            return self.text
+    class Reader:
+        def __init__(self, _path):
+            self.pages = [
+                Page("Product name: TECEdrainline channel body Article number: 700101 Nominal length: 1200 mm Flow rate: 0.8 l/s Outlet: DN50"),
+                Page("Product name: TECEdrainprofile datasheet Article number: 700202 Nominal length: 900 mm Flow rate: 0.7 l/s Outlet: DN50"),
+            ]
+    import pypdf
+    monkeypatch.setattr(pypdf, "PdfReader", Reader)
+
+    report = report_mod.load_source_pack(tmp_path)
+
+    assert report.article_numbers == ["700101", "700202"]
+    assert report.page_range_label_counts == {"TECEdrainline 271-294": 1, "TECEdrainprofile 257-270": 1}
+    assert {row.page_range_label for row in report.rows} == {"TECEdrainline 271-294", "TECEdrainprofile 257-270"}
+    assert {row.source_page_start for row in report.rows} == {1, 2}
+    assert all(row.source_file == "catalog.pdf" for row in report.rows)
+    assert all(row.production_promotion_blocked for row in report.rows)
+    assert report.production_promotion_blocked is True

@@ -245,6 +245,11 @@ def _diagnostics_from_debug(debug: list[dict[str, Any]], candidate_count: int, r
 
 SOURCE_PACK_EXTENSIONS = {".html", ".htm", ".txt", ".pdf", ".json", ".csv"}
 SOURCE_PACK_MANIFEST = "tece_source_pack_manifest.json"
+GENERATED_SOURCE_PACK_OUTPUTS = {
+    "inventory_report.json",
+    "classification_report.json",
+    "evidence_gap_report.json",
+}
 EVIDENCE_SCOPES = {"article_data", "technical_datasheet", "cover_grate_matrix", "assembly_matrix", "unknown"}
 SOURCE_PACK_TECHNICAL_FIELDS = (
     "nominal_length_mm",
@@ -465,23 +470,36 @@ def _read_source_pack_manifest(root: Path) -> dict[str, Any] | None:
     return {"manifest_file": SOURCE_PACK_MANIFEST, "sources": normalized_sources}
 
 
-def _manifest_sources_by_file(manifest: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+def _manifest_source_entries(manifest: dict[str, Any] | None) -> list[dict[str, Any]]:
     if not manifest:
-        return {}
-    return {str(item.get("source_file")): item for item in manifest.get("sources", []) if item.get("source_file")}
+        return []
+    return [item for item in manifest.get("sources", []) if isinstance(item, dict) and item.get("source_file")]
 
 
 def load_source_pack(path: str | Path) -> TeceSourcePackReport:
     root = Path(path)
     manifest = _read_source_pack_manifest(root)
-    files = sorted(p for p in (root.rglob("*") if root.is_dir() else [root]) if p.is_file() and p.name != SOURCE_PACK_MANIFEST and p.suffix.lower() in SOURCE_PACK_EXTENSIONS)
-    manifest_by_file = _manifest_sources_by_file(manifest)
     base = root if root.is_dir() else root.parent
-    rows = [row for file in files if (row := _extract_source_pack_row(file, base, manifest_by_file.get(str(file.relative_to(base))))) is not None]
+    if root.is_dir():
+        all_files = sorted(p for p in root.rglob("*") if p.is_file() and p.name != SOURCE_PACK_MANIFEST and p.name not in GENERATED_SOURCE_PACK_OUTPUTS)
+        source_entries = _manifest_source_entries(manifest)
+        files = [base / str(source.get("source_file")) for source in source_entries]
+        rows = [
+            row
+            for source in source_entries
+            if (base / str(source.get("source_file"))).is_file()
+            and (base / str(source.get("source_file"))).suffix.lower() in SOURCE_PACK_EXTENSIONS
+            and (row := _extract_source_pack_row(base / str(source.get("source_file")), base, source)) is not None
+        ]
+    else:
+        all_files = [root] if root.is_file() else []
+        source_entries = []
+        files = all_files
+        rows = [row for file in files if file.suffix.lower() in SOURCE_PACK_EXTENSIONS and (row := _extract_source_pack_row(file, base, None)) is not None]
     coverage = {field: sum(1 for row in rows if _clean(getattr(row, field)) != "") for field in SOURCE_PACK_TECHNICAL_FIELDS}
     missing_counts = {field: sum(1 for row in rows if field in row.missing_fields) for field in SOURCE_PACK_TECHNICAL_FIELDS}
     scope_counts = {scope: 0 for scope in sorted(EVIDENCE_SCOPES)}
-    for source in manifest_by_file.values():
+    for source in source_entries:
         scope = source.get("evidence_scope") or "unknown"
         scope_counts[scope] = scope_counts.get(scope, 0) + 1
     cover_matrix = scope_counts.get("cover_grate_matrix", 0) > 0
@@ -489,8 +507,8 @@ def load_source_pack(path: str | Path) -> TeceSourcePackReport:
     has_compat = any(row.article_level_compatibility_evidence_exists for row in rows)
     status = "explicit_article_level_compatibility_evidence_found" if has_compat else "missing_article_level_compatibility_matrix"
     page_range_counts: dict[str, int] = {}
-    for source in manifest_by_file.values():
-        label = _clean(source.get("page_range_label"))
+    for row in rows:
+        label = _clean(row.page_range_label)
         if label:
             page_range_counts[label] = page_range_counts.get(label, 0) + 1
     classification_summary = {
@@ -502,7 +520,7 @@ def load_source_pack(path: str | Path) -> TeceSourcePackReport:
     }
     return TeceSourcePackReport(
         source_pack_path=str(root),
-        source_pack_file_count=len(files),
+        source_pack_file_count=len(all_files),
         source_pack_candidate_count=len(rows),
         article_numbers=sorted({row.article_number for row in rows}),
         technical_field_coverage=coverage,

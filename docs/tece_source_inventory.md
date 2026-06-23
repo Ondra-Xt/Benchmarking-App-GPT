@@ -22,7 +22,7 @@ python tools/report_tece_source_inventory.py --source-pack tests/fixtures/tece/s
 python tools/report_tece_source_inventory.py --source-pack tests/fixtures/tece/source_pack --json
 ```
 
-When a source pack is supplied, the report includes both the live acquisition status and a local read-only ingestion status. Supported local fixture/source file types are HTML, TXT, PDF when local PDF text extraction dependencies are available, JSON, and CSV. The loader extracts diagnostic inventory fields only, including article numbers, product family/name, technical fields, evidence text, missing fields, confidence, compatibility evidence status, and the same production-blocking flags.
+When a source pack is supplied, the report includes both the live acquisition status and a local read-only ingestion status. Supported local fixture/source file types are HTML, TXT, PDF when local PDF text extraction dependencies are available, JSON, and CSV. The loader extracts manifest-listed source entries only; generated report files named `inventory_report.json`, `classification_report.json`, or `evidence_gap_report.json` may sit in the pack without being ingested as source rows. The loader extracts diagnostic inventory fields only, including article numbers, product family/name, technical fields, evidence text, missing fields, confidence, compatibility evidence status, source filename, page-range metadata, and the same production-blocking flags.
 
 If the source pack contains article candidates and technical fields but no explicit article-level compatibility matrix, the overall status is still incomplete:
 
@@ -31,7 +31,7 @@ If the source pack contains article candidates and technical fields but no expli
 - `ready_for_benchmark=False`
 - `ready_for_customer_view=False`
 
-The test source pack under `tests/fixtures/tece/source_pack/` is synthetic fixture data only. It is not approved benchmark evidence and must not be used as production TECE evidence.
+The test source pack under `tests/fixtures/tece/source_pack/` is synthetic fixture data only. It is not approved benchmark evidence and must not be used as production TECE evidence. Repeated manifest entries for the same catalogue PDF are supported when each entry declares its own `page_start`, `page_end`, and `page_range_label`; reports count the labels that produce rows and preserve that metadata on each row.
 
 ## Evidence still needed
 
