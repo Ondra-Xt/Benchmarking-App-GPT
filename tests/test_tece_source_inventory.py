@@ -344,3 +344,47 @@ def test_tece_evidence_gap_reports_missing_technical_fields(tmp_path):
     assert report.overall_status == "OVERALL: TECE_EVIDENCE_GAP_TECHNICAL_DATA_INCOMPLETE"
     assert report.missing_field_counts["flow_rate_lps"] >= 1
     assert report.gap_summary["missing_complete_technical_datasheets"] is True
+
+
+def test_tece_pdf_page_range_excludes_unrelated_pages_and_reports_metadata(tmp_path, monkeypatch):
+    pdf = tmp_path / "catalog.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n% synthetic placeholder")
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "catalog.pdf",
+        "source_type": "pdf",
+        "source_origin": "manual_download",
+        "evidence_scope": "article_data",
+        "page_start": 2,
+        "page_end": 2,
+        "page_range_label": "TECEdrainline drainage section",
+        "approved_for_benchmark_evidence": False,
+        "notes": "Synthetic test fixture."
+    }]}), encoding="utf-8")
+
+    class Page:
+        def __init__(self, text):
+            self.text = text
+        def extract_text(self):
+            return self.text
+    class Reader:
+        def __init__(self, _path):
+            self.pages = [
+                Page("Unrelated WC module Article number: 999999 Product family: TECEprofil"),
+                Page("Product name: TECEdrainline channel body Article number: 600100 Nominal length: 1200 mm Flow rate: 0.8 l/s Outlet: DN50 Height adjustment: 95-150 mm Water seal: 50 mm Installation height: 95 mm"),
+                Page("Unrelated module Article number: 888888"),
+            ]
+    import pypdf
+    monkeypatch.setattr(pypdf, "PdfReader", Reader)
+
+    report = report_mod.load_source_pack(tmp_path)
+
+    assert report.article_numbers == ["600100"]
+    assert "999999" not in report.article_numbers
+    assert report.page_range_label_counts == {"TECEdrainline drainage section": 1}
+    row = report.rows[0]
+    assert row.source_page_start == 2
+    assert row.source_page_end == 2
+    assert row.page_range_label == "TECEdrainline drainage section"
+    assert row.production_promotion_blocked is True
+    assert row.ready_for_benchmark is False
+    assert row.ready_for_customer_view is False

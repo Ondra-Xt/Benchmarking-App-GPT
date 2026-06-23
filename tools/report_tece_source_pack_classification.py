@@ -27,6 +27,7 @@ def main(argv: list[str] | None = None) -> int:
         "ready_for_benchmark": report.ready_for_benchmark,
         "ready_for_customer_view": report.ready_for_customer_view,
         "source_pack_classification_summary": report.source_pack_classification_summary,
+        "page_range_label_counts": report.page_range_label_counts,
         "rows": [asdict(row) for row in report.rows],
     }
     if args.json:
@@ -37,6 +38,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"production_promotion_blocked: {report.production_promotion_blocked}")
         print(f"ready_for_benchmark: {report.ready_for_benchmark}")
         print(f"ready_for_customer_view: {report.ready_for_customer_view}")
+        print(f"page_range_label_counts: {json.dumps(report.page_range_label_counts or {}, sort_keys=True)}")
         print("source_pack_classification_summary:")
         print(json.dumps(report.source_pack_classification_summary or {}, indent=2, sort_keys=True))
         for row in report.rows:

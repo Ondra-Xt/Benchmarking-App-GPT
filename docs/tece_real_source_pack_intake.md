@@ -144,3 +144,44 @@ The report always lists the next actions in this priority order:
 5. Add technical datasheets for each production article or complete set.
 6. Preserve all conditional technical values with their conditions.
 7. Run validator, inventory report, classification report, and gap report again.
+
+## Large catalogue PDFs and page-range manifests
+
+Large TECE catalogue PDFs may contain unrelated WC/module articles alongside drainage sections. To keep source-pack ingestion diagnostic and focused, PDF manifest entries may include optional page-range metadata:
+
+- `page_start` — first catalogue page to extract, as an integer.
+- `page_end` — last catalogue page to extract, as an integer.
+- `page_range_label` — human-readable label used in reports and JSON counts.
+
+Page ranges are supported only for PDF sources. If either `page_start` or `page_end` is present, both must be present and `page_start` must be less than or equal to `page_end`. During ingestion, only the selected PDF pages are extracted, and each extracted diagnostic row records `source_page_start`, `source_page_end`, and `page_range_label`. This does not change production gating: TECE remains diagnostic-only, production promotion remains blocked, and compatibility must not be inferred.
+
+Example:
+
+```json
+{
+  "source_file": "Sortimentsliste_TECE_DE_2026_web.pdf",
+  "source_type": "pdf",
+  "source_origin": "manual_download",
+  "source_url": "https://www.tece.com/.../Sortimentsliste_TECE_DE_2026_web.pdf",
+  "source_date": "2026-06-23",
+  "document_title": "TECE Sortimentsliste 2026 Deutschland",
+  "product_family_hint": "TECEdrainline",
+  "evidence_scope": "article_data",
+  "page_start": 271,
+  "page_end": 294,
+  "page_range_label": "TECEdrainline drainage section",
+  "approved_for_benchmark_evidence": false,
+  "notes": "Real TECE catalogue source candidate; diagnostic-only."
+}
+```
+
+Recommended drainage ranges for `Sortimentsliste_TECE_DE_2026_web.pdf` intake are:
+
+| Product family | Catalogue pages | Suggested `page_range_label` |
+| --- | ---: | --- |
+| TECEdrainway | 245-256 | `TECEdrainway drainage section` |
+| TECEdrainprofile | 257-270 | `TECEdrainprofile drainage section` |
+| TECEdrainline | 271-294 | `TECEdrainline drainage section` |
+| TECEdrainpoint S | 295-326 | `TECEdrainpoint S drainage section` |
+
+The validator and reports include `page_range_label_counts` when labels are present and keep existing behavior for source packs without page-range metadata.
