@@ -33,6 +33,7 @@ class TeceEvidenceGapReport:
     family_counts: dict[str, int]
     role_counts: dict[str, int]
     evidence_scope_counts: dict[str, int]
+    page_range_label_counts: dict[str, int]
     technical_field_coverage: dict[str, int]
     missing_field_counts: dict[str, int]
     cover_grate_matrix_evidence_exists: bool
@@ -118,6 +119,7 @@ def build_evidence_gap_report(source_pack: str | Path) -> TeceEvidenceGapReport:
         family_counts=family_counts,
         role_counts=role_counts,
         evidence_scope_counts=report.evidence_scope_counts or {},
+        page_range_label_counts=report.page_range_label_counts or {},
         technical_field_coverage=report.technical_field_coverage,
         missing_field_counts=report.missing_field_counts,
         cover_grate_matrix_evidence_exists=real_cover_matrix,

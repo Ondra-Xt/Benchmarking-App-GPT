@@ -97,3 +97,61 @@ def test_production_promotion_markers_fail(tmp_path):
 def test_cli_returns_success_for_fixture(capsys):
     assert main(["--source-pack", str(FIXTURE)]) == 0
     assert "PASS" in capsys.readouterr().out
+
+
+def test_pdf_page_range_is_accepted_and_counted(tmp_path):
+    root = tmp_path
+    (root / "catalog.pdf").write_bytes(b"%PDF-1.4\n% synthetic placeholder")
+    _write_manifest(root, [{
+        "source_file": "catalog.pdf",
+        "source_type": "pdf",
+        "source_origin": "manual_download",
+        "evidence_scope": "article_data",
+        "page_start": 2,
+        "page_end": 4,
+        "page_range_label": "TECEdrainline drainage section",
+        "approved_for_benchmark_evidence": False,
+    }])
+
+    result = validate_source_pack(root)
+
+    assert result.valid is True
+    assert result.page_range_label_counts == {"TECEdrainline drainage section": 1}
+
+
+def test_invalid_page_range_fails(tmp_path):
+    root = tmp_path
+    (root / "catalog.pdf").write_bytes(b"%PDF-1.4\n% synthetic placeholder")
+    _write_manifest(root, [{
+        "source_file": "catalog.pdf",
+        "source_type": "pdf",
+        "source_origin": "manual_download",
+        "evidence_scope": "article_data",
+        "page_start": 10,
+        "page_end": 4,
+        "approved_for_benchmark_evidence": False,
+    }])
+
+    result = validate_source_pack(root)
+
+    assert result.valid is False
+    assert any("page_start must be <= page_end" in error for error in result.errors)
+
+
+def test_page_range_for_non_pdf_fails_clearly(tmp_path):
+    root = tmp_path
+    (root / "notes.txt").write_text("Article number: 600100", encoding="utf-8")
+    _write_manifest(root, [{
+        "source_file": "notes.txt",
+        "source_type": "txt",
+        "source_origin": "unknown",
+        "evidence_scope": "article_data",
+        "page_start": 1,
+        "page_end": 2,
+        "approved_for_benchmark_evidence": False,
+    }])
+
+    result = validate_source_pack(root)
+
+    assert result.valid is False
+    assert any("page ranges are only supported for PDF sources" in error for error in result.errors)

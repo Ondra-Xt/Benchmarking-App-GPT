@@ -31,6 +31,7 @@ class ValidationResult:
     cover_grate_matrix_evidence_exists: bool
     assembly_matrix_evidence_exists: bool
     production_promotion_blocked: bool = True
+    page_range_label_counts: dict[str, int] | None = None
 
 
 def _load_manifest(path: Path) -> tuple[list[dict[str, Any]], list[str]]:
@@ -62,6 +63,7 @@ def validate_source_pack(source_pack: str | Path) -> ValidationResult:
 
     listed: set[str] = set()
     scope_counts = {scope: 0 for scope in sorted(EVIDENCE_SCOPES)}
+    page_range_label_counts: dict[str, int] = {}
     for idx, item in enumerate(sources):
         prefix = f"sources[{idx}]"
         if not isinstance(item, dict):
@@ -100,6 +102,28 @@ def validate_source_pack(source_pack: str | Path) -> ValidationResult:
         lower_file = source_file.lower()
         if any(name.lower() in lower_file for name in PRODUCTION_NAMES):
             errors.append(f"{prefix} appears to target production export: {source_file}")
+        has_page_start = "page_start" in item
+        has_page_end = "page_end" in item
+        page_start = item.get("page_start")
+        page_end = item.get("page_end")
+        if has_page_start or has_page_end:
+            if not (has_page_start and has_page_end):
+                errors.append(f"{prefix} page range requires both page_start and page_end")
+            if has_page_start and not isinstance(page_start, int):
+                errors.append(f"{prefix} page_start must be an integer when provided")
+            if has_page_end and not isinstance(page_end, int):
+                errors.append(f"{prefix} page_end must be an integer when provided")
+            if isinstance(page_start, int) and isinstance(page_end, int) and page_start > page_end:
+                errors.append(f"{prefix} page_start must be <= page_end")
+            declared_type = str(source_type or "").lower()
+            if not (declared_type == "pdf" and lower_file.endswith(".pdf")):
+                errors.append(f"{prefix} page ranges are only supported for PDF sources: {source_file}")
+        label = item.get("page_range_label")
+        if label is not None:
+            if not isinstance(label, str) or not label.strip():
+                errors.append(f"{prefix} page_range_label must be a non-empty string when provided")
+            else:
+                page_range_label_counts[label.strip()] = page_range_label_counts.get(label.strip(), 0) + 1
     if sources and not (scope_counts.get("cover_grate_matrix", 0) or scope_counts.get("assembly_matrix", 0)):
         warnings.append("no compatibility matrix evidence identified; TECE promotion remains blocked")
 
@@ -119,6 +143,7 @@ def validate_source_pack(source_pack: str | Path) -> ValidationResult:
         unknown_files=unknown_files, evidence_scope_counts=scope_counts,
         cover_grate_matrix_evidence_exists=scope_counts.get("cover_grate_matrix", 0) > 0,
         assembly_matrix_evidence_exists=scope_counts.get("assembly_matrix", 0) > 0,
+        page_range_label_counts=dict(sorted(page_range_label_counts.items())),
     )
 
 
@@ -136,6 +161,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ERROR: {error}")
         for warning in result.warnings:
             print(f"WARNING: {warning}")
+        print(f"page_range_label_counts: {json.dumps(result.page_range_label_counts or {}, sort_keys=True)}")
         print(f"production_promotion_blocked: {result.production_promotion_blocked}")
     return 0 if result.valid else 1
 

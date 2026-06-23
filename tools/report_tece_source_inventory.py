@@ -57,6 +57,9 @@ class TeceSourcePackRow:
     classification_confidence: str
     classification_reason: str
     production_blocking_reason: str
+    source_page_start: Any = ""
+    source_page_end: Any = ""
+    page_range_label: str = ""
 
 
 @dataclass(frozen=True)
@@ -79,6 +82,7 @@ class TeceSourcePackReport:
     cover_grate_matrix_evidence_exists: bool = False
     assembly_matrix_evidence_exists: bool = False
     source_pack_classification_summary: dict[str, dict[str, int]] | None = None
+    page_range_label_counts: dict[str, int] | None = None
 
 @dataclass(frozen=True)
 class TeceInventoryRow:
@@ -328,7 +332,7 @@ def _strip_markup(text: str) -> str:
     return html.unescape(re.sub(r"\s+", " ", text)).strip()
 
 
-def _read_source_pack_file(path: Path) -> str:
+def _read_source_pack_file(path: Path, manifest_source: dict[str, Any] | None = None) -> str:
     suffix = path.suffix.lower()
     if suffix == ".pdf":
         try:
@@ -339,7 +343,14 @@ def _read_source_pack_file(path: Path) -> str:
             except ImportError:
                 return ""
         reader = PdfReader(str(path))
-        return "\n".join(page.extract_text() or "" for page in reader.pages)
+        pages = list(reader.pages)
+        manifest_source = manifest_source or {}
+        start = manifest_source.get("page_start")
+        end = manifest_source.get("page_end")
+        if isinstance(start, int) and isinstance(end, int):
+            # Manifest page numbers are catalogue/user-facing 1-based pages.
+            pages = pages[max(start - 1, 0):min(end, len(pages))]
+        return "\n".join(page.extract_text() or "" for page in pages)
     return path.read_text(encoding="utf-8", errors="replace")
 
 
@@ -379,7 +390,8 @@ def _extract_source_url(raw_text: str, text: str) -> str:
 
 
 def _extract_source_pack_row(path: Path, root: Path, manifest_source: dict[str, Any] | None = None) -> TeceSourcePackRow | None:
-    raw = _read_source_pack_file(path)
+    manifest_source = manifest_source or {}
+    raw = _read_source_pack_file(path, manifest_source)
     text = _strip_markup(raw) if path.suffix.lower() in {".html", ".htm"} else re.sub(r"\s+", " ", raw).strip()
     if not text:
         return None
@@ -431,6 +443,9 @@ def _extract_source_pack_row(path: Path, root: Path, manifest_source: dict[str, 
         ready_for_customer_view=False,
         recommended_next_action="Collect official TECE cover/grate article-level compatibility matrix before any production promotion." if not compat else "Manually audit compatibility evidence; production promotion remains blocked in this branch.",
         **classification,
+        source_page_start=manifest_source.get("page_start", ""),
+        source_page_end=manifest_source.get("page_end", ""),
+        page_range_label=_clean(manifest_source.get("page_range_label")),
     )
 
 
@@ -473,11 +488,17 @@ def load_source_pack(path: str | Path) -> TeceSourcePackReport:
     assembly_matrix = scope_counts.get("assembly_matrix", 0) > 0
     has_compat = any(row.article_level_compatibility_evidence_exists for row in rows)
     status = "explicit_article_level_compatibility_evidence_found" if has_compat else "missing_article_level_compatibility_matrix"
+    page_range_counts: dict[str, int] = {}
+    for source in manifest_by_file.values():
+        label = _clean(source.get("page_range_label"))
+        if label:
+            page_range_counts[label] = page_range_counts.get(label, 0) + 1
     classification_summary = {
         "role_counts": _count_values(rows, "tece_article_role_candidate"),
         "family_counts": _count_values(rows, "tece_family_candidate"),
         "classification_confidence_counts": _count_values(rows, "classification_confidence"),
         "production_blocking_reason_counts": _count_values(rows, "production_blocking_reason"),
+        "page_range_label_counts": dict(sorted(page_range_counts.items())),
     }
     return TeceSourcePackReport(
         source_pack_path=str(root),
@@ -498,6 +519,7 @@ def load_source_pack(path: str | Path) -> TeceSourcePackReport:
         cover_grate_matrix_evidence_exists=cover_matrix,
         assembly_matrix_evidence_exists=assembly_matrix,
         source_pack_classification_summary=classification_summary,
+        page_range_label_counts=dict(sorted(page_range_counts.items())),
     )
 
 def build_report(target_length_mm: int = 1200, tolerance_mm: int = 100, *, max_candidates: int | None = None, source_pack: str | Path | None = None) -> TeceInventoryReport:
@@ -607,6 +629,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"source_pack_missing_field_counts: {json.dumps(report.source_pack.missing_field_counts, sort_keys=True)}")
             print(f"source_pack_compatibility_evidence_status: {report.source_pack.compatibility_evidence_status}")
             print(f"source_pack_evidence_scope_counts: {json.dumps(report.source_pack.evidence_scope_counts or {}, sort_keys=True)}")
+            print(f"source_pack_page_range_label_counts: {json.dumps(report.source_pack.page_range_label_counts or {}, sort_keys=True)}")
             print(f"source_pack_cover_grate_matrix_evidence_exists: {report.source_pack.cover_grate_matrix_evidence_exists}")
             print("source_pack_classification_summary:")
             print(json.dumps(report.source_pack.source_pack_classification_summary or {}, indent=2, sort_keys=True))
