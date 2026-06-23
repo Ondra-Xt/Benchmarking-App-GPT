@@ -52,6 +52,11 @@ class TeceSourcePackRow:
     ready_for_benchmark: bool
     ready_for_customer_view: bool
     recommended_next_action: str
+    tece_article_role_candidate: str
+    tece_family_candidate: str
+    classification_confidence: str
+    classification_reason: str
+    production_blocking_reason: str
 
 
 @dataclass(frozen=True)
@@ -73,6 +78,7 @@ class TeceSourcePackReport:
     evidence_scope_counts: dict[str, int] | None = None
     cover_grate_matrix_evidence_exists: bool = False
     assembly_matrix_evidence_exists: bool = False
+    source_pack_classification_summary: dict[str, dict[str, int]] | None = None
 
 @dataclass(frozen=True)
 class TeceInventoryRow:
@@ -247,6 +253,75 @@ SOURCE_PACK_TECHNICAL_FIELDS = (
 )
 
 
+
+def _count_values(rows: list[Any], attr: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        for value in str(getattr(row, attr, "") or "unknown").split(","):
+            key = value.strip() or "unknown"
+            counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def classify_source_pack_row(text: str, manifest_source: dict[str, Any] | None = None, missing_fields: list[str] | None = None) -> dict[str, str]:
+    """Conservative, diagnostic-only TECE source-pack row classification."""
+    manifest_source = manifest_source or {}
+    missing_fields = missing_fields or []
+    haystack = " ".join(_clean(v) for v in (
+        text,
+        manifest_source.get("document_title"),
+        manifest_source.get("product_family_hint"),
+        manifest_source.get("evidence_scope"),
+        manifest_source.get("notes"),
+        manifest_source.get("source_file"),
+    )).lower()
+    scope = _clean(manifest_source.get("evidence_scope")) or "unknown"
+
+    family = "unknown"
+    for candidate in ("TECEdrainline", "TECEdrainprofile", "TECEdrainpoint"):
+        if candidate.lower() in haystack:
+            family = candidate
+            break
+
+    role = "unknown"
+    reason = "no_conservative_role_keyword"
+    if scope == "cover_grate_matrix":
+        role, reason = "compatibility_matrix", "evidence_scope=cover_grate_matrix"
+    elif scope == "assembly_matrix":
+        role, reason = "assembly_matrix", "evidence_scope=assembly_matrix"
+    elif re.search(r"\bchannel\s+body\b", haystack):
+        role, reason = "channel_body", "keyword=channel_body"
+    elif re.search(r"\b(cover|grate|abdeckung|rost)\b", haystack):
+        role, reason = "cover_or_grate", "keyword=cover_or_grate"
+    elif re.search(r"\b(complete\s+set|set|komplettset|komplett-set)\b", haystack):
+        role, reason = "complete_set", "keyword=complete_set_candidate"
+    elif scope == "technical_datasheet":
+        role, reason = "technical_datasheet_only", "evidence_scope=technical_datasheet"
+    elif re.search(r"\bdrain\s+body\b", haystack):
+        role, reason = "drain_body", "keyword=drain_body"
+
+    confidence = "low"
+    if role != "unknown" and family != "unknown":
+        confidence = "high"
+    elif role != "unknown" or family != "unknown":
+        confidence = "medium"
+
+    blocking = ["missing_article_level_compatibility_matrix"]
+    if role in {"cover_or_grate", "channel_body", "drain_body"}:
+        blocking.append("missing_counterpart_article")
+    if missing_fields:
+        blocking.append("missing_technical_fields")
+    synthetic_markers = ("test fixture", "synthetic", "example.invalid")
+    if any(marker in haystack for marker in synthetic_markers):
+        blocking.append("synthetic_test_fixture_only")
+    return {
+        "tece_article_role_candidate": role,
+        "tece_family_candidate": family,
+        "classification_confidence": confidence,
+        "classification_reason": reason,
+        "production_blocking_reason": ", ".join(dict.fromkeys(blocking)),
+    }
+
 def _strip_markup(text: str) -> str:
     text = re.sub(r"(?is)<script.*?</script>|<style.*?</style>", " ", text)
     text = re.sub(r"(?is)<[^>]+>", " ", text)
@@ -303,7 +378,7 @@ def _extract_source_url(raw_text: str, text: str) -> str:
     return _first_match([r"\b(https?://[^\s)<>\"']+)"], text, flags=0)
 
 
-def _extract_source_pack_row(path: Path, root: Path) -> TeceSourcePackRow | None:
+def _extract_source_pack_row(path: Path, root: Path, manifest_source: dict[str, Any] | None = None) -> TeceSourcePackRow | None:
     raw = _read_source_pack_file(path)
     text = _strip_markup(raw) if path.suffix.lower() in {".html", ".htm"} else re.sub(r"\s+", " ", raw).strip()
     if not text:
@@ -327,8 +402,11 @@ def _extract_source_pack_row(path: Path, root: Path) -> TeceSourcePackRow | None
     }
     missing = [field for field in SOURCE_PACK_TECHNICAL_FIELDS if _clean(fields[field]) == ""]
     compat = bool(re.search(r"(?i)(compatibility\s+matrix|compatible\s+with\s+cover|cover\s*/\s*grate\s+compatibility)", text))
+    if re.search(r"(?i)(test fixture|synthetic|example\.invalid)", text):
+        compat = False
     evidence = text[:500]
     confidence = round((1 + sum(1 for v in fields.values() if _clean(v)) + (1 if product_name else 0)) / (len(SOURCE_PACK_TECHNICAL_FIELDS) + 2), 2)
+    classification = classify_source_pack_row(text, manifest_source, missing)
     return TeceSourcePackRow(
         source_file=str(path.relative_to(root)),
         source_type=path.suffix.lower().lstrip(".") or "unknown",
@@ -352,6 +430,7 @@ def _extract_source_pack_row(path: Path, root: Path) -> TeceSourcePackRow | None
         ready_for_benchmark=False,
         ready_for_customer_view=False,
         recommended_next_action="Collect official TECE cover/grate article-level compatibility matrix before any production promotion." if not compat else "Manually audit compatibility evidence; production promotion remains blocked in this branch.",
+        **classification,
     )
 
 
@@ -381,18 +460,25 @@ def load_source_pack(path: str | Path) -> TeceSourcePackReport:
     root = Path(path)
     manifest = _read_source_pack_manifest(root)
     files = sorted(p for p in (root.rglob("*") if root.is_dir() else [root]) if p.is_file() and p.name != SOURCE_PACK_MANIFEST and p.suffix.lower() in SOURCE_PACK_EXTENSIONS)
-    rows = [row for file in files if (row := _extract_source_pack_row(file, root if root.is_dir() else root.parent)) is not None]
+    manifest_by_file = _manifest_sources_by_file(manifest)
+    base = root if root.is_dir() else root.parent
+    rows = [row for file in files if (row := _extract_source_pack_row(file, base, manifest_by_file.get(str(file.relative_to(base))))) is not None]
     coverage = {field: sum(1 for row in rows if _clean(getattr(row, field)) != "") for field in SOURCE_PACK_TECHNICAL_FIELDS}
     missing_counts = {field: sum(1 for row in rows if field in row.missing_fields) for field in SOURCE_PACK_TECHNICAL_FIELDS}
-    manifest_by_file = _manifest_sources_by_file(manifest)
     scope_counts = {scope: 0 for scope in sorted(EVIDENCE_SCOPES)}
     for source in manifest_by_file.values():
         scope = source.get("evidence_scope") or "unknown"
         scope_counts[scope] = scope_counts.get(scope, 0) + 1
     cover_matrix = scope_counts.get("cover_grate_matrix", 0) > 0
     assembly_matrix = scope_counts.get("assembly_matrix", 0) > 0
-    has_compat = cover_matrix or assembly_matrix or any(row.article_level_compatibility_evidence_exists for row in rows)
+    has_compat = any(row.article_level_compatibility_evidence_exists for row in rows)
     status = "explicit_article_level_compatibility_evidence_found" if has_compat else "missing_article_level_compatibility_matrix"
+    classification_summary = {
+        "role_counts": _count_values(rows, "tece_article_role_candidate"),
+        "family_counts": _count_values(rows, "tece_family_candidate"),
+        "classification_confidence_counts": _count_values(rows, "classification_confidence"),
+        "production_blocking_reason_counts": _count_values(rows, "production_blocking_reason"),
+    }
     return TeceSourcePackReport(
         source_pack_path=str(root),
         source_pack_file_count=len(files),
@@ -411,6 +497,7 @@ def load_source_pack(path: str | Path) -> TeceSourcePackReport:
         evidence_scope_counts=scope_counts,
         cover_grate_matrix_evidence_exists=cover_matrix,
         assembly_matrix_evidence_exists=assembly_matrix,
+        source_pack_classification_summary=classification_summary,
     )
 
 def build_report(target_length_mm: int = 1200, tolerance_mm: int = 100, *, max_candidates: int | None = None, source_pack: str | Path | None = None) -> TeceInventoryReport:
@@ -521,6 +608,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"source_pack_compatibility_evidence_status: {report.source_pack.compatibility_evidence_status}")
             print(f"source_pack_evidence_scope_counts: {json.dumps(report.source_pack.evidence_scope_counts or {}, sort_keys=True)}")
             print(f"source_pack_cover_grate_matrix_evidence_exists: {report.source_pack.cover_grate_matrix_evidence_exists}")
+            print("source_pack_classification_summary:")
+            print(json.dumps(report.source_pack.source_pack_classification_summary or {}, indent=2, sort_keys=True))
             print(f"source_pack_assembly_matrix_evidence_exists: {report.source_pack.assembly_matrix_evidence_exists}")
         print(f"technical_field_coverage: {json.dumps(report.technical_field_coverage, sort_keys=True)}")
         print(f"evidence_source_counts: {json.dumps(report.evidence_source_counts, sort_keys=True)}")

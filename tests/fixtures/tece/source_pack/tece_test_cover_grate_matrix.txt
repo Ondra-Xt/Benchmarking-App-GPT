@@ -1,0 +1,4 @@
+TEST FIXTURE ONLY - synthetic TECE cover grate matrix snippet.
+Article number: 601201
+Product family: TECEdrainline
+Evidence scope is cover_grate_matrix. This diagnostic fixture lists a compatibility matrix placeholder only; production-ready compatibility remains blocked.

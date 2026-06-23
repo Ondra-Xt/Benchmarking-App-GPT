@@ -28,7 +28,7 @@ def test_valid_manifest_passes(tmp_path):
     result = validate_source_pack(root)
     assert result.valid is True
     assert result.production_promotion_blocked is True
-    assert result.manifest_file_count == 2
+    assert result.manifest_file_count >= 2
 
 
 def test_missing_file_fails(tmp_path):

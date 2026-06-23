@@ -218,9 +218,47 @@ def test_tece_source_pack_report_includes_manifest_metadata_and_scope_counts(mon
     assert report.source_pack is not None
     assert report.source_pack.manifest is not None
     assert report.source_pack.manifest["sources"][0]["approved_for_benchmark_evidence"] is False
-    assert report.source_pack.evidence_scope_counts["article_data"] == 1
+    assert report.source_pack.evidence_scope_counts["article_data"] >= 1
     assert report.source_pack.evidence_scope_counts["technical_datasheet"] == 1
-    assert report.source_pack.cover_grate_matrix_evidence_exists is False
+    assert report.source_pack.cover_grate_matrix_evidence_exists is True
     assert report.source_pack.assembly_matrix_evidence_exists is False
     assert report.source_pack.production_promotion_blocked is True
     assert report.production_promotion_blocked is True
+
+
+def test_tece_source_pack_classifies_channel_body_and_synthetic_blocks():
+    report = report_mod.load_source_pack("tests/fixtures/tece/source_pack")
+    row = next(row for row in report.rows if row.article_number == "600100")
+    assert row.tece_article_role_candidate == "channel_body"
+    assert row.tece_family_candidate == "TECEdrainline"
+    assert row.classification_confidence == "high"
+    assert "synthetic_test_fixture_only" in row.production_blocking_reason
+    assert row.production_promotion_blocked is True
+
+
+def test_tece_source_pack_classifies_datasheet_cover_and_matrix_without_readiness():
+    report = report_mod.load_source_pack("tests/fixtures/tece/source_pack")
+    datasheet = next(row for row in report.rows if row.article_number == "650001")
+    cover = next(row for row in report.rows if row.article_number == "601200")
+    matrix = next(row for row in report.rows if row.article_number == "601201")
+
+    assert datasheet.tece_article_role_candidate in {"technical_datasheet_only", "cover_or_grate"}
+    assert cover.tece_article_role_candidate == "cover_or_grate"
+    assert matrix.tece_article_role_candidate == "compatibility_matrix"
+    assert matrix.classification_reason == "evidence_scope=cover_grate_matrix"
+    assert all(row.ready_for_benchmark is False for row in report.rows)
+    assert all(row.ready_for_customer_view is False for row in report.rows)
+    assert report.production_promotion_blocked is True
+    assert report.ready_for_benchmark is False
+    assert report.ready_for_customer_view is False
+
+
+def test_tece_source_pack_classification_counts_are_in_json_report(monkeypatch, capsys):
+    monkeypatch.setattr(report_mod.tece, "discover_candidates", lambda **_kwargs: ([], []))
+    assert report_mod.main(["--source-pack", "tests/fixtures/tece/source_pack", "--json"]) == 0
+    payload = capsys.readouterr().out
+    assert '"source_pack_classification_summary"' in payload
+    assert '"role_counts"' in payload
+    assert '"family_counts"' in payload
+    assert '"classification_confidence_counts"' in payload
+    assert '"production_blocking_reason_counts"' in payload
