@@ -8,6 +8,7 @@ TECE source-pack intake is a **diagnostic-only** workflow for organizing real TE
 2. Add one evidence file per source document or export. Supported extensions are: `.html`, `.htm`, `.txt`, `.pdf`, `.json`, and `.csv`.
 3. Add `tece_source_pack_manifest.json` in the folder.
 4. Do not include generated canonical production exports (`Products`, `Comparison`, `BOM_Options`, `Final_Assemblies`, or `Final_Set_Details`) as TECE source-pack inputs.
+5. The diagnostic report outputs `inventory_report.json`, `classification_report.json`, and `evidence_gap_report.json` may be saved in the source-pack folder for convenience; the validator and ingestion loader treat exactly those filenames as generated outputs, not source inputs. Arbitrary unknown files still fail validation.
 
 The checked-in folder `tests/fixtures/tece/source_pack/` is synthetic test-only data. It is not approved benchmark evidence.
 
@@ -92,7 +93,7 @@ Generate a diagnostic inventory report:
 python tools/report_tece_source_inventory.py --source-pack <path> --json
 ```
 
-The validator fails when the manifest is missing, a listed file is missing, an unknown file is present, an unsupported extension is used, required classification is missing, or a source attempts to mark TECE data as production-ready.
+The validator fails when the manifest is missing, a listed file is missing, an unknown non-generated-output file is present, an unsupported extension is used, required classification is missing, or a source attempts to mark TECE data as production-ready. The only ignored generated output filenames are `inventory_report.json`, `classification_report.json`, and `evidence_gap_report.json`; use a separate `reports/` folder for any other ad-hoc outputs unless they are listed as source evidence in the manifest.
 
 ## Requirements before any future production promotion
 
@@ -153,7 +154,7 @@ Large TECE catalogue PDFs may contain unrelated WC/module articles alongside dra
 - `page_end` — last catalogue page to extract, as an integer.
 - `page_range_label` — human-readable label used in reports and JSON counts.
 
-Page ranges are supported only for PDF sources. If either `page_start` or `page_end` is present, both must be present and `page_start` must be less than or equal to `page_end`. During ingestion, only the selected PDF pages are extracted, and each extracted diagnostic row records `source_page_start`, `source_page_end`, and `page_range_label`. This does not change production gating: TECE remains diagnostic-only, production promotion remains blocked, and compatibility must not be inferred.
+Page ranges are supported only for PDF sources. If either `page_start` or `page_end` is present, both must be present and `page_start` must be less than or equal to `page_end`. The same PDF can be listed multiple times in the manifest with different page ranges; each manifest entry is processed as an independent source unit rather than being deduplicated by filename. During ingestion, only the selected PDF pages are extracted for each entry, and each extracted diagnostic row records `source_page_start`, `source_page_end`, and `page_range_label`. This does not change production gating: TECE remains diagnostic-only, production promotion remains blocked, and compatibility must not be inferred.
 
 Example:
 
@@ -184,4 +185,4 @@ Recommended drainage ranges for `Sortimentsliste_TECE_DE_2026_web.pdf` intake ar
 | TECEdrainline | 271-294 | `TECEdrainline drainage section` |
 | TECEdrainpoint S | 295-326 | `TECEdrainpoint S drainage section` |
 
-The validator and reports include `page_range_label_counts` when labels are present and keep existing behavior for source packs without page-range metadata.
+The validator and reports include `page_range_label_counts` when labels are present and keep existing behavior for source packs without page-range metadata. Inventory, classification, and gap report JSON keeps the source filename and page-range metadata on each row so repeated catalogue entries remain traceable.

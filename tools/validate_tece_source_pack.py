@@ -11,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from tools.report_tece_source_inventory import EVIDENCE_SCOPES, SOURCE_PACK_EXTENSIONS, SOURCE_PACK_MANIFEST
+from tools.report_tece_source_inventory import EVIDENCE_SCOPES, GENERATED_SOURCE_PACK_OUTPUTS, SOURCE_PACK_EXTENSIONS, SOURCE_PACK_MANIFEST
 
 SOURCE_ORIGINS = {"public_url", "manual_download", "supplier_export", "unknown"}
 REQUIRED_FIELDS = {"source_file", "source_type", "evidence_scope"}
@@ -130,16 +130,17 @@ def validate_source_pack(source_pack: str | Path) -> ValidationResult:
     filesystem_files = []
     if root.exists():
         filesystem_files = [p for p in root.rglob("*") if p.is_file() and p.name != SOURCE_PACK_MANIFEST]
-        for file in filesystem_files:
+        check_files = [p for p in filesystem_files if p.name not in GENERATED_SOURCE_PACK_OUTPUTS]
+        for file in check_files:
             rel = str(file.relative_to(root))
             if rel not in listed:
                 errors.append(f"unknown unlisted file: {rel}")
             if file.suffix.lower() not in SOURCE_PACK_EXTENSIONS:
                 errors.append(f"unsupported extension for {rel}: {file.suffix.lower() or '(none)'}")
-    unknown_files = sorted(str(p.relative_to(root)) for p in filesystem_files if str(p.relative_to(root)) not in listed) if root.exists() else []
+    unknown_files = sorted(str(p.relative_to(root)) for p in filesystem_files if p.name not in GENERATED_SOURCE_PACK_OUTPUTS and str(p.relative_to(root)) not in listed) if root.exists() else []
     return ValidationResult(
         source_pack_path=str(root), manifest_path=str(manifest_path), valid=not errors,
-        errors=errors, warnings=warnings, manifest_file_count=len(sources), filesystem_file_count=len(filesystem_files),
+        errors=errors, warnings=warnings, manifest_file_count=len(sources), filesystem_file_count=len([p for p in filesystem_files if p.name not in GENERATED_SOURCE_PACK_OUTPUTS]),
         unknown_files=unknown_files, evidence_scope_counts=scope_counts,
         cover_grate_matrix_evidence_exists=scope_counts.get("cover_grate_matrix", 0) > 0,
         assembly_matrix_evidence_exists=scope_counts.get("assembly_matrix", 0) > 0,
