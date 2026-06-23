@@ -75,6 +75,7 @@ Generate the focused classification report with:
 ```bash
 python tools/report_tece_source_pack_classification.py --source-pack <path>
 python tools/report_tece_source_pack_classification.py --source-pack <path> --json
+python tools/report_tece_source_pack_classification.py --source-pack <path> --json --out <path>/classification_report.json
 ```
 
 The main inventory report also includes `source_pack_classification_summary` with role, family, confidence, and production-blocking reason counts.
@@ -91,9 +92,10 @@ Generate a diagnostic inventory report:
 
 ```bash
 python tools/report_tece_source_inventory.py --source-pack <path> --json
+python tools/report_tece_source_inventory.py --source-pack <path> --json --out <path>/inventory_report.json
 ```
 
-The validator fails when the manifest is missing, a listed file is missing, an unknown non-generated-output file is present, an unsupported extension is used, required classification is missing, or a source attempts to mark TECE data as production-ready. The only ignored generated output filenames are `inventory_report.json`, `classification_report.json`, and `evidence_gap_report.json`; use a separate `reports/` folder for any other ad-hoc outputs unless they are listed as source evidence in the manifest.
+On Windows CMD, prefer `--out` over shell redirection so JSON reports are written directly as UTF-8 and Unicode catalogue text such as `≥` is preserved. The validator fails when the manifest is missing, a listed file is missing, an unknown non-generated-output file is present, an unsupported extension is used, required classification is missing, or a source attempts to mark TECE data as production-ready. The only ignored generated source-pack output filenames are `inventory_report.json`, `classification_report.json`, and `evidence_gap_report.json`; use a separate `reports/` folder for any other ad-hoc outputs unless they are listed as source evidence in the manifest.
 
 ## Requirements before any future production promotion
 
@@ -116,6 +118,7 @@ Use the evidence-gap report after the validator, inventory report, and classific
 ```bash
 python tools/report_tece_evidence_gap.py --source-pack <path>
 python tools/report_tece_evidence_gap.py --source-pack <path> --json
+python tools/report_tece_evidence_gap.py --source-pack <path> --json --out <path>/evidence_gap_report.json
 ```
 
 The report consumes the existing source-pack manifest, source-pack ingestion output, and classification summary. It is **diagnostic-only**: it does not write canonical export rows, does not change ACO validation counts, does not infer compatibility, and always keeps:

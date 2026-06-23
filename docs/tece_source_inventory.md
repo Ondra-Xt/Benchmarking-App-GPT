@@ -20,9 +20,12 @@ This branch does not replace the TECE connector and does not promote any TECE pr
 ```bash
 python tools/report_tece_source_inventory.py --source-pack tests/fixtures/tece/source_pack
 python tools/report_tece_source_inventory.py --source-pack tests/fixtures/tece/source_pack --json
+python tools/report_tece_source_inventory.py --source-pack tests/fixtures/tece/source_pack --json --out tests/fixtures/tece/source_pack/inventory_report.json
+python tools/report_tece_source_pack_classification.py --source-pack tests/fixtures/tece/source_pack --json --out tests/fixtures/tece/source_pack/classification_report.json
+python tools/report_tece_evidence_gap.py --source-pack tests/fixtures/tece/source_pack --json --out tests/fixtures/tece/source_pack/evidence_gap_report.json
 ```
 
-When a source pack is supplied, the report includes both the live acquisition status and a local read-only ingestion status. Supported local fixture/source file types are HTML, TXT, PDF when local PDF text extraction dependencies are available, JSON, and CSV. The loader extracts manifest-listed source entries only; generated report files named `inventory_report.json`, `classification_report.json`, or `evidence_gap_report.json` may sit in the pack without being ingested as source rows. The loader extracts diagnostic inventory fields only, including article numbers, product family/name, technical fields, evidence text, missing fields, confidence, compatibility evidence status, source filename, page-range metadata, and the same production-blocking flags.
+When saving JSON on Windows CMD, use `--out` instead of shell redirection; the report tools write UTF-8 files and preserve Unicode catalogue text such as `≥`. When a source pack is supplied, the report includes both the live acquisition status and a local read-only ingestion status. Supported local fixture/source file types are HTML, TXT, PDF when local PDF text extraction dependencies are available, JSON, and CSV. The loader extracts manifest-listed source entries only; generated source-pack output files named `inventory_report.json`, `classification_report.json`, or `evidence_gap_report.json` may sit in the pack without being ingested as source rows and are ignored outputs. The loader extracts diagnostic inventory fields only, including article numbers, product family/name, technical fields, evidence text, missing fields, confidence, compatibility evidence status, source filename, page-range metadata, and the same production-blocking flags.
 
 If the source pack contains article candidates and technical fields but no explicit article-level compatibility matrix, the overall status is still incomplete:
 

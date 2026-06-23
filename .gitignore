@@ -31,3 +31,11 @@ data/runs/
 # Archives
 # ==========================================================
 *.zip
+
+# ==========================================================
+# Local TECE source-pack inputs and generated diagnostic outputs
+# ==========================================================
+local_source_packs/
+inventory_report.json
+classification_report.json
+evidence_gap_report.json
