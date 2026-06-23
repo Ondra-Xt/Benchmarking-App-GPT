@@ -54,13 +54,12 @@ def _manifest_sources(report: TeceSourcePackReport) -> list[dict[str, Any]]:
 
 
 def _source_is_synthetic(source: dict[str, Any]) -> bool:
-    haystack = " ".join(str(source.get(key, "")) for key in ("source_file", "source_url", "document_title", "notes", "source_origin")).lower()
-    return (
-        source.get("approved_for_benchmark_evidence") is False
-        or "synthetic" in haystack
-        or "test fixture" in haystack
-        or "example.invalid" in haystack
-    )
+    haystack = " ".join(str(source.get(key, "")) for key in ("source_url", "document_title", "notes", "source_origin")).lower()
+    source_file = str(source.get("source_file", "")).lower()
+    marked_synthetic = "synthetic" in haystack or "test fixture" in haystack or "example.invalid" in haystack
+    real_pdf = source_file.endswith(".pdf") and not marked_synthetic
+    # approved_for_benchmark_evidence=False means not approved evidence, not synthetic.
+    return marked_synthetic and not real_pdf
 
 
 def _synthetic_fixture_only(report: TeceSourcePackReport) -> bool:
