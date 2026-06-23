@@ -23,6 +23,30 @@
       "evidence_scope": "technical_datasheet",
       "approved_for_benchmark_evidence": false,
       "notes": "Synthetic test-only fixture; not production evidence."
+    },
+    {
+      "source_file": "tece_test_cover_grate.html",
+      "source_type": "html",
+      "source_origin": "unknown",
+      "source_url": "https://example.invalid/tece/test-fixture-601200",
+      "source_date": "2026-06-22",
+      "document_title": "TEST FIXTURE ONLY - synthetic TECE cover/grate snippet",
+      "product_family_hint": "TECEdrainline",
+      "evidence_scope": "article_data",
+      "approved_for_benchmark_evidence": false,
+      "notes": "Synthetic test-only cover/grate fixture; not production evidence."
+    },
+    {
+      "source_file": "tece_test_cover_grate_matrix.txt",
+      "source_type": "txt",
+      "source_origin": "unknown",
+      "source_url": "https://example.invalid/tece/test-fixture-601201",
+      "source_date": "2026-06-22",
+      "document_title": "TEST FIXTURE ONLY - synthetic TECE cover/grate matrix snippet",
+      "product_family_hint": "TECEdrainline",
+      "evidence_scope": "cover_grate_matrix",
+      "approved_for_benchmark_evidence": false,
+      "notes": "Synthetic test-only compatibility matrix fixture; not production evidence."
     }
   ]
 }
