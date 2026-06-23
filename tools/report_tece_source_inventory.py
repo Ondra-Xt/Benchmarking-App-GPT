@@ -60,6 +60,7 @@ class TeceSourcePackRow:
     source_page_start: Any = ""
     source_page_end: Any = ""
     page_range_label: str = ""
+    conditional_technical_values: list[dict[str, Any]] | None = None
 
 
 @dataclass(frozen=True)
@@ -81,8 +82,10 @@ class TeceSourcePackReport:
     evidence_scope_counts: dict[str, int] | None = None
     cover_grate_matrix_evidence_exists: bool = False
     assembly_matrix_evidence_exists: bool = False
-    source_pack_classification_summary: dict[str, dict[str, int]] | None = None
+    source_pack_classification_summary: dict[str, Any] | None = None
     page_range_label_counts: dict[str, int] | None = None
+    conditional_technical_value_count: int = 0
+    row_examples_by_label_and_role: dict[str, dict[str, list[dict[str, Any]]]] | None = None
 
 @dataclass(frozen=True)
 class TeceInventoryRow:
@@ -287,10 +290,16 @@ def classify_source_pack_row(text: str, manifest_source: dict[str, Any] | None =
     scope = _clean(manifest_source.get("evidence_scope")) or "unknown"
 
     family = "unknown"
-    for candidate in ("TECEdrainline", "TECEdrainprofile", "TECEdrainpoint"):
-        if candidate.lower() in haystack:
+    hint = _clean(manifest_source.get("product_family_hint") or manifest_source.get("page_range_label"))
+    for candidate in ("TECEdrainprofile", "TECEdrainline", "TECEdrainpoint", "TECEdrainway"):
+        if candidate.lower() in hint.lower():
             family = candidate
             break
+    if family == "unknown":
+        for candidate in ("TECEdrainprofile", "TECEdrainline", "TECEdrainpoint", "TECEdrainway"):
+            if candidate.lower() in haystack:
+                family = candidate
+                break
 
     role = "unknown"
     reason = "no_conservative_role_keyword"
@@ -306,8 +315,8 @@ def classify_source_pack_row(text: str, manifest_source: dict[str, Any] | None =
         role, reason = "complete_set", "keyword=complete_set_candidate"
     elif scope == "technical_datasheet":
         role, reason = "technical_datasheet_only", "evidence_scope=technical_datasheet"
-    elif re.search(r"\bdrain\s+body\b", haystack):
-        role, reason = "drain_body", "keyword=drain_body"
+    elif re.search(r"\b(drain\s+body|ablauf|abläufe)\b", haystack):
+        role, reason = "drain_body", "keyword=drain_body_or_ablauf"
 
     confidence = "low"
     if role != "unknown" and family != "unknown":
@@ -347,8 +356,11 @@ def _read_source_pack_file(path: Path, manifest_source: dict[str, Any] | None = 
                 from PyPDF2 import PdfReader  # type: ignore
             except ImportError:
                 return ""
-        reader = PdfReader(str(path))
-        pages = list(reader.pages)
+        try:
+            reader = PdfReader(str(path))
+            pages = list(reader.pages)
+        except Exception:
+            return ""
         manifest_source = manifest_source or {}
         start = manifest_source.get("page_start")
         end = manifest_source.get("page_end")
@@ -394,65 +406,117 @@ def _extract_source_url(raw_text: str, text: str) -> str:
     return _first_match([r"\b(https?://[^\s)<>\"']+)"], text, flags=0)
 
 
-def _extract_source_pack_row(path: Path, root: Path, manifest_source: dict[str, Any] | None = None) -> TeceSourcePackRow | None:
+def _extract_conditional_flow_values(text: str) -> list[dict[str, Any]]:
+    values: list[dict[str, Any]] = []
+    # Handles German catalogue forms like "Ablaufleistung ... >=0,72/>=0,82 l/s bei 10/20 mm Aufstau".
+    paired = re.finditer(
+        r"(?:Ablaufleistung|flow rate|drainage capacity)?[^.\n]{0,120}?([<>]=?\s*)?([0-9]+[,.][0-9]+)\s*/\s*([<>]=?\s*)?([0-9]+[,.][0-9]+)\s*l/s[^.\n]{0,80}?(?:bei\s*)?10\s*/\s*20\s*mm\s*Aufstau",
+        text,
+        re.I,
+    )
+    for match in paired:
+        for value, head in ((match.group(2), 10), (match.group(4), 20)):
+            values.append({
+                "parameter_name": "flow_rate_lps",
+                "value": float(value.replace(",", ".")),
+                "condition_type": "head_water_level",
+                "condition_value": head,
+                "condition_unit": "mm",
+                "condition_label": f"{head} mm Aufstau",
+            })
+    for match in re.finditer(r"([<>]=?\s*)?([0-9]+[,.][0-9]+)\s*l/s[^.\n]{0,80}?(?:bei\s*)?(10|20)\s*mm\s*Aufstau", text, re.I):
+        head = int(match.group(3))
+        item = {
+            "parameter_name": "flow_rate_lps",
+            "value": float(match.group(2).replace(",", ".")),
+            "condition_type": "head_water_level",
+            "condition_value": head,
+            "condition_unit": "mm",
+            "condition_label": f"{head} mm Aufstau",
+        }
+        if item not in values:
+            values.append(item)
+    return values
+
+
+def _article_contexts(text: str) -> list[tuple[str, str]]:
+    matches = list(re.finditer(r"(?i)(?:Best\.-?Nr\.?|Artikel(?:\s*(?:Nr\.?|nummer))?|Article(?:\s*(?:no\.?|number))?)\s*[:#-]?\s*([0-9]{5,8})|\b([0-9]{6})\b", text))
+    contexts: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for idx, match in enumerate(matches):
+        article = match.group(1) or match.group(2)
+        if not article or article in seen:
+            continue
+        seen.add(article)
+        left = max(0, match.start() - 350)
+        right = min(len(text), (matches[idx + 1].start() + 120) if idx + 1 < len(matches) else match.end() + 700)
+        contexts.append((article, text[left:right]))
+    return contexts
+
+
+def _fields_from_text(text: str, conditional_values: list[dict[str, Any]]) -> dict[str, Any]:
+    unconditional_flow = _extract_float([
+        r"flow\s*rate\s*[:=]?\s*([0-9]+[,.]?[0-9]*)\s*(?:l/s|lps)(?![^.\n]{0,80}(?:10|20)\s*mm\s*Aufstau)",
+        r"drainage\s*capacity\s*[:=]?\s*([0-9]+[,.]?[0-9]*)\s*(?:l/s|lps)(?![^.\n]{0,80}(?:10|20)\s*mm\s*Aufstau)",
+        r"Ablaufleistung\s*[:=]?\s*([0-9]+[,.]?[0-9]*)\s*l/s(?![^.\n]{0,80}(?:10|20)\s*mm\s*Aufstau)",
+    ], text)
+    return {
+        "nominal_length_mm": _extract_int([r"(?:nominal\s*)?length\s*[:=]?\s*(\d{3,4})\s*mm", r"(?:Nennlänge|Länge|Length)\s*[:=]?\s*(\d{3,4})\s*mm", r"\b(7\d{2}|8\d{2}|9\d{2}|1[0-5]\d{2})\s*mm\b"], text),
+        "flow_rate_lps": "" if conditional_values else unconditional_flow,
+        "water_seal_mm": _extract_int([r"(?:reduzierte\s*)?Sperrwasserhöhe\s*[:=]?\s*(\d{2,3})\s*mm", r"water\s*seal\s*[:=]?\s*(\d{2,3})\s*mm"], text),
+        "outlet_dn": _first_match([r"(?:outlet\s*[:=]?\s*)?(DN\s*\d{2,3})\b"], text).replace(" ", ""),
+        "height_adj_min_mm": _extract_int([r"height\s*adjust(?:ment|able)?\s*[:=]?\s*(\d{2,4})\s*(?:-|to|–)\s*\d{2,4}\s*mm"], text),
+        "height_adj_max_mm": _extract_int([r"height\s*adjust(?:ment|able)?\s*[:=]?\s*\d{2,4}\s*(?:-|to|–)\s*(\d{2,4}(?:[,.]\d+)?)\s*mm"], text),
+        "installation_height_mm": _extract_int([r"(?:min\.\s*)?(?:Aufbauhöhe|installation\s*height)\s*[:=]?\s*(\d{2,4}(?:[,.]\d+)?)\s*mm"], text),
+    }
+
+
+def _extract_source_pack_rows(path: Path, root: Path, manifest_source: dict[str, Any] | None = None) -> list[TeceSourcePackRow]:
     manifest_source = manifest_source or {}
     raw = _read_source_pack_file(path, manifest_source)
     text = _strip_markup(raw) if path.suffix.lower() in {".html", ".htm"} else re.sub(r"\s+", " ", raw).strip()
     if not text:
-        return None
-    article = _first_match([r"(?:article|artikel|item)(?:\s*(?:no\.?|number|nr\.?|#))?\s*[:#-]?\s*([0-9]{5,8})", r"\b([0-9]{6})\b"], text)
-    if not article:
-        return None
-    product_family = _first_match([r"(TECE(?:drain|drainline|line|profile)[A-Za-z ]*)"], text) or "TECE"
-    product_name = _first_match([
-        r"(?:product(?: name)?|produkt(?:name)?)\s*[:#-]\s*([^.;\n]+)",
-        r"(TECE[^.;\n]*" + re.escape(article) + r"[^.;\n]*)",
-    ], text) or product_family
-    fields = {
-        "nominal_length_mm": _extract_int([r"(?:nominal\s*)?length\s*[:=]?\s*(\d{3,4})\s*mm", r"L(?:änge|ength)?\s*[:=]?\s*(\d{3,4})\s*mm"], text),
-        "flow_rate_lps": _extract_float([r"flow\s*rate\s*[:=]?\s*([0-9]+[,.]?[0-9]*)\s*(?:l/s|lps)", r"drainage\s*capacity\s*[:=]?\s*([0-9]+[,.]?[0-9]*)\s*(?:l/s|lps)"], text),
-        "water_seal_mm": _extract_int([r"water\s*seal\s*[:=]?\s*(\d{2,3})\s*mm"], text),
-        "outlet_dn": _first_match([r"outlet\s*[:=]?\s*(DN\s*\d{2,3})", r"\b(DN\s*\d{2,3})\b"], text).replace(" ", ""),
-        "height_adj_min_mm": _extract_int([r"height\s*adjust(?:ment|able)?\s*[:=]?\s*(\d{2,4})\s*(?:-|to|–)\s*\d{2,4}\s*mm"], text),
-        "height_adj_max_mm": _extract_int([r"height\s*adjust(?:ment|able)?\s*[:=]?\s*\d{2,4}\s*(?:-|to|–)\s*(\d{2,4})\s*mm"], text),
-        "installation_height_mm": _extract_int([r"installation\s*height\s*[:=]?\s*(\d{2,4})\s*mm"], text),
-    }
-    missing = [field for field in SOURCE_PACK_TECHNICAL_FIELDS if _clean(fields[field]) == ""]
-    compat = bool(re.search(r"(?i)(compatibility\s+matrix|compatible\s+with\s+cover|cover\s*/\s*grate\s+compatibility)", text))
-    if re.search(r"(?i)(test fixture|synthetic|example\.invalid)", text):
-        compat = False
-    evidence = text[:500]
-    confidence = round((1 + sum(1 for v in fields.values() if _clean(v)) + (1 if product_name else 0)) / (len(SOURCE_PACK_TECHNICAL_FIELDS) + 2), 2)
-    classification = classify_source_pack_row(text, manifest_source, missing)
-    return TeceSourcePackRow(
-        source_file=str(path.relative_to(root)),
-        source_type=path.suffix.lower().lstrip(".") or "unknown",
-        product_family=product_family,
-        product_name=product_name,
-        article_number=article,
-        source_url=_extract_source_url(raw, text),
-        nominal_length_mm=fields["nominal_length_mm"],
-        flow_rate_lps=fields["flow_rate_lps"],
-        water_seal_mm=fields["water_seal_mm"],
-        outlet_dn=fields["outlet_dn"],
-        height_adj_min_mm=fields["height_adj_min_mm"],
-        height_adj_max_mm=fields["height_adj_max_mm"],
-        installation_height_mm=fields["installation_height_mm"],
-        evidence_text=evidence,
-        missing_fields=missing,
-        confidence=confidence,
-        compatibility_evidence_type="explicit_matrix" if compat else "missing",
-        article_level_compatibility_evidence_exists=compat,
-        production_promotion_blocked=True,
-        ready_for_benchmark=False,
-        ready_for_customer_view=False,
-        recommended_next_action="Collect official TECE cover/grate article-level compatibility matrix before any production promotion." if not compat else "Manually audit compatibility evidence; production promotion remains blocked in this branch.",
-        **classification,
-        source_page_start=manifest_source.get("page_start", ""),
-        source_page_end=manifest_source.get("page_end", ""),
-        page_range_label=_clean(manifest_source.get("page_range_label")),
-    )
+        return []
+    contexts = _article_contexts(text)
+    if not contexts:
+        return []
+    rows: list[TeceSourcePackRow] = []
+    source_url = _extract_source_url(raw, text)
+    for article, context in contexts:
+        hinted_family = _clean(manifest_source.get("product_family_hint"))
+        if not hinted_family:
+            for candidate in ("TECEdrainprofile", "TECEdrainline", "TECEdrainpoint", "TECEdrainway"):
+                if candidate.lower() in _clean(manifest_source.get("page_range_label")).lower():
+                    hinted_family = candidate
+                    break
+        product_family = hinted_family or _first_match([r"(TECE(?:drainprofile|drainline|drainpoint|drainway|drain)[A-Za-z ]*)"], context) or "TECE"
+        product_name = _first_match([r"(?:product(?: name)?|produkt(?:name)?)\s*[:#-]\s*([^.;\n]+)", r"(TECE[^.;\n]{0,160}" + re.escape(article) + r"[^.;\n]{0,80})"], context) or product_family
+        conditional = _extract_conditional_flow_values(context)
+        fields = _fields_from_text(context, conditional)
+        missing = [field for field in SOURCE_PACK_TECHNICAL_FIELDS if _clean(fields[field]) == ""]
+        compat = bool(re.search(r"(?i)(compatibility\s+matrix|compatible\s+with\s+cover|cover\s*/\s*grate\s+compatibility)", context))
+        if re.search(r"(?i)(test fixture|synthetic|example\.invalid)", text):
+            compat = False
+        classification = classify_source_pack_row(context, manifest_source, missing)
+        confidence = round((1 + sum(1 for v in fields.values() if _clean(v)) + (1 if conditional else 0) + (1 if product_name else 0)) / (len(SOURCE_PACK_TECHNICAL_FIELDS) + 3), 2)
+        rows.append(TeceSourcePackRow(
+            source_file=str(path.relative_to(root)), source_type=path.suffix.lower().lstrip(".") or "unknown",
+            product_family=product_family, product_name=product_name, article_number=article, source_url=source_url,
+            nominal_length_mm=fields["nominal_length_mm"], flow_rate_lps=fields["flow_rate_lps"], water_seal_mm=fields["water_seal_mm"], outlet_dn=fields["outlet_dn"],
+            height_adj_min_mm=fields["height_adj_min_mm"], height_adj_max_mm=fields["height_adj_max_mm"], installation_height_mm=fields["installation_height_mm"],
+            evidence_text=context[:500], missing_fields=missing, confidence=confidence,
+            compatibility_evidence_type="explicit_matrix" if compat else "missing", article_level_compatibility_evidence_exists=compat,
+            production_promotion_blocked=True, ready_for_benchmark=False, ready_for_customer_view=False,
+            recommended_next_action="Collect official TECE cover/grate article-level compatibility matrix before any production promotion." if not compat else "Manually audit compatibility evidence; production promotion remains blocked in this branch.",
+            **classification, source_page_start=manifest_source.get("page_start", ""), source_page_end=manifest_source.get("page_end", ""),
+            page_range_label=_clean(manifest_source.get("page_range_label")), conditional_technical_values=conditional,
+        ))
+    return rows
 
+
+def _extract_source_pack_row(path: Path, root: Path, manifest_source: dict[str, Any] | None = None) -> TeceSourcePackRow | None:
+    rows = _extract_source_pack_rows(path, root, manifest_source)
+    return rows[0] if rows else None
 
 def _read_source_pack_manifest(root: Path) -> dict[str, Any] | None:
     manifest_path = root / SOURCE_PACK_MANIFEST if root.is_dir() else root.parent / SOURCE_PACK_MANIFEST
@@ -489,13 +553,13 @@ def load_source_pack(path: str | Path) -> TeceSourcePackReport:
             for source in source_entries
             if (base / str(source.get("source_file"))).is_file()
             and (base / str(source.get("source_file"))).suffix.lower() in SOURCE_PACK_EXTENSIONS
-            and (row := _extract_source_pack_row(base / str(source.get("source_file")), base, source)) is not None
+            for row in _extract_source_pack_rows(base / str(source.get("source_file")), base, source)
         ]
     else:
         all_files = [root] if root.is_file() else []
         source_entries = []
         files = all_files
-        rows = [row for file in files if file.suffix.lower() in SOURCE_PACK_EXTENSIONS and (row := _extract_source_pack_row(file, base, None)) is not None]
+        rows = [row for file in files if file.suffix.lower() in SOURCE_PACK_EXTENSIONS for row in _extract_source_pack_rows(file, base, None)]
     coverage = {field: sum(1 for row in rows if _clean(getattr(row, field)) != "") for field in SOURCE_PACK_TECHNICAL_FIELDS}
     missing_counts = {field: sum(1 for row in rows if field in row.missing_fields) for field in SOURCE_PACK_TECHNICAL_FIELDS}
     scope_counts = {scope: 0 for scope in sorted(EVIDENCE_SCOPES)}
@@ -511,12 +575,21 @@ def load_source_pack(path: str | Path) -> TeceSourcePackReport:
         label = _clean(row.page_range_label)
         if label:
             page_range_counts[label] = page_range_counts.get(label, 0) + 1
+    row_examples: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for row in rows:
+        label = row.page_range_label or "unlabeled"
+        role = row.tece_article_role_candidate or "unknown"
+        row_examples.setdefault(label, {}).setdefault(role, [])
+        if len(row_examples[label][role]) < 5:
+            row_examples[label][role].append({"article_number": row.article_number, "product_name": row.product_name, "family": row.tece_family_candidate})
+    conditional_count = sum(len(row.conditional_technical_values or []) for row in rows)
     classification_summary = {
         "role_counts": _count_values(rows, "tece_article_role_candidate"),
         "family_counts": _count_values(rows, "tece_family_candidate"),
         "classification_confidence_counts": _count_values(rows, "classification_confidence"),
         "production_blocking_reason_counts": _count_values(rows, "production_blocking_reason"),
         "page_range_label_counts": dict(sorted(page_range_counts.items())),
+        "conditional_technical_value_count": {"total": conditional_count},
     }
     return TeceSourcePackReport(
         source_pack_path=str(root),
@@ -538,6 +611,8 @@ def load_source_pack(path: str | Path) -> TeceSourcePackReport:
         assembly_matrix_evidence_exists=assembly_matrix,
         source_pack_classification_summary=classification_summary,
         page_range_label_counts=dict(sorted(page_range_counts.items())),
+        conditional_technical_value_count=conditional_count,
+        row_examples_by_label_and_role=row_examples,
     )
 
 def build_report(target_length_mm: int = 1200, tolerance_mm: int = 100, *, max_candidates: int | None = None, source_pack: str | Path | None = None) -> TeceInventoryReport:
@@ -648,6 +723,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"source_pack_compatibility_evidence_status: {report.source_pack.compatibility_evidence_status}")
             print(f"source_pack_evidence_scope_counts: {json.dumps(report.source_pack.evidence_scope_counts or {}, sort_keys=True)}")
             print(f"source_pack_page_range_label_counts: {json.dumps(report.source_pack.page_range_label_counts or {}, sort_keys=True)}")
+            print(f"source_pack_conditional_technical_value_count: {report.source_pack.conditional_technical_value_count}")
+            print(f"source_pack_row_examples_by_label_and_role: {json.dumps(report.source_pack.row_examples_by_label_and_role or {}, sort_keys=True, ensure_ascii=False)}")
             print(f"source_pack_cover_grate_matrix_evidence_exists: {report.source_pack.cover_grate_matrix_evidence_exists}")
             print("source_pack_classification_summary:")
             print(json.dumps(report.source_pack.source_pack_classification_summary or {}, indent=2, sort_keys=True))

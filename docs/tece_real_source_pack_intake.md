@@ -186,3 +186,27 @@ Recommended drainage ranges for `Sortimentsliste_TECE_DE_2026_web.pdf` intake ar
 | TECEdrainpoint S | 295-326 | `TECEdrainpoint S drainage section` |
 
 The validator and reports include `page_range_label_counts` when labels are present and keep existing behavior for source packs without page-range metadata. Inventory, classification, and gap report JSON keeps the source filename and page-range metadata on each row so repeated catalogue entries remain traceable.
+
+## Diagnostic catalogue table extraction limits
+
+Real TECE catalogue PDF page ranges are ingested only as **diagnostic source-pack evidence**. The loader now scans every extracted text chunk in the requested page range and emits one diagnostic row per detected article number in repeated `Best.-Nr.` / article tables, drain/`Ablauf` blocks, set-like blocks (`Set`, `bestehend aus`), and cover/grate/design-cover tables such as `Designrost`, `Designabdeckung`, and `Fliesenmulde`. This improves evidence inventory counts for real catalogue ranges, but it is still text-pattern extraction from PDF text and can miss rows when table geometry, OCR, or line ordering are not preserved.
+
+The row keeps manifest provenance (`source_file`, `source_page_start`, `source_page_end`, `page_range_label`, `product_family_hint`, and `evidence_scope`). When the page text is ambiguous, the manifest `product_family_hint` or `page_range_label` is used as the default family. Classification remains conservative and must not infer article-level compatibility from nearby family mentions, shared lengths, names, or catalogue section proximity.
+
+## Conditional TECE 10/20 mm Aufstau flow handling
+
+TECE catalogue drain blocks can publish conditional `Ablaufleistung` values for 10 mm and 20 mm `Aufstau`, sometimes with additional cover-specific conditions. Diagnostic extraction preserves these as conditional technical values with:
+
+- `parameter_name=flow_rate_lps`
+- `condition_type=head_water_level`
+- `condition_value=10` or `20`
+- `condition_unit=mm`
+- `condition_label=10 mm Aufstau` or `20 mm Aufstau`
+
+When conditional 10/20 mm values are present, the scalar `flow_rate_lps` field is intentionally left empty unless the source also provides a truly unconditional scalar value. The diagnostic reports may count these conditional values separately, but production promotion remains blocked pending policy review and explicit article-level compatibility evidence.
+
+## Compatibility remains blocked
+
+A real catalogue source pack with `approved_for_benchmark_evidence=false` is not automatically synthetic. It may still report `approved_benchmark_evidence_missing=true`, but `synthetic_fixture_only` is reserved for packs where every source is explicitly marked as synthetic/test fixture evidence. Real catalogue source packs without explicit article-level matrix/assembly evidence report `OVERALL: TECE_EVIDENCE_GAP_COMPATIBILITY_BLOCKED`.
+
+Compatibility must remain blocked until explicit article-level cover/grate matrix or assembly evidence is implemented or sourced. This branch does not promote TECE to canonical `Products`, `Comparison`, `BOM_Options`, `Final_Assemblies`, or `Final_Set_Details`, and does not mark TECE rows `ready_for_benchmark` or `ready_for_customer_view`.

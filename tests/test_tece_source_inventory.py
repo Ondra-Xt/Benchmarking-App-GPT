@@ -465,3 +465,87 @@ def test_same_pdf_manifest_entries_extract_independent_page_ranges(tmp_path, mon
     assert all(row.source_file == "catalog.pdf" for row in report.rows)
     assert all(row.production_promotion_blocked for row in report.rows)
     assert report.production_promotion_blocked is True
+
+
+def test_tece_catalog_text_extracts_multiple_table_rows_and_family_fallback(tmp_path):
+    (tmp_path / "catalog.txt").write_text(
+        "TECEdrainprofile Designrost Tabelle Nennlänge Oberfläche Best.-Nr. "
+        "800 mm Edelstahl 600710 900 mm schwarz 600711. "
+        "Nebenhinweis TECEdrainline darf Familie nicht überschreiben.",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "catalog.txt",
+        "source_type": "txt",
+        "source_origin": "manual_download",
+        "evidence_scope": "article_data",
+        "page_range_label": "TECEdrainprofile 257-270",
+        "product_family_hint": "TECEdrainprofile",
+        "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+
+    report = report_mod.load_source_pack(tmp_path)
+
+    assert report.source_pack_candidate_count == 2
+    assert report.article_numbers == ["600710", "600711"]
+    assert report.page_range_label_counts == {"TECEdrainprofile 257-270": 2}
+    assert all(row.tece_family_candidate == "TECEdrainprofile" for row in report.rows)
+    assert all(row.product_family == "TECEdrainprofile" for row in report.rows)
+    assert report.production_promotion_blocked is True
+    assert report.ready_for_benchmark is False
+
+
+def test_tece_drain_block_extracts_technical_and_conditional_flows(tmp_path):
+    (tmp_path / "drain.txt").write_text(
+        "TECEdrainline Ablauf DN 40 Aufbauhöhe 68,5 mm reduzierte Sperrwasserhöhe 30 mm "
+        "Ablaufleistung >=0,52/>=0,60 l/s bei 10/20 mm Aufstau Best.-Nr. 650004",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "drain.txt",
+        "source_type": "txt",
+        "source_origin": "manual_download",
+        "evidence_scope": "technical_datasheet",
+        "page_range_label": "TECEdrainline 271-294",
+        "product_family_hint": "TECEdrainline",
+        "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+
+    report = report_mod.load_source_pack(tmp_path)
+    row = report.rows[0]
+
+    assert row.article_number == "650004"
+    assert row.outlet_dn == "DN40"
+    assert row.water_seal_mm == 30
+    assert row.installation_height_mm == 68
+    assert row.flow_rate_lps == ""
+    assert row.conditional_technical_values == [
+        {"parameter_name": "flow_rate_lps", "value": 0.52, "condition_type": "head_water_level", "condition_value": 10, "condition_unit": "mm", "condition_label": "10 mm Aufstau"},
+        {"parameter_name": "flow_rate_lps", "value": 0.6, "condition_type": "head_water_level", "condition_value": 20, "condition_unit": "mm", "condition_label": "20 mm Aufstau"},
+    ]
+    assert report.conditional_technical_value_count == 2
+    assert report.production_promotion_blocked is True
+
+
+def test_real_catalog_source_pack_is_not_synthetic_only_and_is_compatibility_blocked(tmp_path):
+    (tmp_path / "Sortimentsliste_TECE_DE_2026_web.pdf").write_bytes(b"%PDF-1.4\n% placeholder")
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "Sortimentsliste_TECE_DE_2026_web.pdf",
+        "source_type": "pdf",
+        "source_origin": "manual_download",
+        "source_url": "https://www.tece.com/example/Sortimentsliste_TECE_DE_2026_web.pdf",
+        "document_title": "TECE Sortimentsliste 2026 Deutschland",
+        "notes": "Real TECE catalogue source candidate; diagnostic-only.",
+        "evidence_scope": "article_data",
+        "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+
+    from tools import report_tece_evidence_gap as gap_mod
+
+    report = gap_mod.build_evidence_gap_report(tmp_path)
+
+    assert report.gap_summary["synthetic_fixture_only"] is False
+    assert report.gap_summary["approved_benchmark_evidence_missing"] is True
+    assert report.overall_status == "OVERALL: TECE_EVIDENCE_GAP_COMPATIBILITY_BLOCKED"
+    assert report.production_promotion_blocked is True
+    assert report.ready_for_benchmark is False
