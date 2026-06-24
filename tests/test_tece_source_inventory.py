@@ -988,3 +988,75 @@ def test_tecedrainprofile_source_pack_classifies_article_ranges():
     assert profile["tece_article_role_candidate"] == "profile_body"
     assert channel["tece_article_role_candidate"] == "profile_channel"
     assert drain["tece_article_role_candidate"] == "drain_body"
+
+
+def test_tece_actionable_review_shortlist_bounded_and_prioritized(monkeypatch):
+    from tools import report_tece_actionable_review_shortlist as shortlist_mod
+    rows = [
+        _compat_row("650001", "drain_body", 900, evidence="section body"),
+        _compat_row("601901", "cover_or_grate", 901, evidence="section cover"),
+        _compat_row("650002", "drain_body", 1000, evidence="same body"),
+        _compat_row("601000", "cover_or_grate", 1000, evidence="same cover"),
+        _compat_row("650003", "drain_body", 1100, evidence="same body"),
+        _compat_row("601100", "cover_or_grate", 1100, evidence="same cover"),
+    ]
+    for row in rows[:2]:
+        object.__setattr__(row, "page_range_label", "TECEdrainline section")
+    monkeypatch.setattr(compat_mod, "load_source_pack", lambda source_pack: SimpleNamespace(source_pack_path=str(source_pack), rows=rows))
+
+    report = shortlist_mod.build_shortlist_report("synthetic", max_per_family=2)
+    levels = [row["evidence_level"] for row in report["shortlisted_candidates"]]
+
+    assert report["summary"]["total_actionable_candidate_count"] > report["summary"]["shortlisted_candidate_count"]
+    assert report["summary"]["shortlisted_candidate_count"] == 2
+    assert levels[0] == "explicit_section_pairing"
+    assert "same_length_same_family_candidate" in levels
+
+
+def test_tece_actionable_review_shortlist_profile_and_blocking_flags(monkeypatch):
+    from tools import report_tece_actionable_review_shortlist as shortlist_mod
+    rows = [
+        _compat_row("670900", "unknown", 900, family="TECEdrainprofile", evidence="profile body"),
+        _compat_row("673001", "unknown", 0, family="TECEdrainprofile", evidence="drain body"),
+        _compat_row("650001", "drain_body", 900, family="TECEdrainline", evidence="line body"),
+        _compat_row("601901", "cover_or_grate", 901, family="TECEdrainline", evidence="line cover"),
+    ]
+    for row in rows:
+        object.__setattr__(row, "page_range_label", f"{row.tece_family_candidate} section")
+    monkeypatch.setattr(compat_mod, "load_source_pack", lambda source_pack: SimpleNamespace(source_pack_path=str(source_pack), rows=rows))
+
+    report = shortlist_mod.build_shortlist_report("synthetic", max_per_family=10)
+
+    assert report["summary"]["family_shortlist_counts"]["TECEdrainprofile"] >= 1
+    assert any(row["family"] == "TECEdrainprofile" for row in report["shortlisted_candidates"])
+    assert report["summary"]["production_safe_candidate_count"] == 0
+    assert report["summary"]["production_promotion_blocked"] is True
+    assert report["summary"]["ready_for_benchmark"] is False
+    assert report["summary"]["ready_for_customer_view"] is False
+    assert all(row["manual_review_status"] == "pending_review" for row in report["shortlisted_candidates"])
+
+
+def test_tece_actionable_review_shortlist_json_out_writes_utf8(tmp_path):
+    from tools import report_tece_actionable_review_shortlist as shortlist_mod
+    out = tmp_path / "tece_review_shortlist.json"
+
+    assert shortlist_mod.main(["--source-pack", "tests/fixtures/tece/source_pack", "--json", "--out", str(out), "--max-per-family", "5"]) == 0
+
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["summary"]["production_safe_candidate_count"] == 0
+    assert payload["summary"]["production_promotion_blocked"] is True
+    assert payload["summary"]["ready_for_benchmark"] is False
+    assert payload["summary"]["ready_for_customer_view"] is False
+    assert "shortlisted_candidates" in payload
+
+
+def test_tece_actionable_review_shortlist_does_not_change_aco_canonical_export():
+    from tools import report_tece_actionable_review_shortlist as shortlist_mod
+    from src.canonical_aco_export import build_canonical_aco_frames
+
+    shortlist_mod.build_shortlist_report("tests/fixtures/tece/source_pack", max_per_family=5)
+    frames = build_canonical_aco_frames()
+
+    assert "tece" not in set(frames.products.get("manufacturer", []))
+    assert "tece" not in set(frames.comparison.get("manufacturer", []))
+    assert "tece" not in set(frames.bom_options.get("manufacturer", []))

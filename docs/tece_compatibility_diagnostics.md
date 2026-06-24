@@ -137,3 +137,49 @@ length, same family, same catalogue section, and explicit section proximity are 
 for production compatibility. `explicit_text_pairing` still requires manual review, and
 TECE production promotion remains blocked with `ready_for_benchmark=false` and
 `ready_for_customer_view=false`.
+
+## Actionable review shortlist
+
+`tools/report_tece_actionable_review_shortlist.py` produces a compact, diagnostic-only
+queue from the actionable rows in the compatibility evidence audit. It is intended
+for human reviewers who need to inspect the best TECE compatibility candidates
+without reading every actionable diagnostic pairing.
+
+Example:
+
+```bash
+python tools/report_tece_actionable_review_shortlist.py \
+  --source-pack tests/fixtures/tece/source_pack \
+  --json \
+  --out tece_review_shortlist.json \
+  --max-per-family 50
+```
+
+The shortlist ranks candidates by explicit evidence first, then confidence, known
+assembly role pairs, available technical fields, and nominal-length matches where
+applicable. Nominal length is only a review hint; it is never production
+compatibility evidence. Conditional technical values are carried through in the
+shortlist row so reviewers can see the conditions rather than flattening them into
+unconditional values.
+
+The shortlist is not a production evidence source. Every row remains
+`manual_review_status: pending_review`, `production_safe_candidate_count: 0`,
+`production_promotion_blocked: true`, `ready_for_benchmark: false`, and
+`ready_for_customer_view: false`. Generating the report must not add TECE rows to
+canonical Products, Comparison, BOM_Options, Final_Assemblies, or
+Final_Set_Details.
+
+Recommended manual review workflow:
+
+1. Generate the audit and shortlist from the same source pack.
+2. Review explicit-text and explicit-section candidates first, grouped by family.
+3. Check the source pages and evidence text for true article-level compatibility.
+4. Preserve all stated technical conditions when recording reviewer notes.
+5. Leave same-length-only candidates diagnostic unless a separate explicit source
+   proves compatibility.
+
+Future path: reviewed explicit pairings may become evidence fixtures only after
+manual approval. Those fixtures should encode the approved source, article pair,
+role pair, reviewer decision, and any conditional technical values. Until that
+manual approval path exists and is explicitly wired into production criteria, TECE
+production promotion remains blocked.
