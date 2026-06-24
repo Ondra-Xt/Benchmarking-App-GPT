@@ -304,9 +304,19 @@ def classify_source_pack_row(text: str, manifest_source: dict[str, Any] | None =
                 family = candidate
                 break
 
+    article_match = re.search(r"(?i)\b(?:article number|best\.-?nr\.?|artikel(?:nummer)?)[:\s]*([0-9]{6})\b", haystack)
+    article = article_match.group(1) if article_match else ""
+
     role = "unknown"
     reason = "no_conservative_role_keyword"
-    if scope == "cover_grate_matrix":
+    if family == "TECEdrainprofile" and re.fullmatch(r"67[01]\d{3}", article):
+        if re.search(r"\b(channel|rinne|profilrinne)\b", haystack):
+            role, reason = "profile_channel", "tecedrainprofile_article_range_670xxx_671xxx_channel"
+        else:
+            role, reason = "profile_body", "tecedrainprofile_article_range_670xxx_671xxx_profile_body"
+    elif family == "TECEdrainprofile" and article in {"673001", "673002", "673003"}:
+        role, reason = "drain_body", "tecedrainprofile_article_range_673001_673003_drain"
+    elif scope == "cover_grate_matrix":
         role, reason = "compatibility_matrix", "evidence_scope=cover_grate_matrix"
     elif scope == "assembly_matrix":
         role, reason = "assembly_matrix", "evidence_scope=assembly_matrix"
@@ -328,7 +338,7 @@ def classify_source_pack_row(text: str, manifest_source: dict[str, Any] | None =
         confidence = "medium"
 
     blocking = ["missing_article_level_compatibility_matrix"]
-    if role in {"cover_or_grate", "channel_body", "drain_body"}:
+    if role in {"cover_or_grate", "channel_body", "drain_body", "profile_body", "profile_channel", "drain_component"}:
         blocking.append("missing_counterpart_article")
     if missing_fields:
         blocking.append("missing_technical_fields")

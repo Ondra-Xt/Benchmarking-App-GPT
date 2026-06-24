@@ -905,3 +905,86 @@ def test_tece_gap_exposes_actionable_count_and_stays_blocked(tmp_path):
     assert report.production_promotion_blocked is True
     assert report.ready_for_benchmark is False
     assert report.ready_for_customer_view is False
+
+def test_tecedrainprofile_article_ranges_classify_profile_and_drain_roles(monkeypatch):
+    rows = [
+        _compat_row("670900", "unknown", 900, family="TECEdrainprofile", evidence="TECEdrainprofile profile body article"),
+        _compat_row("671900", "unknown", 900, family="TECEdrainprofile", evidence="TECEdrainprofile Profilrinne channel article"),
+        _compat_row("673001", "unknown", 0, family="TECEdrainprofile", evidence="TECEdrainprofile drain body"),
+        _compat_row("673002", "drain_component", 0, family="TECEdrainprofile", evidence="TECEdrainprofile drain component"),
+        _compat_row("674001", "unknown", 0, family="TECEdrainprofile", evidence="TECEdrainprofile accessory"),
+    ]
+    monkeypatch.setattr(compat_mod, "load_source_pack", lambda source_pack: SimpleNamespace(source_pack_path=str(source_pack), rows=rows))
+
+    report = compat_mod.build_compatibility_diagnostics_report("synthetic")
+    family = report.families[0]
+    roles = {row["article_number"]: row["classified_role"] for row in family.candidate_body_channel_drain_articles + family.unknown_role_articles}
+
+    assert roles["670900"] == "profile_body"
+    assert roles["671900"] == "profile_channel"
+    assert roles["673001"] == "drain_body"
+    assert roles["673002"] == "drain_component"
+    assert roles["674001"] == "unknown"
+    assert report.unknown_role_row_count == 1
+
+
+def test_tecedrainprofile_profile_to_drain_actionable_but_same_and_unknown_excluded(monkeypatch):
+    rows = [
+        _compat_row("670900", "unknown", 900, family="TECEdrainprofile", evidence="profile body"),
+        _compat_row("671900", "unknown", 900, family="TECEdrainprofile", evidence="profile channel"),
+        _compat_row("670901", "unknown", 1000, family="TECEdrainprofile", evidence="profile body"),
+        _compat_row("673001", "unknown", 0, family="TECEdrainprofile", evidence="drain body"),
+        _compat_row("679999", "unknown", 0, family="TECEdrainprofile", evidence="ambiguous accessory"),
+    ]
+    monkeypatch.setattr(compat_mod, "load_source_pack", lambda source_pack: SimpleNamespace(source_pack_path=str(source_pack), rows=rows))
+
+    report = compat_mod.build_compatibility_diagnostics_report("synthetic")
+    family = report.families[0]
+    role_pairs = {pairing.role_pair for pairing in family.possible_pairings}
+    excluded_reasons = {entry["role_pair"]: entry["excluded_reason"] for entry in family.excluded_pairings}
+
+    assert "profile_body_to_drain_body" in role_pairs
+    assert "profile_channel_to_drain_body" in role_pairs
+    assert excluded_reasons["profile_body_to_profile_body"] == "same_role_pairing_not_actionable"
+    assert excluded_reasons["profile_body_to_profile_channel"] == "role_pair_not_actionable"
+    assert excluded_reasons["profile_body_to_unknown"] == "unknown_role_without_explicit_text_pairing"
+    assert report.family_actionable_candidate_counts["TECEdrainprofile"] >= 2
+    assert report.production_promotion_blocked is True
+    assert report.ready_for_benchmark is False
+    assert report.ready_for_customer_view is False
+
+
+def test_tecedrainprofile_unknown_pair_allowed_only_with_explicit_text(monkeypatch):
+    evidence = "Passend zu Profil 670900 ist Sonderteil 679999."
+    rows = [
+        _compat_row("670900", "unknown", 900, family="TECEdrainprofile", evidence=evidence),
+        _compat_row("679999", "unknown", 0, family="TECEdrainprofile", evidence=evidence),
+    ]
+    monkeypatch.setattr(compat_mod, "load_source_pack", lambda source_pack: SimpleNamespace(source_pack_path=str(source_pack), rows=rows))
+
+    report = compat_mod.build_compatibility_diagnostics_report("synthetic")
+
+    assert report.actionable_candidate_count == 1
+    assert report.families[0].possible_pairings[0].evidence_type == "explicit_text_pairing"
+    assert report.production_promotion_blocked is True
+    assert report.ready_for_benchmark is False
+    assert report.ready_for_customer_view is False
+
+
+def test_tecedrainprofile_source_pack_classifies_article_ranges():
+    profile = report_mod.classify_source_pack_row(
+        "Product name: TECEdrainprofile profile Article number: 670900 Nominal length: 900 mm",
+        {"product_family_hint": "TECEdrainprofile", "evidence_scope": "article_data"},
+    )
+    channel = report_mod.classify_source_pack_row(
+        "Product name: TECEdrainprofile Profilrinne Article number: 671900 Nominal length: 900 mm",
+        {"product_family_hint": "TECEdrainprofile", "evidence_scope": "article_data"},
+    )
+    drain = report_mod.classify_source_pack_row(
+        "Product name: TECEdrainprofile Ablauf Article number: 673003",
+        {"product_family_hint": "TECEdrainprofile", "evidence_scope": "article_data"},
+    )
+
+    assert profile["tece_article_role_candidate"] == "profile_body"
+    assert channel["tece_article_role_candidate"] == "profile_channel"
+    assert drain["tece_article_role_candidate"] == "drain_body"
