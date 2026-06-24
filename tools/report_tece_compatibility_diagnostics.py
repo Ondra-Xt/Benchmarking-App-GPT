@@ -5,6 +5,7 @@ import io
 import json
 import re
 import sys
+from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,13 @@ class TeceCompatibilityDiagnosticsReport:
     source_pack_path: str
     compatibility_diagnostic_available: bool
     compatibility_candidate_count: int
+    evidence_level_counts: dict[str, int]
+    evidence_type_counts: dict[str, int]
+    evidence_confidence_counts: dict[str, int]
+    production_safe_candidate_count: int
+    diagnostic_only_candidate_count: int
+    family_candidate_counts: dict[str, int]
+    family_evidence_level_counts: dict[str, dict[str, int]]
     explicit_article_level_compatibility_evidence_exists: bool
     production_promotion_blocked: bool
     ready_for_benchmark: bool
@@ -95,12 +103,12 @@ def _role_bucket(row: TeceSourcePackRow) -> str:
         return "body"
     if re.match(r"60[01]\d{3}$", article) or re.match(r"67[01]\d{3}$", article):
         return "cover"
+    if role in BODY_ROLES:
+        return "body"
     if role in COVER_ROLES or re.search(r"\b(cover|grate|abdeckung|rost|plate|designrost)\b", haystack):
         return "cover"
     if role == "complete_set" or re.search(r"\b(complete set|komplettset|set)\b", haystack):
         return "set"
-    if role in BODY_ROLES or article in {"650000", "650001", "650002", "650003", "650004", "673001", "673002", "673003"}:
-        return "body"
     if re.match(r"67[013]\d{3}$", article):
         return "body" if article in {"673001", "673002", "673003"} else "cover"
     if re.match(r"60[01]\d{3}$", article) or re.match(r"65\d{4}$", article):
@@ -146,6 +154,22 @@ def _pairing_for(body: TeceSourcePackRow, cover: TeceSourcePackRow) -> TeceCompa
     )
 
 
+
+def _sorted_counts(values: list[str]) -> dict[str, int]:
+    return dict(sorted(Counter(values).items()))
+
+
+def _family_pairing_counts(
+    family_reports: list[TeceCompatibilityFamilyDiagnostic],
+) -> tuple[dict[str, int], dict[str, dict[str, int]]]:
+    family_candidate_counts: dict[str, int] = {}
+    family_evidence_level_counts: dict[str, dict[str, int]] = {}
+    for family_report in family_reports:
+        pairings = family_report.possible_pairings
+        family_candidate_counts[family_report.product_family] = len(pairings)
+        family_evidence_level_counts[family_report.product_family] = _sorted_counts([p.evidence_type for p in pairings])
+    return dict(sorted(family_candidate_counts.items())), dict(sorted(family_evidence_level_counts.items()))
+
 def build_compatibility_diagnostics_report(source_pack: str | Path) -> TeceCompatibilityDiagnosticsReport:
     report = load_source_pack(source_pack)
     families = sorted({_family(row) for row in report.rows})
@@ -166,10 +190,20 @@ def build_compatibility_diagnostics_report(source_pack: str | Path) -> TeceCompa
             possible_pairings=pairings,
         ))
     explicit = any(p.evidence_type in HIGH_CONFIDENCE for p in all_pairings)
+    evidence_level_counts = _sorted_counts([p.evidence_type for p in all_pairings])
+    evidence_confidence_counts = _sorted_counts([p.evidence_confidence for p in all_pairings])
+    family_candidate_counts, family_evidence_level_counts = _family_pairing_counts(family_reports)
     return TeceCompatibilityDiagnosticsReport(
         source_pack_path=report.source_pack_path,
         compatibility_diagnostic_available=bool(report.rows),
         compatibility_candidate_count=len(all_pairings),
+        evidence_level_counts=evidence_level_counts,
+        evidence_type_counts=evidence_level_counts,
+        evidence_confidence_counts=evidence_confidence_counts,
+        production_safe_candidate_count=sum(1 for p in all_pairings if p.production_safe),
+        diagnostic_only_candidate_count=sum(1 for p in all_pairings if p.diagnostic_only),
+        family_candidate_counts=family_candidate_counts,
+        family_evidence_level_counts=family_evidence_level_counts,
         explicit_article_level_compatibility_evidence_exists=explicit,
         production_promotion_blocked=True,
         ready_for_benchmark=False,
@@ -191,7 +225,17 @@ def main(argv: list[str] | None = None) -> int:
     else:
         stream = io.StringIO()
         print("TECE compatibility diagnostics (diagnostic-only; production promotion blocked)", file=stream)
-        print(json.dumps(payload, indent=2, ensure_ascii=False), file=stream)
+        for key in (
+            "compatibility_candidate_count",
+            "evidence_level_counts",
+            "production_safe_candidate_count",
+            "diagnostic_only_candidate_count",
+            "family_evidence_level_counts",
+            "production_promotion_blocked",
+            "ready_for_benchmark",
+            "ready_for_customer_view",
+        ):
+            print(f"{key}: {json.dumps(payload[key], ensure_ascii=False, sort_keys=True)}", file=stream)
         write_text_output(stream.getvalue().rstrip("\n"), args.out)
     return 0
 

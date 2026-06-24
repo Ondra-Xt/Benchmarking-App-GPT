@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pandas as pd
 
 from src.canonical_aco_export import CanonicalAcoFrames
 from tools import report_tece_source_inventory as report_mod
+from tools import report_tece_compatibility_diagnostics as compat_mod
 from tools import report_tece_source_pack_classification as classification_mod
 from tools import report_tece_evidence_gap as gap_mod
 from tools.tece_report_output import write_json_output
+from tools.report_tece_source_inventory import TeceSourcePackRow
 
 
 def _sample_candidates():
@@ -685,3 +688,90 @@ def test_tece_evidence_gap_integrates_compatibility_diagnostic_counts_but_blocks
     assert report.article_level_compatibility_evidence_exists is False
     assert report.overall_status == "OVERALL: TECE_EVIDENCE_GAP_COMPATIBILITY_BLOCKED"
     assert report.production_promotion_blocked is True
+
+
+def _compat_row(article: str, role: str, length: int, family: str = "TECEdrainline", evidence: str = "") -> TeceSourcePackRow:
+    return TeceSourcePackRow(
+        source_file=f"{article}.txt",
+        source_type="txt",
+        product_family=family,
+        product_name=f"{family} {role} {length} mm {article}",
+        article_number=article,
+        source_url="",
+        nominal_length_mm=length,
+        flow_rate_lps="",
+        water_seal_mm="",
+        outlet_dn="",
+        height_adj_min_mm="",
+        height_adj_max_mm="",
+        installation_height_mm="",
+        evidence_text=evidence,
+        missing_fields=[],
+        confidence=0.5,
+        compatibility_evidence_type="missing",
+        article_level_compatibility_evidence_exists=False,
+        production_promotion_blocked=True,
+        ready_for_benchmark=False,
+        ready_for_customer_view=False,
+        recommended_next_action="diagnostic only",
+        tece_article_role_candidate=role,
+        tece_family_candidate=family,
+        classification_confidence="high",
+        classification_reason="test",
+        production_blocking_reason="missing_article_level_compatibility_matrix",
+    )
+
+
+def test_tece_compatibility_summary_counts_same_length_diagnostic_only(monkeypatch):
+    rows = [
+        _compat_row("650001", "channel_body", 900),
+        _compat_row("601900", "cover_or_grate", 900),
+    ]
+    monkeypatch.setattr(compat_mod, "load_source_pack", lambda source_pack: SimpleNamespace(source_pack_path=str(source_pack), rows=rows))
+
+    report = compat_mod.build_compatibility_diagnostics_report("synthetic")
+
+    assert report.compatibility_candidate_count == 1
+    assert report.evidence_level_counts == {"same_length_same_family_candidate": 1}
+    assert report.evidence_type_counts == {"same_length_same_family_candidate": 1}
+    assert report.evidence_confidence_counts == {"low": 1}
+    assert report.diagnostic_only_candidate_count == 1
+    assert report.production_safe_candidate_count == 0
+    assert report.family_candidate_counts == {"TECEdrainline": 1}
+    assert report.family_evidence_level_counts == {"TECEdrainline": {"same_length_same_family_candidate": 1}}
+    assert report.production_promotion_blocked is True
+    assert report.ready_for_benchmark is False
+    assert report.ready_for_customer_view is False
+
+
+def test_tece_compatibility_json_has_top_level_summary_counts(tmp_path):
+    out = tmp_path / "compatibility_report.json"
+
+    assert compat_mod.main(["--source-pack", "tests/fixtures/tece/source_pack", "--json", "--out", str(out)]) == 0
+
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert "evidence_level_counts" in payload
+    assert "evidence_confidence_counts" in payload
+    assert "production_safe_candidate_count" in payload
+    assert payload["production_safe_candidate_count"] == 0
+    assert payload["production_promotion_blocked"] is True
+    assert payload["ready_for_benchmark"] is False
+    assert payload["ready_for_customer_view"] is False
+
+
+def test_tece_compatibility_explicit_evidence_counted_but_not_promoted(monkeypatch):
+    evidence = "Compatibility matrix: Article 650001 compatible with 601900."
+    body = _compat_row("650001", "channel_body", 900, evidence=evidence)
+    cover = _compat_row("601900", "cover_or_grate", 900, evidence=evidence)
+    object.__setattr__(body, "compatibility_evidence_type", "explicit_matrix")
+    rows = [body, cover]
+    monkeypatch.setattr(compat_mod, "load_source_pack", lambda source_pack: SimpleNamespace(source_pack_path=str(source_pack), rows=rows))
+
+    report = compat_mod.build_compatibility_diagnostics_report("synthetic")
+
+    assert report.evidence_level_counts == {"explicit_article_level_matrix": 1}
+    assert report.evidence_confidence_counts == {"high": 1}
+    assert report.production_safe_candidate_count == 0
+    assert report.production_promotion_blocked is True
+    assert report.ready_for_benchmark is False
+    assert report.ready_for_customer_view is False
