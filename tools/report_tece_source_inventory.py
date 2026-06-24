@@ -254,6 +254,7 @@ GENERATED_SOURCE_PACK_OUTPUTS = {
     "inventory_report.json",
     "classification_report.json",
     "evidence_gap_report.json",
+    "compatibility_diagnostics_report.json",
 }
 EVIDENCE_SCOPES = {"article_data", "technical_datasheet", "cover_grate_matrix", "assembly_matrix", "unknown"}
 SOURCE_PACK_TECHNICAL_FIELDS = (

@@ -213,3 +213,12 @@ When conditional 10/20 mm values are present, the scalar `flow_rate_lps` field i
 A real catalogue source pack with `approved_for_benchmark_evidence=false` is not automatically synthetic. It may still report `approved_benchmark_evidence_missing=true`, but `synthetic_fixture_only` is reserved for packs where every source is explicitly marked as synthetic/test fixture evidence. Real catalogue source packs without explicit article-level matrix/assembly evidence report `OVERALL: TECE_EVIDENCE_GAP_COMPATIBILITY_BLOCKED`.
 
 Compatibility must remain blocked until explicit article-level cover/grate matrix or assembly evidence is implemented or sourced. This branch does not promote TECE to canonical `Products`, `Comparison`, `BOM_Options`, `Final_Assemblies`, or `Final_Set_Details`, and does not mark TECE rows `ready_for_benchmark` or `ready_for_customer_view`.
+
+## Compatibility diagnostics
+
+TECE compatibility diagnostics are available via
+`tools/report_tece_compatibility_diagnostics.py`. The report is diagnostic-only: it
+surfaces candidate pairings and evidence levels while keeping TECE production promotion
+blocked and readiness flags false. Same-length/same-family pairings are proposals only,
+not production evidence. See `docs/tece_compatibility_diagnostics.md` for the evidence
+levels and future promotion requirements.
