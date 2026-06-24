@@ -14,6 +14,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from tools.report_tece_source_inventory import SOURCE_PACK_TECHNICAL_FIELDS, TeceSourcePackReport, load_source_pack
 from tools.tece_report_output import write_json_output, write_text_output
+from tools.report_tece_compatibility_diagnostics import build_compatibility_diagnostics_report
 
 RECOMMENDED_NEXT_ACTIONS = [
     "Replace synthetic fixtures with real TECE public/approved source files.",
@@ -41,6 +42,8 @@ class TeceEvidenceGapReport:
     cover_grate_matrix_evidence_exists: bool
     assembly_matrix_evidence_exists: bool
     article_level_compatibility_evidence_exists: bool
+    compatibility_diagnostic_available: bool
+    compatibility_candidate_count: int
     production_promotion_blocked: bool
     ready_for_benchmark: bool
     ready_for_customer_view: bool
@@ -90,6 +93,7 @@ def build_evidence_gap_report(source_pack: str | Path) -> TeceEvidenceGapReport:
     real_assembly_matrix = report.assembly_matrix_evidence_exists and not synthetic_only
     real_article_compat = report.article_level_compatibility_evidence_exists and not synthetic_only
     complete_technical = _has_complete_technical_data(report)
+    compatibility_diagnostics = build_compatibility_diagnostics_report(source_pack)
     approved_missing = not any(source.get("approved_for_benchmark_evidence") is True for source in _manifest_sources(report))
 
     gap_summary = {
@@ -125,7 +129,9 @@ def build_evidence_gap_report(source_pack: str | Path) -> TeceEvidenceGapReport:
         missing_field_counts=report.missing_field_counts,
         cover_grate_matrix_evidence_exists=real_cover_matrix,
         assembly_matrix_evidence_exists=real_assembly_matrix,
-        article_level_compatibility_evidence_exists=real_article_compat,
+        article_level_compatibility_evidence_exists=real_article_compat and compatibility_diagnostics.explicit_article_level_compatibility_evidence_exists,
+        compatibility_diagnostic_available=compatibility_diagnostics.compatibility_diagnostic_available,
+        compatibility_candidate_count=compatibility_diagnostics.compatibility_candidate_count,
         production_promotion_blocked=True,
         ready_for_benchmark=False,
         ready_for_customer_view=False,

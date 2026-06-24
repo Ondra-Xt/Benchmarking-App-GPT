@@ -604,3 +604,84 @@ def test_real_catalog_source_pack_is_not_synthetic_only_and_is_compatibility_blo
     assert report.overall_status == "OVERALL: TECE_EVIDENCE_GAP_COMPATIBILITY_BLOCKED"
     assert report.production_promotion_blocked is True
     assert report.ready_for_benchmark is False
+
+
+def test_tece_compatibility_same_length_candidate_is_diagnostic_only(tmp_path):
+    from tools import report_tece_compatibility_diagnostics as compat_mod
+    (tmp_path / "pack.txt").write_text(
+        "TECEdrainline channel body Product name: body Article number: 650000 Nominal length: 1200 mm. "
+        "TECEdrainline grate Abdeckung Rost Product name: cover Article number: 601200 Nominal length: 1200 mm.",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "pack.txt", "source_type": "txt", "source_origin": "manual_download",
+        "evidence_scope": "article_data", "page_range_label": "TECEdrainline 271-294",
+        "product_family_hint": "TECEdrainline", "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+
+    report = compat_mod.build_compatibility_diagnostics_report(tmp_path)
+    pairings = report.families[0].possible_pairings
+
+    assert report.compatibility_candidate_count == 1
+    assert pairings[0].evidence_type == "same_length_same_family_candidate"
+    assert pairings[0].diagnostic_only is True
+    assert pairings[0].production_safe is False
+    assert report.production_promotion_blocked is True
+    assert report.ready_for_benchmark is False
+    assert report.ready_for_customer_view is False
+
+
+def test_tece_compatibility_explicit_text_pairing_detected_separately(tmp_path):
+    from tools import report_tece_compatibility_diagnostics as compat_mod
+    (tmp_path / "pack.txt").write_text(
+        "TECEdrainline channel body Product name: body Article number: 650000 Nominal length: 1200 mm. "
+        "TECEdrainline grate Product name: cover Article number: 601200 Nominal length: 1200 mm. "
+        "Compatibility note: Article 650000 is compatible with cover 601200.",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "pack.txt", "source_type": "txt", "source_origin": "manual_download",
+        "evidence_scope": "article_data", "page_range_label": "TECEdrainline 271-294",
+        "product_family_hint": "TECEdrainline", "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+
+    report = compat_mod.build_compatibility_diagnostics_report(tmp_path)
+    pairing = report.families[0].possible_pairings[0]
+
+    assert pairing.evidence_type == "explicit_text_pairing"
+    assert pairing.evidence_confidence == "high"
+    assert pairing.production_safe is False
+    assert report.explicit_article_level_compatibility_evidence_exists is True
+    assert report.production_promotion_blocked is True
+
+
+def test_tece_compatibility_json_out_writes_utf8(tmp_path):
+    from tools import report_tece_compatibility_diagnostics as compat_mod
+    out = tmp_path / "tece_compatibility.json"
+    assert compat_mod.main(["--source-pack", "tests/fixtures/tece/source_pack", "--json", "--out", str(out)]) == 0
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["production_promotion_blocked"] is True
+    assert payload["ready_for_benchmark"] is False
+    assert "families" in payload
+
+
+def test_tece_evidence_gap_integrates_compatibility_diagnostic_counts_but_blocks(tmp_path):
+    from tools import report_tece_evidence_gap as gap_mod
+    (tmp_path / "pack.txt").write_text(
+        "TECEdrainline channel body Article number: 650000 Nominal length: 1200 mm. "
+        "TECEdrainline grate Abdeckung Article number: 601200 Nominal length: 1200 mm.",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "pack.txt", "source_type": "txt", "source_origin": "manual_download",
+        "evidence_scope": "article_data", "page_range_label": "TECEdrainline 271-294",
+        "product_family_hint": "TECEdrainline", "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+
+    report = gap_mod.build_evidence_gap_report(tmp_path)
+
+    assert report.compatibility_diagnostic_available is True
+    assert report.compatibility_candidate_count == 1
+    assert report.article_level_compatibility_evidence_exists is False
+    assert report.overall_status == "OVERALL: TECE_EVIDENCE_GAP_COMPATIBILITY_BLOCKED"
+    assert report.production_promotion_blocked is True
