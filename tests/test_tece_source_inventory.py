@@ -845,3 +845,63 @@ def test_tece_compatibility_audit_does_not_change_aco_canonical_export():
     assert "tece" not in set(frames.products.get("manufacturer", []))
     assert "tece" not in set(frames.comparison.get("manufacturer", []))
     assert "tece" not in set(frames.bom_options.get("manufacturer", []))
+
+
+def test_tece_refined_roles_and_exclusions(monkeypatch):
+    rows = [
+        _compat_row("650000", "cover_or_grate", 900),
+        _compat_row("650001", "cover_or_grate", 900),
+        _compat_row("650002", "cover_or_grate", 900),
+        _compat_row("650003", "cover_or_grate", 900),
+        _compat_row("650004", "cover_or_grate", 900),
+        _compat_row("601900", "cover_or_grate", 900),
+        _compat_row("999999", "unknown", 900),
+    ]
+    monkeypatch.setattr(compat_mod, "load_source_pack", lambda source_pack: SimpleNamespace(source_pack_path=str(source_pack), rows=rows))
+
+    report = compat_mod.build_compatibility_diagnostics_report("synthetic")
+    family = report.families[0]
+
+    drain_articles = {row["article_number"] for row in family.candidate_body_channel_drain_articles if row["classified_role"] == "drain_body"}
+    assert {"650000", "650001", "650002", "650003", "650004"}.issubset(drain_articles)
+    assert report.excluded_reason_counts["same_role_pairing_not_actionable"] >= 1
+    assert report.excluded_reason_counts["unknown_role_without_explicit_text_pairing"] >= 1
+    assert report.actionable_candidate_count < report.compatibility_candidate_count
+
+
+def test_tece_complete_sets_summarized_and_drainway_zero_actionable(monkeypatch):
+    rows = [
+        _compat_row("800001", "complete_set", 1200, family="TECEdrainline", evidence="Komplettset bestehend aus Rinne und Rost"),
+        _compat_row("DW001", "unknown", 0, family="TECEdrainway", evidence="TECEdrainway accessory row"),
+    ]
+    monkeypatch.setattr(compat_mod, "load_source_pack", lambda source_pack: SimpleNamespace(source_pack_path=str(source_pack), rows=rows))
+
+    report = compat_mod.build_compatibility_diagnostics_report("synthetic")
+
+    assert report.complete_set_article_count == 1
+    assert report.family_source_row_counts["TECEdrainway"] == 1
+    assert report.family_actionable_candidate_counts["TECEdrainway"] == 0
+    assert report.production_promotion_blocked is True
+    assert report.ready_for_benchmark is False
+    assert report.ready_for_customer_view is False
+
+
+def test_tece_gap_exposes_actionable_count_and_stays_blocked(tmp_path):
+    from tools import report_tece_evidence_gap as gap_mod
+    (tmp_path / "pack.txt").write_text(
+        "TECEdrainline Ablauf Article number: 650000 Nominal length: 1200 mm. "
+        "TECEdrainline Abdeckung Article number: 601200 Nominal length: 1200 mm.",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "pack.txt", "source_type": "txt", "source_origin": "manual_download",
+        "evidence_scope": "article_data", "page_range_label": "TECEdrainline 271-294",
+        "product_family_hint": "TECEdrainline", "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+
+    report = gap_mod.build_evidence_gap_report(tmp_path)
+
+    assert report.actionable_compatibility_candidate_count == 1
+    assert report.production_promotion_blocked is True
+    assert report.ready_for_benchmark is False
+    assert report.ready_for_customer_view is False

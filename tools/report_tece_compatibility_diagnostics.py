@@ -17,8 +17,19 @@ if str(REPO_ROOT) not in sys.path:
 from tools.report_tece_source_inventory import TeceSourcePackRow, load_source_pack
 from tools.tece_report_output import write_json_output, write_text_output
 
-BODY_ROLES = {"channel_body", "drain_body", "complete_set", "technical_datasheet_only"}
-COVER_ROLES = {"cover_or_grate"}
+BODY_ROLES = {"channel_body", "drain_body", "profile_body", "drain_component", "technical_datasheet_only"}
+COVER_ROLES = {"cover_or_grate", "cover_plate"}
+COMPLETE_SET_SIGNALS_RE = re.compile(r"(?i)\b(complete set|komplettset|set|bestehend\s+aus)\b")
+COVER_SIGNALS_RE = re.compile(r"(?i)\b(designrost|designabdeckung|fliesenmulde|abdeckung|rost|cover|grate|plate)\b")
+ACTIONABLE_ROLE_PAIRS = {
+    ("drain_body", "cover_or_grate"),
+    ("drain_body", "cover_plate"),
+    ("channel_body", "cover_or_grate"),
+    ("channel_body", "cover_plate"),
+    ("profile_body", "drain_body"),
+    ("profile_body", "drain_component"),
+}
+EXPLICIT_ONLY_ROLE_PAIRS = {("profile_body", "cover_or_grate"), ("profile_body", "cover_plate")}
 HIGH_CONFIDENCE = {"explicit_article_level_matrix", "explicit_text_pairing"}
 
 
@@ -49,10 +60,13 @@ class TeceCompatibilityPairing:
 @dataclass(frozen=True)
 class TeceCompatibilityFamilyDiagnostic:
     product_family: str
+    source_row_count: int
     candidate_body_channel_drain_articles: list[dict[str, Any]]
     candidate_cover_grate_plate_articles: list[dict[str, Any]]
     complete_set_articles: list[dict[str, Any]]
+    unknown_role_articles: list[dict[str, Any]]
     possible_pairings: list[TeceCompatibilityPairing]
+    excluded_pairings: list[dict[str, Any]]
     production_promotion_blocked: bool = True
     ready_for_benchmark: bool = False
     ready_for_customer_view: bool = False
@@ -65,6 +79,14 @@ class TeceCompatibilityDiagnosticsReport:
     source_pack_path: str
     compatibility_diagnostic_available: bool
     compatibility_candidate_count: int
+    actionable_candidate_count: int
+    excluded_candidate_count: int
+    excluded_reason_counts: dict[str, int]
+    complete_set_article_count: int
+    unknown_role_row_count: int
+    family_source_row_counts: dict[str, int]
+    family_actionable_candidate_counts: dict[str, int]
+    family_excluded_reason_counts: dict[str, dict[str, int]]
     evidence_level_counts: dict[str, int]
     evidence_type_counts: dict[str, int]
     evidence_confidence_counts: dict[str, int]
@@ -91,6 +113,7 @@ def _row_dict(row: TeceSourcePackRow) -> dict[str, Any]:
     return {
         "article_number": row.article_number,
         "role_candidate": row.tece_article_role_candidate,
+        "classified_role": _classified_role(row),
         "nominal_length_mm": row.nominal_length_mm,
         "product_name": row.product_name,
         "source_file": row.source_file,
@@ -101,26 +124,38 @@ def _row_dict(row: TeceSourcePackRow) -> dict[str, Any]:
     }
 
 
-def _role_bucket(row: TeceSourcePackRow) -> str:
-    role = row.tece_article_role_candidate
-    haystack = f"{row.product_name} {row.evidence_text} {row.article_number}".lower()
+def _classified_role(row: TeceSourcePackRow) -> str:
+    role = _clean(row.tece_article_role_candidate)
+    haystack = f"{row.product_name} {row.evidence_text}".lower()
     article = _clean(row.article_number)
-    if article in {"650000", "650001", "650002", "650003", "650004", "673001", "673002", "673003"}:
-        return "body"
-    if re.match(r"60[01]\d{3}$", article) or re.match(r"67[01]\d{3}$", article):
-        return "cover"
-    if role in BODY_ROLES:
-        return "body"
-    if role in COVER_ROLES or re.search(r"\b(cover|grate|abdeckung|rost|plate|designrost)\b", haystack):
-        return "cover"
-    if role == "complete_set" or re.search(r"\b(complete set|komplettset|set)\b", haystack):
-        return "set"
-    if re.match(r"67[013]\d{3}$", article):
-        return "body" if article in {"673001", "673002", "673003"} else "cover"
-    if re.match(r"60[01]\d{3}$", article) or re.match(r"65\d{4}$", article):
-        return "cover" if "65000" not in article else "body"
-    return "body" if role != "unknown" else "unknown"
+    if COMPLETE_SET_SIGNALS_RE.search(haystack):
+        return "complete_set"
+    if article in {"650000", "650001", "650002", "650003", "650004"}:
+        return "drain_body"
+    if article in {"673001", "673002", "673003"}:
+        return "drain_body" if role != "drain_component" else "drain_component"
+    if COVER_SIGNALS_RE.search(haystack):
+        return "cover_plate" if re.search(r"(?i)\b(plate|abdeckung|designabdeckung|fliesenmulde)\b", haystack) else "cover_or_grate"
+    if role == "complete_set":
+        return "complete_set"
+    if role in {"channel_body", "drain_body", "profile_body", "drain_component"}:
+        return role
+    if role in COVER_ROLES:
+        return role
+    if role == "unknown":
+        return "unknown"
+    return role or "unknown"
 
+
+def _role_bucket(row: TeceSourcePackRow) -> str:
+    role = _classified_role(row)
+    if role in {"channel_body", "drain_body", "profile_body", "drain_component", "technical_datasheet_only"}:
+        return "body"
+    if role in COVER_ROLES:
+        return "cover"
+    if role == "complete_set":
+        return "set"
+    return "unknown"
 
 EXPLICIT_TEXT_SIGNALS = (
     r"passend\s+zu",
@@ -176,12 +211,38 @@ def _pairing_for(body: TeceSourcePackRow, cover: TeceSourcePackRow) -> TeceCompa
     return TeceCompatibilityPairing(
         family=_family(body), body_or_drain_article=body.article_number, cover_grate_plate_article=cover.article_number,
         nominal_length_mm=body.nominal_length_mm or cover.nominal_length_mm, evidence_type=evidence_type,
-        evidence_level=evidence_type, role_pair=f"{body.tece_article_role_candidate or _role_bucket(body)}_to_{cover.tece_article_role_candidate or _role_bucket(cover)}",
+        evidence_level=evidence_type, role_pair=f"{_classified_role(body)}_to_{_classified_role(cover)}",
         evidence_confidence=confidence, diagnostic_only=True, production_safe=False,
         source_file=source.source_file, source_page_start=source.source_page_start, source_page_end=source.source_page_end,
         page_range_label=source.page_range_label, evidence_text_or_reason=reason,
     )
 
+
+
+def _exclusion_reason(left: TeceSourcePackRow, right: TeceSourcePackRow, pairing: TeceCompatibilityPairing) -> str | None:
+    left_role = _classified_role(left)
+    right_role = _classified_role(right)
+    if pairing.evidence_type == "explicit_text_pairing":
+        return None
+    if "unknown" in {left_role, right_role}:
+        return "unknown_role_without_explicit_text_pairing"
+    if "complete_set" in {left_role, right_role}:
+        return "complete_set_article_summarized_not_paired"
+    if left_role == right_role:
+        return "same_role_pairing_not_actionable"
+    if (left_role, right_role) in ACTIONABLE_ROLE_PAIRS:
+        return None
+    if (left_role, right_role) in EXPLICIT_ONLY_ROLE_PAIRS:
+        return "role_pair_requires_explicit_text_pairing"
+    return "role_pair_not_actionable"
+
+
+def _excluded_pairing_dict(left: TeceSourcePackRow, right: TeceSourcePackRow, pairing: TeceCompatibilityPairing, reason: str) -> dict[str, Any]:
+    data = asdict(pairing)
+    data["excluded_reason"] = reason
+    data["left_classified_role"] = _classified_role(left)
+    data["right_classified_role"] = _classified_role(right)
+    return data
 
 
 def _sorted_counts(values: list[str]) -> dict[str, int]:
@@ -209,14 +270,28 @@ def build_compatibility_diagnostics_report(source_pack: str | Path) -> TeceCompa
         bodies = [row for row in rows if _role_bucket(row) == "body"]
         covers = [row for row in rows if _role_bucket(row) == "cover"]
         sets = [row for row in rows if _role_bucket(row) == "set"]
-        pairings = [_pairing_for(body, cover) for body in bodies for cover in covers]
+        unknowns = [row for row in rows if _role_bucket(row) == "unknown"]
+        candidate_rows = bodies + covers + sets + unknowns
+        pairings: list[TeceCompatibilityPairing] = []
+        excluded: list[dict[str, Any]] = []
+        for i, left in enumerate(candidate_rows):
+            for right in candidate_rows[i + 1:]:
+                pairing = _pairing_for(left, right)
+                reason = _exclusion_reason(left, right, pairing)
+                if reason:
+                    excluded.append(_excluded_pairing_dict(left, right, pairing, reason))
+                else:
+                    pairings.append(pairing)
         all_pairings.extend(pairings)
         family_reports.append(TeceCompatibilityFamilyDiagnostic(
             product_family=family,
+            source_row_count=len(rows),
             candidate_body_channel_drain_articles=[_row_dict(row) for row in bodies],
             candidate_cover_grate_plate_articles=[_row_dict(row) for row in covers],
             complete_set_articles=[_row_dict(row) for row in sets],
+            unknown_role_articles=[_row_dict(row) for row in unknowns],
             possible_pairings=pairings,
+            excluded_pairings=excluded,
         ))
     explicit = any(p.evidence_type in HIGH_CONFIDENCE for p in all_pairings)
     evidence_level_counts = _sorted_counts([p.evidence_type for p in all_pairings])
@@ -225,12 +300,20 @@ def build_compatibility_diagnostics_report(source_pack: str | Path) -> TeceCompa
     return TeceCompatibilityDiagnosticsReport(
         source_pack_path=report.source_pack_path,
         compatibility_diagnostic_available=bool(report.rows),
-        compatibility_candidate_count=len(all_pairings),
+        compatibility_candidate_count=len(all_pairings) + sum(len(f.excluded_pairings) for f in family_reports),
+        actionable_candidate_count=len(all_pairings),
+        excluded_candidate_count=sum(len(f.excluded_pairings) for f in family_reports),
+        excluded_reason_counts=_sorted_counts([e["excluded_reason"] for f in family_reports for e in f.excluded_pairings]),
+        complete_set_article_count=sum(len(f.complete_set_articles) for f in family_reports),
+        unknown_role_row_count=sum(len(f.unknown_role_articles) for f in family_reports),
+        family_source_row_counts=dict(sorted((f.product_family, f.source_row_count) for f in family_reports)),
+        family_actionable_candidate_counts=family_candidate_counts,
+        family_excluded_reason_counts=dict(sorted((f.product_family, _sorted_counts([e["excluded_reason"] for e in f.excluded_pairings])) for f in family_reports)),
         evidence_level_counts=evidence_level_counts,
         evidence_type_counts=evidence_level_counts,
         evidence_confidence_counts=evidence_confidence_counts,
-        production_safe_candidate_count=sum(1 for p in all_pairings if p.production_safe),
-        diagnostic_only_candidate_count=sum(1 for p in all_pairings if p.diagnostic_only),
+        production_safe_candidate_count=0,
+        diagnostic_only_candidate_count=len(all_pairings) + sum(len(f.excluded_pairings) for f in family_reports),
         family_candidate_counts=family_candidate_counts,
         family_evidence_level_counts=family_evidence_level_counts,
         explicit_article_level_compatibility_evidence_exists=explicit,
@@ -256,6 +339,14 @@ def main(argv: list[str] | None = None) -> int:
         print("TECE compatibility diagnostics (diagnostic-only; production promotion blocked)", file=stream)
         for key in (
             "compatibility_candidate_count",
+            "actionable_candidate_count",
+            "excluded_candidate_count",
+            "excluded_reason_counts",
+            "complete_set_article_count",
+            "unknown_role_row_count",
+            "family_source_row_counts",
+            "family_actionable_candidate_counts",
+            "family_excluded_reason_counts",
             "evidence_level_counts",
             "production_safe_candidate_count",
             "diagnostic_only_candidate_count",

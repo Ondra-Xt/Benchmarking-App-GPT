@@ -77,3 +77,32 @@ The audit detects diagnostic-only explicit text signals such as `passend zu`, `k
 ### Future criteria for TECE production promotion
 
 Future TECE promotion should require, at minimum, reviewed official article-level compatibility evidence such as an explicit article-level matrix or clearly explicit article-level text pairing, complete technical data for the production assembly context, documented handling of conditional technical values, and manual review confirming that no compatibility was inferred from nominal length, family membership, section proximity, or ambiguous catalogue context. Until those criteria exist, TECE remains blocked from canonical Products, Comparison, BOM_Options, Final_Assemblies, Final_Set_Details, benchmark readiness, and customer-view readiness.
+
+## Actionable vs excluded diagnostic candidates
+
+The diagnostics now separate raw diagnostic pairings from actionable assembly-review
+candidates. `compatibility_candidate_count` is the raw diagnostic total, while
+`actionable_candidate_count` counts only role pairs that are meaningful for a possible
+assembly audit, such as `drain_body_to_cover_or_grate`, `channel_body_to_cover_or_grate`,
+`profile_body_to_drain_body`, and `drain_body_to_cover_plate`. Excluded raw diagnostics
+remain visible through `excluded_candidate_count`, `excluded_reason_counts`, family-level
+excluded reason counts, and bounded excluded examples.
+
+Same-role pairings such as `drain_body_to_drain_body`, `cover_or_grate_to_cover_or_grate`,
+and `complete_set_to_complete_set` are excluded with
+`same_role_pairing_not_actionable` because they do not represent an assembly relation.
+Pairings involving `unknown` roles are excluded with
+`unknown_role_without_explicit_text_pairing` unless explicit text evidence names both
+articles in a pairing statement; this preserves the raw source rows without letting
+ambiguous catalogue rows create noisy assembly candidates.
+
+Complete-set articles are summarized separately under `complete_set_articles` and the
+top-level `complete_set_article_count`. They are not broadly paired into assemblies unless
+explicit article-level text evidence supports a specific relation, because set rows usually
+represent already packaged articles rather than component-to-component compatibility rules.
+
+All actionable and excluded TECE compatibility diagnostics remain diagnostic-only. Same
+length, same family, same catalogue section, and explicit section proximity are never used
+for production compatibility. `explicit_text_pairing` still requires manual review, and
+TECE production promotion remains blocked with `ready_for_benchmark=false` and
+`ready_for_customer_view=false`.
