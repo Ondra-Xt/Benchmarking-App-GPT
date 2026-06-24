@@ -29,6 +29,8 @@ class TeceCompatibilityPairing:
     cover_grate_plate_article: str
     nominal_length_mm: Any
     evidence_type: str
+    evidence_level: str
+    role_pair: str
     evidence_confidence: str
     diagnostic_only: bool
     production_safe: bool
@@ -40,6 +42,8 @@ class TeceCompatibilityPairing:
     production_promotion_blocked: bool = True
     ready_for_benchmark: bool = False
     ready_for_customer_view: bool = False
+    requires_manual_review: bool = True
+    why_not_production_safe: str = "TECE production promotion is blocked pending manual review of explicit article-level compatibility evidence and production criteria; diagnostic candidates are not production-safe."
 
 
 @dataclass(frozen=True)
@@ -52,6 +56,8 @@ class TeceCompatibilityFamilyDiagnostic:
     production_promotion_blocked: bool = True
     ready_for_benchmark: bool = False
     ready_for_customer_view: bool = False
+    requires_manual_review: bool = True
+    why_not_production_safe: str = "TECE production promotion is blocked pending manual review of explicit article-level compatibility evidence and production criteria; diagnostic candidates are not production-safe."
 
 
 @dataclass(frozen=True)
@@ -116,11 +122,33 @@ def _role_bucket(row: TeceSourcePackRow) -> str:
     return "body" if role != "unknown" else "unknown"
 
 
+EXPLICIT_TEXT_SIGNALS = (
+    r"passend\s+zu",
+    r"kombinierbar\s+mit",
+    r"bestehend\s+aus",
+    r"für\s+[^.!?;]{0,80}\bRinne\b",
+    r"für\s+[^.!?;]{0,80}\bAblauf\b",
+    r"suitable\s+for",
+    r"compatible\s+with",
+    r"consists\s+of",
+)
+_EXPLICIT_TEXT_SIGNAL_RE = re.compile("(?i)(" + "|".join(EXPLICIT_TEXT_SIGNALS) + ")")
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?;])\s+")
+
+
+def _sentences(text: str) -> list[str]:
+    return [part.strip() for part in _SENTENCE_SPLIT_RE.split(text or "") if part.strip()]
+
+
 def _context_has_pairing(row: TeceSourcePackRow, a: str, b: str) -> bool:
+    return any(a in sentence and b in sentence and _EXPLICIT_TEXT_SIGNAL_RE.search(sentence) for sentence in _sentences(row.evidence_text or ""))
+
+
+def _context_has_matrix_pairing(row: TeceSourcePackRow, a: str, b: str) -> bool:
     text = row.evidence_text or ""
     if a not in text or b not in text:
         return False
-    return bool(re.search(r"(?i)(compatible with|suitable for|fits|pair(?:ed|ing)? with|kombinierbar|passend|geeignet|zugeordnet|assembly|matrix)", text))
+    return bool(re.search(r"(?i)(matrix|table|tabelle)", text)) and _context_has_pairing(row, a, b)
 
 
 def _pairing_for(body: TeceSourcePackRow, cover: TeceSourcePackRow) -> TeceCompatibilityPairing:
@@ -128,9 +156,9 @@ def _pairing_for(body: TeceSourcePackRow, cover: TeceSourcePackRow) -> TeceCompa
     evidence_type = "insufficient_evidence"
     reason = "No explicit article-level pairing text or reliable matrix evidence found."
     source = body
-    if any(r.compatibility_evidence_type == "explicit_matrix" and re.search(r"(?i)(matrix|table|tabelle)", r.evidence_text or "") for r in rows) and any(_context_has_pairing(r, body.article_number, cover.article_number) for r in rows):
+    if any(r.compatibility_evidence_type == "explicit_matrix" and _context_has_matrix_pairing(r, body.article_number, cover.article_number) for r in rows):
         evidence_type = "explicit_article_level_matrix"
-        source = next(r for r in rows if _context_has_pairing(r, body.article_number, cover.article_number))
+        source = next(r for r in rows if _context_has_matrix_pairing(r, body.article_number, cover.article_number))
         reason = source.evidence_text
     elif any(_context_has_pairing(r, body.article_number, cover.article_number) for r in rows):
         evidence_type = "explicit_text_pairing"
@@ -148,7 +176,8 @@ def _pairing_for(body: TeceSourcePackRow, cover: TeceSourcePackRow) -> TeceCompa
     return TeceCompatibilityPairing(
         family=_family(body), body_or_drain_article=body.article_number, cover_grate_plate_article=cover.article_number,
         nominal_length_mm=body.nominal_length_mm or cover.nominal_length_mm, evidence_type=evidence_type,
-        evidence_confidence=confidence, diagnostic_only=evidence_type not in HIGH_CONFIDENCE, production_safe=False,
+        evidence_level=evidence_type, role_pair=f"{body.tece_article_role_candidate or _role_bucket(body)}_to_{cover.tece_article_role_candidate or _role_bucket(cover)}",
+        evidence_confidence=confidence, diagnostic_only=True, production_safe=False,
         source_file=source.source_file, source_page_start=source.source_page_start, source_page_end=source.source_page_end,
         page_range_label=source.page_range_label, evidence_text_or_reason=reason,
     )

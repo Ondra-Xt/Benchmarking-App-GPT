@@ -44,6 +44,7 @@ class TeceEvidenceGapReport:
     article_level_compatibility_evidence_exists: bool
     compatibility_diagnostic_available: bool
     compatibility_candidate_count: int
+    explicit_text_pairing_candidate_count: int
     production_promotion_blocked: bool
     ready_for_benchmark: bool
     ready_for_customer_view: bool
@@ -132,6 +133,7 @@ def build_evidence_gap_report(source_pack: str | Path) -> TeceEvidenceGapReport:
         article_level_compatibility_evidence_exists=real_article_compat and compatibility_diagnostics.explicit_article_level_compatibility_evidence_exists,
         compatibility_diagnostic_available=compatibility_diagnostics.compatibility_diagnostic_available,
         compatibility_candidate_count=compatibility_diagnostics.compatibility_candidate_count,
+        explicit_text_pairing_candidate_count=compatibility_diagnostics.evidence_level_counts.get("explicit_text_pairing", 0),
         production_promotion_blocked=True,
         ready_for_benchmark=False,
         ready_for_customer_view=False,
