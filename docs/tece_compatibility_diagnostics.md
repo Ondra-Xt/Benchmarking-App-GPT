@@ -51,3 +51,29 @@ article-level compatibility/assembly evidence, complete article-level technical 
 manual review of conditional values, and an explicit production-gate change. Same
 nominal length, same family, or same catalogue section alone must never be used as a
 production compatibility rule.
+
+## Compatibility evidence audit
+
+`tools/report_tece_compatibility_evidence_audit.py` provides a diagnostic audit layer on top of the TECE compatibility diagnostics payload. It is intended to explain why possible TECE body/channel/drain-to-cover/grate/plate candidates were classified as `explicit_section_pairing`, `same_length_same_family_candidate`, `explicit_text_pairing`, or other diagnostic evidence levels.
+
+Example usage:
+
+```bash
+python tools/report_tece_compatibility_evidence_audit.py --source-pack tests/fixtures/tece/source_pack --json --out tece_compatibility_audit.json
+```
+
+The audit summarizes evidence-level counts, family evidence-level counts, role-pair counts, page-range counts, production-safe and diagnostic-only counts, and the production/readiness gates. It also includes bounded sample candidates per family and evidence level with article numbers, nominal length, source provenance, evidence text/reason, and `why_not_production_safe`.
+
+### Why `explicit_section_pairing` is not production evidence
+
+`explicit_section_pairing` means two article candidates appeared in the same TECE family catalogue section or manifest page range. This can help auditors find nearby catalogue evidence, but it does not prove that the two article numbers are compatible with each other. The report therefore keeps these candidates diagnostic-only, production-unsafe, and blocked from benchmark/customer-view readiness.
+
+### Manual review for `explicit_text_pairing`
+
+The audit detects diagnostic-only explicit text signals such as `passend zu`, `kombinierbar mit`, `bestehend aus`, `für ... Rinne`, `für ... Ablauf`, `suitable for`, `compatible with`, and `consists of`. If both candidate article numbers appear in the same sentence or explicit phrase containing one of those signals, the candidate is classified as `explicit_text_pairing` and marked high confidence for audit triage.
+
+`explicit_text_pairing` is still not automatically production-safe. These candidates carry `requires_manual_review=True`, `production_safe=False`, and the global TECE production promotion block remains in place until reviewed criteria are implemented and approved.
+
+### Future criteria for TECE production promotion
+
+Future TECE promotion should require, at minimum, reviewed official article-level compatibility evidence such as an explicit article-level matrix or clearly explicit article-level text pairing, complete technical data for the production assembly context, documented handling of conditional technical values, and manual review confirming that no compatibility was inferred from nominal length, family membership, section proximity, or ambiguous catalogue context. Until those criteria exist, TECE remains blocked from canonical Products, Comparison, BOM_Options, Final_Assemblies, Final_Set_Details, benchmark readiness, and customer-view readiness.

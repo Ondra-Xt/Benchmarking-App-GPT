@@ -775,3 +775,73 @@ def test_tece_compatibility_explicit_evidence_counted_but_not_promoted(monkeypat
     assert report.production_promotion_blocked is True
     assert report.ready_for_benchmark is False
     assert report.ready_for_customer_view is False
+
+
+def test_tece_compatibility_evidence_audit_detects_explicit_text_pairing(tmp_path):
+    from tools import report_tece_compatibility_evidence_audit as audit_mod
+    (tmp_path / "pack.txt").write_text(
+        "TECEdrainline channel body Product name: body Article number: 650000 Nominal length: 1200 mm. "
+        "TECEdrainline grate Product name: cover Article number: 601200 Nominal length: 1200 mm. "
+        "Passend zu Rinne 650000 ist Abdeckung 601200.",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "pack.txt", "source_type": "txt", "source_origin": "manual_download",
+        "evidence_scope": "article_data", "page_range_label": "TECEdrainline 271-294",
+        "product_family_hint": "TECEdrainline", "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+
+    report = audit_mod.build_audit_report(tmp_path)
+    sample = report["examples_by_family_and_evidence_level"]["TECEdrainline"]["explicit_text_pairing"][0]
+
+    assert report["explicit_text_pairing_candidate_count"] == 1
+    assert sample["requires_manual_review"] is True
+    assert "blocked" in sample["why_not_production_safe"]
+    assert report["production_promotion_blocked"] is True
+    assert report["ready_for_benchmark"] is False
+    assert report["ready_for_customer_view"] is False
+
+
+def test_tece_compatibility_evidence_audit_same_length_and_section_remain_diagnostic(monkeypatch):
+    from tools import report_tece_compatibility_evidence_audit as audit_mod
+    rows = [
+        _compat_row("650001", "channel_body", 900, evidence="section body"),
+        _compat_row("601900", "cover_or_grate", 900, evidence="section cover"),
+        _compat_row("650002", "channel_body", 1000, evidence="section body"),
+        _compat_row("601100", "cover_or_grate", 1100, evidence="section cover"),
+    ]
+    for row in rows:
+        object.__setattr__(row, "page_range_label", "TECEdrainline 271-294")
+    monkeypatch.setattr(compat_mod, "load_source_pack", lambda source_pack: SimpleNamespace(source_pack_path=str(source_pack), rows=rows))
+
+    report = audit_mod.build_audit_report("synthetic")
+
+    assert report["evidence_level_counts"]["same_length_same_family_candidate"] >= 1
+    assert report["evidence_level_counts"]["explicit_section_pairing"] >= 1
+    assert report["diagnostic_only_candidate_count"] == report["compatibility_candidate_count"]
+    for samples in report["examples_by_family_and_evidence_level"]["TECEdrainline"].values():
+        assert all(sample["why_not_production_safe"] for sample in samples)
+
+
+def test_tece_compatibility_evidence_audit_json_out_writes_utf8(tmp_path):
+    from tools import report_tece_compatibility_evidence_audit as audit_mod
+    out = tmp_path / "audit.json"
+
+    assert audit_mod.main(["--source-pack", "tests/fixtures/tece/source_pack", "--json", "--out", str(out)]) == 0
+
+    text = out.read_text(encoding="utf-8")
+    payload = json.loads(text)
+    assert payload["production_promotion_blocked"] is True
+    assert payload["ready_for_benchmark"] is False
+    assert payload["ready_for_customer_view"] is False
+    assert "examples_by_family_and_evidence_level" in payload
+
+
+def test_tece_compatibility_audit_does_not_change_aco_canonical_export():
+    from src.canonical_aco_export import build_canonical_aco_frames
+
+    frames = build_canonical_aco_frames()
+
+    assert "tece" not in set(frames.products.get("manufacturer", []))
+    assert "tece" not in set(frames.comparison.get("manufacturer", []))
+    assert "tece" not in set(frames.bom_options.get("manufacturer", []))
