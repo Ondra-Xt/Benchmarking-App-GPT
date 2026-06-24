@@ -78,6 +78,37 @@ The audit detects diagnostic-only explicit text signals such as `passend zu`, `k
 
 Future TECE promotion should require, at minimum, reviewed official article-level compatibility evidence such as an explicit article-level matrix or clearly explicit article-level text pairing, complete technical data for the production assembly context, documented handling of conditional technical values, and manual review confirming that no compatibility was inferred from nominal length, family membership, section proximity, or ambiguous catalogue context. Until those criteria exist, TECE remains blocked from canonical Products, Comparison, BOM_Options, Final_Assemblies, Final_Set_Details, benchmark readiness, and customer-view readiness.
 
+
+## TECEdrainprofile role model
+
+TECEdrainprofile uses a family-specific diagnostic role model because profile
+articles and drain articles live in separate catalogue number ranges. Articles in
+the `670xxx` and `671xxx` profile ranges are classified as `profile_body` or
+`profile_channel` when no stronger explicit text says otherwise. Articles
+`673001`, `673002`, and `673003` are classified as `drain_body` or
+`drain_component`. Accessory-like `674xxx` and `675xxx` rows remain `unknown` or
+accessory-style diagnostic rows unless the catalogue text clearly identifies a
+profile or drain function. Complete sets are still summarized separately and are
+not broadly paired as component compatibility evidence.
+
+For TECEdrainprofile, `profile_body_to_drain_body` and
+`profile_channel_to_drain_body` are actionable diagnostic role pairs. They are
+useful for manual audit because they represent a plausible profile-to-drain
+assembly relation, but they are not production-safe: the diagnostics must not
+infer compatibility from article range, same nominal length, or shared family
+section. `profile_body_to_cover_or_grate` is actionable only when explicit text
+evidence names both articles in a pairing statement. Same-role profile pairings
+remain excluded as `same_role_pairing_not_actionable`, and profile-to-unknown
+pairs remain excluded unless `explicit_text_pairing` evidence exists.
+
+Future TECEdrainprofile production promotion requires reviewed, article-level
+compatibility evidence that explicitly links the profile article, drain article,
+and any cover/grate/plate article; reviewed technical completeness for required
+benchmark fields; and an implemented promotion policy that keeps TECE rows out of
+canonical ACO exports until those criteria are approved. Until then, all
+TECEdrainprofile candidates are diagnostic-only, require manual review, keep
+`production_promotion_blocked=true`, and keep both readiness flags false.
+
 ## Actionable vs excluded diagnostic candidates
 
 The diagnostics now separate raw diagnostic pairings from actionable assembly-review

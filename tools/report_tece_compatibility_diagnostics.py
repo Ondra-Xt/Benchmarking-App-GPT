@@ -17,7 +17,7 @@ if str(REPO_ROOT) not in sys.path:
 from tools.report_tece_source_inventory import TeceSourcePackRow, load_source_pack
 from tools.tece_report_output import write_json_output, write_text_output
 
-BODY_ROLES = {"channel_body", "drain_body", "profile_body", "drain_component", "technical_datasheet_only"}
+BODY_ROLES = {"channel_body", "drain_body", "profile_body", "profile_channel", "drain_component", "technical_datasheet_only"}
 COVER_ROLES = {"cover_or_grate", "cover_plate"}
 COMPLETE_SET_SIGNALS_RE = re.compile(r"(?i)\b(complete set|komplettset|set|bestehend\s+aus)\b")
 COVER_SIGNALS_RE = re.compile(r"(?i)\b(designrost|designabdeckung|fliesenmulde|abdeckung|rost|cover|grate|plate)\b")
@@ -27,7 +27,9 @@ ACTIONABLE_ROLE_PAIRS = {
     ("channel_body", "cover_or_grate"),
     ("channel_body", "cover_plate"),
     ("profile_body", "drain_body"),
+    ("profile_channel", "drain_body"),
     ("profile_body", "drain_component"),
+    ("profile_channel", "drain_component"),
 }
 EXPLICIT_ONLY_ROLE_PAIRS = {("profile_body", "cover_or_grate"), ("profile_body", "cover_plate")}
 HIGH_CONFIDENCE = {"explicit_article_level_matrix", "explicit_text_pairing"}
@@ -132,13 +134,17 @@ def _classified_role(row: TeceSourcePackRow) -> str:
         return "complete_set"
     if article in {"650000", "650001", "650002", "650003", "650004"}:
         return "drain_body"
+    if _family(row) == "TECEdrainprofile" and re.fullmatch(r"67[01]\d{3}", article):
+        if re.search(r"(?i)\b(channel|rinne|profilrinne)\b", haystack):
+            return "profile_channel"
+        return "profile_body"
     if article in {"673001", "673002", "673003"}:
         return "drain_body" if role != "drain_component" else "drain_component"
     if COVER_SIGNALS_RE.search(haystack):
         return "cover_plate" if re.search(r"(?i)\b(plate|abdeckung|designabdeckung|fliesenmulde)\b", haystack) else "cover_or_grate"
     if role == "complete_set":
         return "complete_set"
-    if role in {"channel_body", "drain_body", "profile_body", "drain_component"}:
+    if role in {"channel_body", "drain_body", "profile_body", "profile_channel", "drain_component"}:
         return role
     if role in COVER_ROLES:
         return role
@@ -149,7 +155,7 @@ def _classified_role(row: TeceSourcePackRow) -> str:
 
 def _role_bucket(row: TeceSourcePackRow) -> str:
     role = _classified_role(row)
-    if role in {"channel_body", "drain_body", "profile_body", "drain_component", "technical_datasheet_only"}:
+    if role in {"channel_body", "drain_body", "profile_body", "profile_channel", "drain_component", "technical_datasheet_only"}:
         return "body"
     if role in COVER_ROLES:
         return "cover"
