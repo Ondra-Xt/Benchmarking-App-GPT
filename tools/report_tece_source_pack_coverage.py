@@ -56,6 +56,10 @@ def build_coverage_report(source_pack: str | Path) -> dict[str, Any]:
         missing = sorted(SENTINELS.get(family, set()) - set(article_numbers))
         if missing:
             warnings.append("missing_sentinel_articles")
+        role_counts = Counter(row.tece_article_role_candidate or "unknown" for row in fam_rows)
+        unknown_count = role_counts.get("unknown", 0)
+        if family == "TECEdrainline" and fam_rows and unknown_count / len(fam_rows) >= 0.5:
+            warnings.append("high_unknown_role_count")
         tech = {field: sum(1 for row in fam_rows if str(getattr(row, field, "") or "").strip() != "") for field in SOURCE_PACK_TECHNICAL_FIELDS}
         families[family] = {
             "manifest_page_start": manifest_by_family.get(family, {}).get("page_start", ""),
@@ -63,7 +67,8 @@ def build_coverage_report(source_pack: str | Path) -> dict[str, Any]:
             "manifest_page_range_labels": sorted(set(manifest_by_family.get(family, {}).get("page_range_labels", []))),
             "extracted_row_count": len(fam_rows),
             "unique_article_count": len(article_numbers),
-            "role_counts": dict(sorted(Counter(row.tece_article_role_candidate or "unknown" for row in fam_rows).items())),
+            "role_counts": dict(sorted(role_counts.items())),
+            "unknown_role_count": unknown_count,
             "missing_sentinel_article_numbers": missing,
             "technical_field_coverage": tech,
             "extraction_warnings": warnings,

@@ -329,7 +329,7 @@ def classify_source_pack_row(text: str, manifest_source: dict[str, Any] | None =
         role, reason = "assembly_matrix", "evidence_scope=assembly_matrix"
     elif re.search(r"\bchannel\s+body\b", haystack):
         role, reason = "channel_body", "keyword=channel_body"
-    elif re.search(r"\b(cover|grate|abdeckung|rost)\b", haystack):
+    elif re.search(r"\b(cover|grate|abdeckung|rost)\b|designrost", haystack):
         role, reason = "cover_or_grate", "keyword=cover_or_grate"
     elif re.search(r"\b(complete\s+set|set|komplettset|komplett-set)\b", haystack):
         role, reason = "complete_set", "keyword=complete_set_candidate"
@@ -526,6 +526,36 @@ def _same_row_table_contexts(text: str) -> list[tuple[str, str]]:
     return contexts
 
 
+
+def _tecedrainline_designrost_column_contexts(text: str) -> list[tuple[str, str]]:
+    """Map TECEdrainline Designrost column-table values by index, not by carry-forward text context."""
+    contexts: list[tuple[str, str]] = []
+    for title_match in re.finditer(r"TECEdrainline\s+Designrost[^.\n]{0,180}", text, re.I):
+        block = text[title_match.start(): min(len(text), title_match.start() + 1800)]
+        article_matches = list(re.finditer(r"\b(60(?:0|1)\d{3})\b", block))
+        if not article_matches:
+            continue
+        first_article_start = article_matches[0].start()
+        before_articles = block[:first_article_start]
+        if not re.search(r"Nennlänge|Oberfläche|Best\.-?Nr\.", before_articles, re.I):
+            continue
+        lengths = [int(value) for value in re.findall(r"\b(6\d{2}|7\d{2}|8\d{2}|9\d{2}|1[0-6]\d{2})\s*mm\b", before_articles, re.I)]
+        finish_values = re.findall(r"\b(gebürstet|poliert|glänzend|schwarz\s+gebürstet|chrom\s+schwarz\s+gebürstet|gold\s+optik\s+gebürstet|gold\s+optik\s+glänzend|rotgold\s+gebürstet)\b", before_articles, re.I)
+        articles = [match.group(1) for match in article_matches[:len(lengths)]]
+        if not lengths or len(articles) < len(lengths):
+            continue
+        if finish_values and len(finish_values) not in {1, len(lengths)}:
+            continue
+        for idx, (length, article) in enumerate(zip(lengths, articles)):
+            finish = finish_values[idx] if len(finish_values) == len(lengths) else (finish_values[0] if finish_values else "")
+            finish = re.sub(r"\s+", " ", finish).strip()
+            context = f"TECEdrainline Designrost product table row Nennlänge: {length} mm"
+            if finish:
+                context += f" Oberfläche: {finish}"
+            context += f" Best.-Nr. {article}"
+            contexts.append((article, context))
+    return contexts
+
 def _tecedrainprofile_table_contexts(text: str) -> list[tuple[str, str]]:
     return [(article, context.replace("TECE catalogue", "TECEdrainprofile visible profile cover")) for article, context in _same_row_table_contexts(text) if re.fullmatch(r"67[01]\d{3}", article)]
 
@@ -535,7 +565,7 @@ def _extract_source_pack_rows(path: Path, root: Path, manifest_source: dict[str,
     text = _strip_markup(raw) if path.suffix.lower() in {".html", ".htm"} else re.sub(r"\s+", " ", raw).strip()
     if not text:
         return []
-    contexts = _same_row_table_contexts(text) + _article_contexts(text)
+    contexts = _tecedrainline_designrost_column_contexts(text) + _same_row_table_contexts(text) + _article_contexts(text)
     if contexts:
         seen_articles: set[str] = set()
         contexts = [(a, c) for a, c in contexts if not (a in seen_articles or seen_articles.add(a))]

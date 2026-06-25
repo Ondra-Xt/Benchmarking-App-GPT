@@ -1231,3 +1231,56 @@ def test_tece_review_shortlist_note_distinguishes_inventory(tmp_path):
     assert any("not the complete TECE inventory" in note for note in report["report_notes"])
     assert report["production_safe_candidate_count"] == 0
     assert report["production_promotion_blocked"] is True
+
+def test_tecedrainline_designrost_column_table_keeps_same_row_lengths(tmp_path):
+    (tmp_path / "designrost.txt").write_text(
+        'TECEdrainline Designrost "quadratum" aus Edelstahl für Duschrinne '
+        'Nennlänge 700 mm 800 mm 900 mm 1000 mm 1200 mm 1500 mm '
+        'Oberfläche gebürstet gebürstet gebürstet gebürstet gebürstet gebürstet '
+        'Best.-Nr. 600751 600851 600951 601051 601251 601551 LE 1 1 1 1 1 1 1',
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "designrost.txt", "source_type": "txt", "source_origin": "manual", "evidence_scope": "article_data",
+        "product_family_hint": "TECEdrainline", "page_start": 271, "page_end": 294,
+        "page_range_label": "TECEdrainline 271-294", "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+
+    report = report_mod.load_source_pack(tmp_path)
+    by_article = {row.article_number: row for row in report.rows}
+
+    expected = {
+        "600751": 700,
+        "600851": 800,
+        "600951": 900,
+        "601051": 1000,
+        "601251": 1200,
+        "601551": 1500,
+    }
+    for article, length in expected.items():
+        assert by_article[article].nominal_length_mm == length
+        assert by_article[article].finish_or_color == "gebürstet"
+        assert by_article[article].tece_article_role_candidate == "cover_or_grate"
+    assert by_article["601251"].nominal_length_mm != 700
+    assert all(by_article[article].nominal_length_mm != 1 for article in expected)
+
+
+def test_tece_coverage_warns_for_high_tecedrainline_unknown_role_count(tmp_path):
+    from tools import report_tece_source_pack_coverage as coverage_mod
+    for name, text in {
+        "unknown1.txt": "TECEdrainline Article number: 700001.",
+        "unknown2.txt": "TECEdrainline Article number: 700002.",
+        "cover.txt": "TECEdrainline Rost Article number: 700003.",
+    }.items():
+        (tmp_path / name).write_text(text, encoding="utf-8")
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [
+        {"source_file": "unknown1.txt", "source_type": "txt", "source_origin": "manual", "evidence_scope": "article_data", "product_family_hint": "TECEdrainline", "page_start": 271, "page_end": 294, "page_range_label": "TECEdrainline 271-294", "approved_for_benchmark_evidence": False},
+        {"source_file": "unknown2.txt", "source_type": "txt", "source_origin": "manual", "evidence_scope": "article_data", "product_family_hint": "TECEdrainline", "page_start": 271, "page_end": 294, "page_range_label": "TECEdrainline 271-294", "approved_for_benchmark_evidence": False},
+        {"source_file": "cover.txt", "source_type": "txt", "source_origin": "manual", "evidence_scope": "article_data", "product_family_hint": "TECEdrainline", "page_start": 271, "page_end": 294, "page_range_label": "TECEdrainline 271-294", "approved_for_benchmark_evidence": False},
+    ]}), encoding="utf-8")
+
+    payload = coverage_mod.build_coverage_report(tmp_path)
+    line = payload["families"]["TECEdrainline"]
+
+    assert line["unknown_role_count"] >= 2
+    assert "high_unknown_role_count" in line["extraction_warnings"]
