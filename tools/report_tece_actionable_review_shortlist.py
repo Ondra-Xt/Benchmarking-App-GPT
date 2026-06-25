@@ -155,6 +155,7 @@ def build_shortlist_report(source_pack: str | Path, max_per_family: int = 50, mi
         "summary": summary,
         "shortlisted_candidates": shortlist,
         "report_notes": [
+            "This is not the complete TECE inventory. Use inventory review CSV or coverage report for full extracted article coverage.",
             "Diagnostic-only human-review shortlist; it does not create production assemblies.",
             "Same nominal length is only a ranking hint when applicable and is not production compatibility evidence.",
             "Production promotion remains blocked until manually approved explicit evidence fixtures and criteria exist.",
