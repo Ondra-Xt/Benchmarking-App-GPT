@@ -541,7 +541,7 @@ def _table_title_before(text: str, start: int) -> str:
 def _tecedrainline_structured_column_contexts(text: str) -> list[tuple[str, str, str, int]]:
     """Extract TECEdrainline catalogue column tables by same index across length/finish/article columns."""
     contexts: list[tuple[str, str, str, int]] = []
-    header_re = re.compile(r"(?i)(?:Nennlänge|Länge)\s+(?:(?:Breite)\s+)?(?:Oberfläche|Farbe)[^.;\n]{0,80}?Best\.-?Nr\.\s+LE\s*1")
+    header_re = re.compile(r"(?i)(?:Nennlänge|Länge)\s+(?:(?:Breite|Oberfläche|Farbe)\s+){0,3}[^.;\n]{0,80}?Best\.-?Nr\.\s+LE\s*1")
     for header in header_re.finditer(text):
         block = text[max(0, header.start() - 260): min(len(text), header.end() + 1600)]
         header_in_block = header.start() - max(0, header.start() - 260)
@@ -552,7 +552,7 @@ def _tecedrainline_structured_column_contexts(text: str) -> list[tuple[str, str,
         finish_pattern = r"(?:Edelstahl\s+gebürstet|Edelstahl\s+poliert|gebürstet|poliert|glänzend|satiniert|Edelstahl|schwarz(?:\s+gebürstet)?|chrom\s+schwarz\s+gebürstet|gold\s+optik\s+(?:gebürstet|glänzend)|rotgold\s+gebürstet|weiß|grau|farbig\s+beschichtet)"
         row_re = re.compile(
             rf"(?P<length>6\d{{2}}|7\d{{2}}|8\d{{2}}|9\d{{2}}|1[0-6]\d{{2}})\s*mm\s+"
-            rf"(?P<finish>{finish_pattern})\s+"
+            rf"(?:(?P<finish>{finish_pattern})\s+)?"
             r"(?P<article>(?:60|61|62|63|64|65|66|67|68|69)\d{4})\b"
             r"(?:\s+(?:\d+\s*)?St\.)?",
             re.I,
@@ -562,8 +562,14 @@ def _tecedrainline_structured_column_contexts(text: str) -> list[tuple[str, str,
             for row_match in row_matches:
                 length = int(row_match.group("length"))
                 article = row_match.group("article")
-                finish = re.sub(r"\s+", " ", row_match.group("finish")).strip()
-                context = f"{title} structured product table row Nennlänge: {length} mm Oberfläche: {finish} Best.-Nr. {article}"
+                finish = re.sub(r"\s+", " ", row_match.group("finish") or "").strip()
+                if not finish:
+                    title_finish = re.search(r"(?i)\b(Edelstahl|gebürstet|poliert|satiniert|schwarz|weiß|grau)\b", title)
+                    finish = title_finish.group(1) if title_finish else ""
+                context = f"{title} structured product table row Nennlänge: {length} mm"
+                if finish:
+                    context += f" Oberfläche: {finish}"
+                context += f" Best.-Nr. {article}"
                 contexts.append((article, context, "structured_column_table", 120))
             continue
 
@@ -658,7 +664,7 @@ def _extract_source_pack_rows(path: Path, root: Path, manifest_source: dict[str,
         product_name = _first_match([r"(?:product(?: name)?|produkt(?:name)?)\s*[:#-]\s*([^.;\n]+)", r"(TECE[^.;\n]{0,160}" + re.escape(article) + r"[^.;\n]{0,80})"], context) or product_family
         conditional = _extract_conditional_flow_values(context)
         fields = _fields_from_text(context, conditional)
-        if extraction_method == "generic_article_context" and re.search(r"(?i)(Nennlänge|Länge).{0,80}(Oberfläche|Farbe).{0,80}Best\.-?Nr\.", context):
+        if extraction_method == "generic_article_context" and re.search(r"(?i)(Nennlänge|Länge).{0,140}Best\.-?Nr\.", context):
             fields["nominal_length_mm"] = ""
             fields["width_mm"] = ""
             fields["finish_or_color"] = ""
