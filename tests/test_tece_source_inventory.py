@@ -1140,3 +1140,147 @@ def test_tece_actionable_review_shortlist_does_not_change_aco_canonical_export()
     assert "tece" not in set(frames.products.get("manufacturer", []))
     assert "tece" not in set(frames.comparison.get("manufacturer", []))
     assert "tece" not in set(frames.bom_options.get("manufacturer", []))
+
+
+def test_full_inventory_csv_exports_all_source_pack_rows(tmp_path):
+    from tools import export_tece_inventory_review_csv as csv_mod
+    out = tmp_path / "inventory.csv"
+
+    csv_mod.export_inventory_csv("tests/fixtures/tece/source_pack", out)
+
+    raw = out.read_bytes()
+    assert raw.startswith(b"\xef\xbb\xbf")
+    text = raw.decode("utf-8-sig")
+    assert "600100" in text
+    assert "601200" in text
+    assert "650001" in text
+    assert "production_blocking_reason" in text
+
+
+def test_tece_source_pack_coverage_includes_all_four_families(tmp_path):
+    from tools import report_tece_source_pack_coverage as coverage_mod
+    (tmp_path / "pack.txt").write_text(
+        "TECEdrainway Zubehör Article number: 800001. "
+        "TECEdrainprofile Ablauf Article number: 673001. "
+        "TECEdrainline Ablauf Article number: 600906 Länge: 900 mm. "
+        "TECEdrainpoint S Ablaufset Article number: 3601050 Ablaufleistung 0,52/0,60 l/s bei 10/20 mm Aufstau.",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [
+        {"source_file": "pack.txt", "source_type": "txt", "source_origin": "manual", "evidence_scope": "article_data", "product_family_hint": "TECEdrainway", "page_start": 245, "page_end": 256, "page_range_label": "TECEdrainway 245-256", "approved_for_benchmark_evidence": False},
+        {"source_file": "pack.txt", "source_type": "txt", "source_origin": "manual", "evidence_scope": "article_data", "product_family_hint": "TECEdrainprofile", "page_start": 257, "page_end": 270, "page_range_label": "TECEdrainprofile 257-270", "approved_for_benchmark_evidence": False},
+        {"source_file": "pack.txt", "source_type": "txt", "source_origin": "manual", "evidence_scope": "article_data", "product_family_hint": "TECEdrainline", "page_start": 271, "page_end": 294, "page_range_label": "TECEdrainline 271-294", "approved_for_benchmark_evidence": False},
+        {"source_file": "pack.txt", "source_type": "txt", "source_origin": "manual", "evidence_scope": "article_data", "product_family_hint": "TECEdrainpoint S", "page_start": 295, "page_end": 326, "page_range_label": "TECEdrainpoint S 295-326", "approved_for_benchmark_evidence": False},
+    ]}), encoding="utf-8")
+
+    payload = coverage_mod.build_coverage_report(tmp_path)
+
+    assert set(payload["families"]) == {"TECEdrainway", "TECEdrainprofile", "TECEdrainline", "TECEdrainpoint S"}
+    assert payload["production_safe_candidate_count"] == 0
+    assert payload["production_promotion_blocked"] is True
+    assert payload["ready_for_benchmark"] is False
+    assert payload["ready_for_customer_view"] is False
+
+
+def test_tecedrainline_sentinel_lengths_ignore_le_index_columns(tmp_path):
+    (tmp_path / "line.txt").write_text(
+        "Artikel-Schnellsuche Best.-Nr. LE 1 LE 2 LE 3 Seite 600906 40 80 120 279 601006 40 80 120 279 601206 40 80 120 279 601506 40 80 120 279. "
+        "TECEdrainline product table 900 mm Edelstahl gebürstet 600906 1000 mm Edelstahl gebürstet 601006 1200 mm Edelstahl gebürstet 601206 1500 mm Edelstahl gebürstet 601506",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "line.txt", "source_type": "txt", "source_origin": "manual", "evidence_scope": "article_data",
+        "product_family_hint": "TECEdrainline", "page_start": 271, "page_end": 294, "page_range_label": "TECEdrainline 271-294", "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+
+    report = report_mod.load_source_pack(tmp_path)
+    by_article = {row.article_number: row for row in report.rows}
+
+    assert by_article["600906"].nominal_length_mm == 900
+    assert by_article["601006"].nominal_length_mm == 1000
+    assert by_article["601206"].nominal_length_mm == 1200
+    assert by_article["601506"].nominal_length_mm == 1500
+    assert all(by_article[a].nominal_length_mm != 40 for a in ["600906", "601006", "601206", "601506"])
+
+
+def test_tecedrainpoint_s_sentinel_and_conditional_flows_preserved(tmp_path):
+    (tmp_path / "point.txt").write_text(
+        "TECEdrainpoint S Ablaufset DN 50 Aufbauhöhe 95 mm Sperrwasserhöhe 50 mm "
+        "Ablaufleistung >=0,52/>=0,60 l/s bei 10/20 mm Aufstau Best.-Nr. 3601050",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "point.txt", "source_type": "txt", "source_origin": "manual", "evidence_scope": "article_data",
+        "product_family_hint": "TECEdrainpoint S", "page_start": 295, "page_end": 326, "page_range_label": "TECEdrainpoint S 295-326", "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+
+    report = report_mod.load_source_pack(tmp_path)
+    row = next(row for row in report.rows if row.article_number == "3601050")
+
+    assert row.tece_family_candidate == "TECEdrainpoint"
+    assert row.outlet_dn == "DN50"
+    assert row.conditional_technical_values == [
+        {"parameter_name": "flow_rate_lps", "value": 0.52, "condition_type": "head_water_level", "condition_value": 10, "condition_unit": "mm", "condition_label": "10 mm Aufstau"},
+        {"parameter_name": "flow_rate_lps", "value": 0.6, "condition_type": "head_water_level", "condition_value": 20, "condition_unit": "mm", "condition_label": "20 mm Aufstau"},
+    ]
+
+
+def test_tece_review_shortlist_note_distinguishes_inventory(tmp_path):
+    from tools import report_tece_actionable_review_shortlist as shortlist_mod
+    report = shortlist_mod.build_shortlist_report("tests/fixtures/tece/source_pack")
+    assert any("not the complete TECE inventory" in note for note in report["report_notes"])
+    assert report["production_safe_candidate_count"] == 0
+    assert report["production_promotion_blocked"] is True
+
+def test_tecedrainline_designrost_column_table_keeps_same_row_lengths(tmp_path):
+    (tmp_path / "designrost.txt").write_text(
+        'TECEdrainline Designrost "quadratum" aus Edelstahl für Duschrinne '
+        'Nennlänge 700 mm 800 mm 900 mm 1000 mm 1200 mm 1500 mm '
+        'Oberfläche gebürstet gebürstet gebürstet gebürstet gebürstet gebürstet '
+        'Best.-Nr. 600751 600851 600951 601051 601251 601551 LE 1 1 1 1 1 1 1',
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "designrost.txt", "source_type": "txt", "source_origin": "manual", "evidence_scope": "article_data",
+        "product_family_hint": "TECEdrainline", "page_start": 271, "page_end": 294,
+        "page_range_label": "TECEdrainline 271-294", "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+
+    report = report_mod.load_source_pack(tmp_path)
+    by_article = {row.article_number: row for row in report.rows}
+
+    expected = {
+        "600751": 700,
+        "600851": 800,
+        "600951": 900,
+        "601051": 1000,
+        "601251": 1200,
+        "601551": 1500,
+    }
+    for article, length in expected.items():
+        assert by_article[article].nominal_length_mm == length
+        assert by_article[article].finish_or_color == "gebürstet"
+        assert by_article[article].tece_article_role_candidate == "cover_or_grate"
+    assert by_article["601251"].nominal_length_mm != 700
+    assert all(by_article[article].nominal_length_mm != 1 for article in expected)
+
+
+def test_tece_coverage_warns_for_high_tecedrainline_unknown_role_count(tmp_path):
+    from tools import report_tece_source_pack_coverage as coverage_mod
+    for name, text in {
+        "unknown1.txt": "TECEdrainline Article number: 700001.",
+        "unknown2.txt": "TECEdrainline Article number: 700002.",
+        "cover.txt": "TECEdrainline Rost Article number: 700003.",
+    }.items():
+        (tmp_path / name).write_text(text, encoding="utf-8")
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [
+        {"source_file": "unknown1.txt", "source_type": "txt", "source_origin": "manual", "evidence_scope": "article_data", "product_family_hint": "TECEdrainline", "page_start": 271, "page_end": 294, "page_range_label": "TECEdrainline 271-294", "approved_for_benchmark_evidence": False},
+        {"source_file": "unknown2.txt", "source_type": "txt", "source_origin": "manual", "evidence_scope": "article_data", "product_family_hint": "TECEdrainline", "page_start": 271, "page_end": 294, "page_range_label": "TECEdrainline 271-294", "approved_for_benchmark_evidence": False},
+        {"source_file": "cover.txt", "source_type": "txt", "source_origin": "manual", "evidence_scope": "article_data", "product_family_hint": "TECEdrainline", "page_start": 271, "page_end": 294, "page_range_label": "TECEdrainline 271-294", "approved_for_benchmark_evidence": False},
+    ]}), encoding="utf-8")
+
+    payload = coverage_mod.build_coverage_report(tmp_path)
+    line = payload["families"]["TECEdrainline"]
+
+    assert line["unknown_role_count"] >= 2
+    assert "high_unknown_role_count" in line["extraction_warnings"]
