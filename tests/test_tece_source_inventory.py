@@ -1009,6 +1009,8 @@ def test_tece_actionable_review_shortlist_bounded_and_prioritized(monkeypatch):
 
     assert report["summary"]["total_actionable_candidate_count"] > report["summary"]["shortlisted_candidate_count"]
     assert report["summary"]["shortlisted_candidate_count"] == 2
+    assert report["total_actionable_candidate_count"] == report["summary"]["total_actionable_candidate_count"]
+    assert report["shortlisted_candidate_count"] == report["summary"]["shortlisted_candidate_count"]
     assert levels[0] == "explicit_section_pairing"
     assert "same_length_same_family_candidate" in levels
 
@@ -1028,11 +1030,19 @@ def test_tece_actionable_review_shortlist_profile_and_blocking_flags(monkeypatch
     report = shortlist_mod.build_shortlist_report("synthetic", max_per_family=10)
 
     assert report["summary"]["family_shortlist_counts"]["TECEdrainprofile"] >= 1
+    assert report["family_shortlist_counts"] == report["summary"]["family_shortlist_counts"]
+    assert report["evidence_level_counts"] == report["summary"]["evidence_level_counts"]
+    assert report["role_pair_counts"] == report["summary"]["role_pair_counts"]
     assert any(row["family"] == "TECEdrainprofile" for row in report["shortlisted_candidates"])
     assert report["summary"]["production_safe_candidate_count"] == 0
+    assert report["production_safe_candidate_count"] == 0
+    assert report["diagnostic_only_candidate_count"] == report["summary"]["diagnostic_only_candidate_count"]
     assert report["summary"]["production_promotion_blocked"] is True
+    assert report["production_promotion_blocked"] is True
     assert report["summary"]["ready_for_benchmark"] is False
+    assert report["ready_for_benchmark"] is False
     assert report["summary"]["ready_for_customer_view"] is False
+    assert report["ready_for_customer_view"] is False
     assert all(row["manual_review_status"] == "pending_review" for row in report["shortlisted_candidates"])
 
 
@@ -1043,10 +1053,31 @@ def test_tece_actionable_review_shortlist_json_out_writes_utf8(tmp_path):
     assert shortlist_mod.main(["--source-pack", "tests/fixtures/tece/source_pack", "--json", "--out", str(out), "--max-per-family", "5"]) == 0
 
     payload = json.loads(out.read_text(encoding="utf-8"))
+    required_top_level_fields = {
+        "total_actionable_candidate_count",
+        "shortlisted_candidate_count",
+        "family_shortlist_counts",
+        "evidence_level_counts",
+        "role_pair_counts",
+        "production_safe_candidate_count",
+        "diagnostic_only_candidate_count",
+        "production_promotion_blocked",
+        "ready_for_benchmark",
+        "ready_for_customer_view",
+        "shortlisted_candidates",
+    }
+    assert required_top_level_fields.issubset(payload)
+    assert "summary" in payload
     assert payload["summary"]["production_safe_candidate_count"] == 0
+    assert payload["production_safe_candidate_count"] == 0
     assert payload["summary"]["production_promotion_blocked"] is True
+    assert payload["production_promotion_blocked"] is True
     assert payload["summary"]["ready_for_benchmark"] is False
+    assert payload["ready_for_benchmark"] is False
     assert payload["summary"]["ready_for_customer_view"] is False
+    assert payload["ready_for_customer_view"] is False
+    for field in required_top_level_fields - {"shortlisted_candidates"}:
+        assert payload[field] == payload["summary"][field]
     assert "shortlisted_candidates" in payload
 
 

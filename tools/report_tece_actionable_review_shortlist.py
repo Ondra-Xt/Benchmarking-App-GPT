@@ -126,20 +126,22 @@ def build_shortlist_report(source_pack: str | Path, max_per_family: int = 50, mi
     evidence_counts = Counter(row["evidence_level"] for row in shortlist)
     role_counts = Counter(row["role_pair"] for row in shortlist)
     family_counts = Counter(row["family"] for row in shortlist)
+    summary = {
+        "total_actionable_candidate_count": payload["actionable_candidate_count"],
+        "shortlisted_candidate_count": len(shortlist),
+        "family_shortlist_counts": dict(sorted(family_counts.items())),
+        "evidence_level_counts": dict(sorted(evidence_counts.items())),
+        "role_pair_counts": dict(sorted(role_counts.items())),
+        "production_safe_candidate_count": 0,
+        "diagnostic_only_candidate_count": len(shortlist),
+        "production_promotion_blocked": True,
+        "ready_for_benchmark": False,
+        "ready_for_customer_view": False,
+    }
     return {
         "source_pack_path": payload["source_pack_path"],
-        "summary": {
-            "total_actionable_candidate_count": payload["actionable_candidate_count"],
-            "shortlisted_candidate_count": len(shortlist),
-            "family_shortlist_counts": dict(sorted(family_counts.items())),
-            "evidence_level_counts": dict(sorted(evidence_counts.items())),
-            "role_pair_counts": dict(sorted(role_counts.items())),
-            "production_safe_candidate_count": 0,
-            "diagnostic_only_candidate_count": len(shortlist),
-            "production_promotion_blocked": True,
-            "ready_for_benchmark": False,
-            "ready_for_customer_view": False,
-        },
+        **summary,
+        "summary": summary,
         "shortlisted_candidates": shortlist,
         "report_notes": [
             "Diagnostic-only human-review shortlist; it does not create production assemblies.",
