@@ -17,8 +17,8 @@ if str(REPO_ROOT) not in sys.path:
 from tools.report_tece_source_inventory import TeceSourcePackRow, load_source_pack
 from tools.tece_report_output import write_json_output, write_text_output
 
-BODY_ROLES = {"channel_body", "drain_body", "profile_body", "profile_channel", "drain_component", "technical_datasheet_only"}
-COVER_ROLES = {"cover_or_grate", "cover_plate"}
+BODY_ROLES = {"channel_body", "drain_body", "drain_component", "technical_datasheet_only"}
+COVER_ROLES = {"cover_or_grate", "cover_plate", "profile_cover", "visible_profile"}
 COMPLETE_SET_SIGNALS_RE = re.compile(r"(?i)\b(complete set|komplettset|set|bestehend\s+aus)\b")
 COVER_SIGNALS_RE = re.compile(r"(?i)\b(designrost|designabdeckung|fliesenmulde|abdeckung|rost|cover|grate|plate)\b")
 ACTIONABLE_ROLE_PAIRS = {
@@ -26,12 +26,12 @@ ACTIONABLE_ROLE_PAIRS = {
     ("drain_body", "cover_plate"),
     ("channel_body", "cover_or_grate"),
     ("channel_body", "cover_plate"),
-    ("profile_body", "drain_body"),
-    ("profile_channel", "drain_body"),
-    ("profile_body", "drain_component"),
-    ("profile_channel", "drain_component"),
+    ("drain_body", "profile_cover"),
+    ("drain_component", "profile_cover"),
+    ("drain_body", "visible_profile"),
+    ("drain_component", "visible_profile"),
 }
-EXPLICIT_ONLY_ROLE_PAIRS = {("profile_body", "cover_or_grate"), ("profile_body", "cover_plate")}
+EXPLICIT_ONLY_ROLE_PAIRS = set()
 HIGH_CONFIDENCE = {"explicit_article_level_matrix", "explicit_text_pairing"}
 
 
@@ -129,6 +129,13 @@ def _row_dict(row: TeceSourcePackRow) -> dict[str, Any]:
         "source_page_end": row.source_page_end,
         "page_range_label": row.page_range_label,
         "conditional_technical_values": row.conditional_technical_values or [],
+        "width_mm": getattr(row, "width_mm", ""),
+        "finish_or_color": getattr(row, "finish_or_color", ""),
+        "manifest_page_start": row.source_page_start,
+        "manifest_page_end": row.source_page_end,
+        "source_pdf_physical_page_start": getattr(row, "source_pdf_physical_page_start", ""),
+        "source_pdf_physical_page_end": getattr(row, "source_pdf_physical_page_end", ""),
+        "catalogue_page_label": getattr(row, "catalogue_page_label", ""),
     }
 
 
@@ -141,16 +148,14 @@ def _classified_role(row: TeceSourcePackRow) -> str:
     if article in {"650000", "650001", "650002", "650003", "650004"}:
         return "drain_body"
     if _family(row) == "TECEdrainprofile" and re.fullmatch(r"67[01]\d{3}", article):
-        if re.search(r"(?i)\b(channel|rinne|profilrinne)\b", haystack):
-            return "profile_channel"
-        return "profile_body"
+        return "profile_cover"
     if article in {"673001", "673002", "673003"}:
         return "drain_body" if role != "drain_component" else "drain_component"
     if COVER_SIGNALS_RE.search(haystack):
         return "cover_plate" if re.search(r"(?i)\b(plate|abdeckung|designabdeckung|fliesenmulde)\b", haystack) else "cover_or_grate"
     if role == "complete_set":
         return "complete_set"
-    if role in {"channel_body", "drain_body", "profile_body", "profile_channel", "drain_component"}:
+    if role in {"channel_body", "drain_body", "drain_component"}:
         return role
     if role in COVER_ROLES:
         return role
@@ -161,7 +166,7 @@ def _classified_role(row: TeceSourcePackRow) -> str:
 
 def _role_bucket(row: TeceSourcePackRow) -> str:
     role = _classified_role(row)
-    if role in {"channel_body", "drain_body", "profile_body", "profile_channel", "drain_component", "technical_datasheet_only"}:
+    if role in {"channel_body", "drain_body", "drain_component", "technical_datasheet_only"}:
         return "body"
     if role in COVER_ROLES:
         return "cover"
@@ -199,6 +204,8 @@ def _context_has_matrix_pairing(row: TeceSourcePackRow, a: str, b: str) -> bool:
 
 
 def _pairing_for(body: TeceSourcePackRow, cover: TeceSourcePackRow) -> TeceCompatibilityPairing:
+    if _classified_role(body) in COVER_ROLES and _classified_role(cover) in BODY_ROLES:
+        body, cover = cover, body
     rows = [body, cover]
     evidence_type = "insufficient_evidence"
     reason = "No explicit article-level pairing text or reliable matrix evidence found."

@@ -63,6 +63,11 @@ class TeceSourcePackRow:
     source_page_end: Any = ""
     page_range_label: str = ""
     conditional_technical_values: list[dict[str, Any]] | None = None
+    width_mm: Any = ""
+    finish_or_color: str = ""
+    source_pdf_physical_page_start: Any = ""
+    source_pdf_physical_page_end: Any = ""
+    catalogue_page_label: str = ""
 
 
 @dataclass(frozen=True)
@@ -311,9 +316,9 @@ def classify_source_pack_row(text: str, manifest_source: dict[str, Any] | None =
     reason = "no_conservative_role_keyword"
     if family == "TECEdrainprofile" and re.fullmatch(r"67[01]\d{3}", article):
         if re.search(r"\b(channel|rinne|profilrinne)\b", haystack):
-            role, reason = "profile_channel", "tecedrainprofile_article_range_670xxx_671xxx_channel"
+            role, reason = "profile_cover", "tecedrainprofile_article_range_670xxx_671xxx_visible_profile_channel"
         else:
-            role, reason = "profile_body", "tecedrainprofile_article_range_670xxx_671xxx_profile_body"
+            role, reason = "profile_cover", "tecedrainprofile_article_range_670xxx_671xxx_visible_profile_cover"
     elif family == "TECEdrainprofile" and article in {"673001", "673002", "673003"}:
         role, reason = "drain_body", "tecedrainprofile_article_range_673001_673003_drain"
     elif scope == "cover_grate_matrix":
@@ -338,7 +343,7 @@ def classify_source_pack_row(text: str, manifest_source: dict[str, Any] | None =
         confidence = "medium"
 
     blocking = ["missing_article_level_compatibility_matrix"]
-    if role in {"cover_or_grate", "channel_body", "drain_body", "profile_body", "profile_channel", "drain_component"}:
+    if role in {"cover_or_grate", "cover_plate", "profile_cover", "visible_profile", "channel_body", "drain_body", "profile_body", "profile_channel", "drain_component"}:
         blocking.append("missing_counterpart_article")
     if missing_fields:
         blocking.append("missing_technical_fields")
@@ -481,8 +486,30 @@ def _fields_from_text(text: str, conditional_values: list[dict[str, Any]]) -> di
         "height_adj_min_mm": _extract_int([r"height\s*adjust(?:ment|able)?\s*[:=]?\s*(\d{2,4})\s*(?:-|to|–)\s*\d{2,4}\s*mm"], text),
         "height_adj_max_mm": _extract_int([r"height\s*adjust(?:ment|able)?\s*[:=]?\s*\d{2,4}\s*(?:-|to|–)\s*(\d{2,4}(?:[,.]\d+)?)\s*mm"], text),
         "installation_height_mm": _extract_int([r"(?:min\.\s*)?(?:Aufbauhöhe|installation\s*height)\s*[:=]?\s*(\d{2,4}(?:[,.]\d+)?)\s*mm"], text),
+        "width_mm": _extract_int([r"(?:Breite|width)\s*[:=]?\s*(\d{2,4})\s*mm", r"(?:Länge|Length)\s*[:=]?\s*\d{3,4}\s*mm\s+(?:Breite|width)\s*[:=]?\s*(\d{2,4})\s*mm"], text),
+        "finish_or_color": _first_match([r"(?:Farbe|Oberfläche|finish|color)\s*[:=]?\s*([^.;\n]+?)(?=\s*(?:Best\.-?Nr\.?|Article|Artikel|LE\b|$))"], text),
     }
 
+
+
+def _tecedrainprofile_table_contexts(text: str) -> list[tuple[str, str]]:
+    """Extract same-row contexts from Länge/Breite/Farbe/Best.-Nr. profile-cover tables."""
+    contexts: list[tuple[str, str]] = []
+    row_re = re.compile(
+        r"(?P<length>\d{3,4})\s*mm\s+(?P<width>\d{2,4})\s*mm\s+(?P<finish>Edelstahl\s+(?:gebürstet|poliert))\s+(?P<article>67[01]\d{3})\b",
+        re.I,
+    )
+    for match in row_re.finditer(text):
+        length = match.group("length")
+        width = match.group("width")
+        finish = re.sub(r"\s+", " ", match.group("finish")).strip()
+        article = match.group("article")
+        context = (
+            "TECEdrainprofile visible profile cover table row "
+            f"Länge: {length} mm Breite: {width} mm Farbe: {finish} Best.-Nr. {article}"
+        )
+        contexts.append((article, context))
+    return contexts
 
 def _extract_source_pack_rows(path: Path, root: Path, manifest_source: dict[str, Any] | None = None) -> list[TeceSourcePackRow]:
     manifest_source = manifest_source or {}
@@ -490,7 +517,10 @@ def _extract_source_pack_rows(path: Path, root: Path, manifest_source: dict[str,
     text = _strip_markup(raw) if path.suffix.lower() in {".html", ".htm"} else re.sub(r"\s+", " ", raw).strip()
     if not text:
         return []
-    contexts = _article_contexts(text)
+    contexts = _tecedrainprofile_table_contexts(text) + _article_contexts(text)
+    if contexts:
+        seen_articles: set[str] = set()
+        contexts = [(a, c) for a, c in contexts if not (a in seen_articles or seen_articles.add(a))]
     if not contexts:
         return []
     rows: list[TeceSourcePackRow] = []
@@ -523,6 +553,10 @@ def _extract_source_pack_rows(path: Path, root: Path, manifest_source: dict[str,
             recommended_next_action="Collect official TECE cover/grate article-level compatibility matrix before any production promotion." if not compat else "Manually audit compatibility evidence; production promotion remains blocked in this branch.",
             **classification, source_page_start=manifest_source.get("page_start", ""), source_page_end=manifest_source.get("page_end", ""),
             page_range_label=_clean(manifest_source.get("page_range_label")), conditional_technical_values=conditional,
+            width_mm=fields.get("width_mm", ""), finish_or_color=fields.get("finish_or_color", ""),
+            source_pdf_physical_page_start=(manifest_source.get("page_start", "") if path.suffix.lower() == ".pdf" else ""),
+            source_pdf_physical_page_end=(manifest_source.get("page_end", "") if path.suffix.lower() == ".pdf" else ""),
+            catalogue_page_label=_first_match([r"(?:catalogue|catalog|katalog)\s*page\s*[:=]?\s*(\d{1,4})", r"(?:Seite|Page)\s*[:=]?\s*(\d{1,4})"], context),
         ))
     return rows
 

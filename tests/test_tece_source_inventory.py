@@ -918,10 +918,10 @@ def test_tecedrainprofile_article_ranges_classify_profile_and_drain_roles(monkey
 
     report = compat_mod.build_compatibility_diagnostics_report("synthetic")
     family = report.families[0]
-    roles = {row["article_number"]: row["classified_role"] for row in family.candidate_body_channel_drain_articles + family.unknown_role_articles}
+    roles = {row["article_number"]: row["classified_role"] for row in family.candidate_body_channel_drain_articles + family.candidate_cover_grate_plate_articles + family.unknown_role_articles}
 
-    assert roles["670900"] == "profile_body"
-    assert roles["671900"] == "profile_channel"
+    assert roles["670900"] == "profile_cover"
+    assert roles["671900"] == "profile_cover"
     assert roles["673001"] == "drain_body"
     assert roles["673002"] == "drain_component"
     assert roles["674001"] == "unknown"
@@ -943,11 +943,9 @@ def test_tecedrainprofile_profile_to_drain_actionable_but_same_and_unknown_exclu
     role_pairs = {pairing.role_pair for pairing in family.possible_pairings}
     excluded_reasons = {entry["role_pair"]: entry["excluded_reason"] for entry in family.excluded_pairings}
 
-    assert "profile_body_to_drain_body" in role_pairs
-    assert "profile_channel_to_drain_body" in role_pairs
-    assert excluded_reasons["profile_body_to_profile_body"] == "same_role_pairing_not_actionable"
-    assert excluded_reasons["profile_body_to_profile_channel"] == "role_pair_not_actionable"
-    assert excluded_reasons["profile_body_to_unknown"] == "unknown_role_without_explicit_text_pairing"
+    assert "drain_body_to_profile_cover" in role_pairs
+    assert excluded_reasons["profile_cover_to_profile_cover"] == "same_role_pairing_not_actionable"
+    assert excluded_reasons["profile_cover_to_unknown"] == "unknown_role_without_explicit_text_pairing"
     assert report.family_actionable_candidate_counts["TECEdrainprofile"] >= 2
     assert report.production_promotion_blocked is True
     assert report.ready_for_benchmark is False
@@ -985,10 +983,55 @@ def test_tecedrainprofile_source_pack_classifies_article_ranges():
         {"product_family_hint": "TECEdrainprofile", "evidence_scope": "article_data"},
     )
 
-    assert profile["tece_article_role_candidate"] == "profile_body"
-    assert channel["tece_article_role_candidate"] == "profile_channel"
+    assert profile["tece_article_role_candidate"] == "profile_cover"
+    assert channel["tece_article_role_candidate"] == "profile_cover"
     assert drain["tece_article_role_candidate"] == "drain_body"
 
+
+
+def test_tecedrainprofile_table_rows_keep_same_row_values(tmp_path):
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    (pack / "profile.txt").write_text(
+        "TECEdrainprofile Tabelle Länge Breite Farbe Best.-Nr. LE 1 "
+        "800 mm 55 mm Edelstahl gebürstet 670800 "
+        "800 mm 55 mm Edelstahl poliert 670810 "
+        "900 mm 55 mm Edelstahl gebürstet 670900 "
+        "900 mm 55 mm Edelstahl poliert 670910 "
+        "1000 mm 55 mm Edelstahl gebürstet 671000 "
+        "1000 mm 55 mm Edelstahl poliert 671010 "
+        "1200 mm 55 mm Edelstahl gebürstet 671200 "
+        "1200 mm 55 mm Edelstahl poliert 671210 "
+        "1600 mm 55 mm Edelstahl gebürstet 671600",
+        encoding="utf-8",
+    )
+    (pack / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "profile.txt", "source_type": "txt", "source_origin": "manual",
+        "product_family_hint": "TECEdrainprofile", "evidence_scope": "article_data",
+        "page_start": 257, "page_end": 270, "page_range_label": "TECEdrainprofile 257-270",
+        "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+
+    report = report_mod.load_source_pack(pack)
+    by_article = {row.article_number: row for row in report.rows}
+
+    expected = {
+        "670800": (800, 55, "Edelstahl gebürstet"),
+        "670810": (800, 55, "Edelstahl poliert"),
+        "670900": (900, 55, "Edelstahl gebürstet"),
+        "670910": (900, 55, "Edelstahl poliert"),
+        "671000": (1000, 55, "Edelstahl gebürstet"),
+        "671010": (1000, 55, "Edelstahl poliert"),
+        "671200": (1200, 55, "Edelstahl gebürstet"),
+        "671210": (1200, 55, "Edelstahl poliert"),
+        "671600": (1600, 55, "Edelstahl gebürstet"),
+    }
+    for article, (length, width, finish) in expected.items():
+        assert by_article[article].tece_article_role_candidate == "profile_cover"
+        assert by_article[article].nominal_length_mm == length
+        assert by_article[article].width_mm == width
+        assert by_article[article].finish_or_color == finish
+    assert by_article["670910"].nominal_length_mm == 900
 
 def test_tece_actionable_review_shortlist_bounded_and_prioritized(monkeypatch):
     from tools import report_tece_actionable_review_shortlist as shortlist_mod
@@ -1033,7 +1076,13 @@ def test_tece_actionable_review_shortlist_profile_and_blocking_flags(monkeypatch
     assert report["family_shortlist_counts"] == report["summary"]["family_shortlist_counts"]
     assert report["evidence_level_counts"] == report["summary"]["evidence_level_counts"]
     assert report["role_pair_counts"] == report["summary"]["role_pair_counts"]
-    assert any(row["family"] == "TECEdrainprofile" for row in report["shortlisted_candidates"])
+    profile_rows = [row for row in report["shortlisted_candidates"] if row["family"] == "TECEdrainprofile"]
+    assert profile_rows
+    assert profile_rows[0]["role_pair"] == "drain_body_to_profile_cover"
+    assert profile_rows[0]["drain_article_number"] == "673001"
+    assert profile_rows[0]["visible_article_number"] == "670900"
+    assert profile_rows[0]["primary_article_role"] == "drain_body"
+    assert profile_rows[0]["secondary_article_role"] == "profile_cover"
     assert report["summary"]["production_safe_candidate_count"] == 0
     assert report["production_safe_candidate_count"] == 0
     assert report["diagnostic_only_candidate_count"] == report["summary"]["diagnostic_only_candidate_count"]
