@@ -46,3 +46,19 @@ Before TECE can be evaluated for production promotion in a future branch, collec
 4. Assembly/set matrix if available, including channel body, covers/grates, traps/outlets, feet/accessories, and complete sets.
 
 Until those files are available and reviewed, TECE remains diagnostic-only and production-blocked.
+
+## Full inventory CSV vs. review shortlist
+
+The full TECE inventory review CSV is generated with:
+
+```bash
+python tools/export_tece_inventory_review_csv.py --source-pack <path> --out tece_inventory_review.csv
+```
+
+This CSV is the diagnostic file to use when checking what article rows were extracted from the source pack. It exports every extracted source-pack inventory/classification row, including TECEdrainway, TECEdrainprofile, TECEdrainline, and TECEdrainpoint S rows when those sections are present in the source pack. It is not a production export and it must not create canonical `Products`, `Comparison`, `BOM_Options`, `Final_Assemblies`, or `Final_Set_Details` rows.
+
+The review shortlist remains a bounded compatibility-review subset only. It is intentionally not complete inventory. Use the inventory review CSV or `tools/report_tece_source_pack_coverage.py` to audit full extracted article coverage before using the shortlist for manual compatibility review.
+
+Catalogue article quick-search/index columns named `LE 1`, `LE 2`, `LE 3`, and `Seite` are logistics/page-index fields. They must not be parsed as article dimensions or nominal lengths. Nominal length, width, finish/color, and technical values must come from product table rows or article-specific product blocks, preserving same-row values and preserving conditional technical values such as 10/20 mm `Aufstau` flow rates with their conditions.
+
+TECE remains blocked until explicit article-level compatibility evidence is manually approved. Same family, same section, same nominal length, page proximity, article proximity, or article-number patterns are diagnostic review hints only and are never production compatibility proof.
