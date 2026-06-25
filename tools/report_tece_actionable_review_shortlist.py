@@ -24,8 +24,8 @@ EVIDENCE_RANK = {
 CONFIDENCE_RANK = {"high": 0, "medium": 1, "low": 2}
 KNOWN_ROLE_PAIRS = {
     "drain_body_to_cover_or_grate",
-    "profile_body_to_drain_body",
-    "profile_channel_to_drain_body",
+    "drain_body_to_profile_cover",
+    "drain_component_to_profile_cover",
     "drain_body_to_cover_plate",
 }
 TECHNICAL_FIELDS = (
@@ -74,12 +74,23 @@ def _row_from_pairing(pairing: dict[str, Any], lookup: dict[tuple[str, str], dic
     for row in (body_row, cover_row):
         if row:
             conditional_values.extend(row.get("conditional_technical_values") or [])
+    body_role = (body_row or {}).get("classified_role") or "unknown"
+    cover_role = (cover_row or {}).get("classified_role") or "unknown"
+    drain_article = body_article if str(body_role).startswith("drain") else (cover_article if str(cover_role).startswith("drain") else "")
+    visible_article = body_article if body_role in {"profile_cover", "visible_profile", "cover_or_grate", "cover_plate"} else (cover_article if cover_role in {"profile_cover", "visible_profile", "cover_or_grate", "cover_plate"} else "")
     return {
         "family": family,
         "page_range_label": pairing.get("page_range_label"),
         "role_pair": pairing.get("role_pair"),
         "body_or_profile_article_number": body_article,
         "cover_or_grate_or_drain_article_number": cover_article,
+        "primary_article_number": body_article,
+        "primary_article_role": body_role,
+        "secondary_article_number": cover_article,
+        "secondary_article_role": cover_role,
+        "drain_article_number": drain_article,
+        "visible_article_number": visible_article,
+        "role_pair_semantic_note": f"primary={body_role}; secondary={cover_role}; diagnostic-only role semantics",
         "nominal_length_mm": pairing.get("nominal_length_mm"),
         "evidence_level": pairing.get("evidence_level") or pairing.get("evidence_type"),
         "evidence_confidence": pairing.get("evidence_confidence"),
@@ -165,7 +176,8 @@ def _text_report(report: dict[str, Any]) -> str:
         for row in grouped[family]:
             print(
                 "  - "
-                f"{row['role_pair']} {row['body_or_profile_article_number']} -> {row['cover_or_grate_or_drain_article_number']} "
+                f"{row['role_pair']} {row['primary_article_number']} ({row['primary_article_role']}) -> "
+                f"{row['secondary_article_number']} ({row['secondary_article_role']}) "
                 f"len={row['nominal_length_mm']} evidence={row['evidence_level']} confidence={row['evidence_confidence']} "
                 f"status={row['manual_review_status']}",
                 file=stream,

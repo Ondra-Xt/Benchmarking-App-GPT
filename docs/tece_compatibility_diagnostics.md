@@ -81,105 +81,34 @@ Future TECE promotion should require, at minimum, reviewed official article-leve
 
 ## TECEdrainprofile role model
 
-TECEdrainprofile uses a family-specific diagnostic role model because profile
-articles and drain articles live in separate catalogue number ranges. Articles in
-the `670xxx` and `671xxx` profile ranges are classified as `profile_body` or
-`profile_channel` when no stronger explicit text says otherwise. Articles
-`673001`, `673002`, and `673003` are classified as `drain_body` or
-`drain_component`. Accessory-like `674xxx` and `675xxx` rows remain `unknown` or
-accessory-style diagnostic rows unless the catalogue text clearly identifies a
-profile or drain function. Complete sets are still summarized separately and are
-not broadly paired as component compatibility evidence.
+TECEdrainprofile uses a family-specific diagnostic role model because the
+catalogue separates visible profile/design articles from drain-body or siphon
+components. Rows from the `Länge / Breite / Farbe / Best.-Nr.` table in the
+`670xxx` and `671xxx` article ranges are classified as `profile_cover`: visible
+profile/cover/design articles with nominal length, width, and finish/colour.
+They are not classified as hydraulic drain bodies.
 
-For TECEdrainprofile, `profile_body_to_drain_body` and
-`profile_channel_to_drain_body` are actionable diagnostic role pairs. They are
-useful for manual audit because they represent a plausible profile-to-drain
-assembly relation, but they are not production-safe: the diagnostics must not
-infer compatibility from article range, same nominal length, or shared family
-section. `profile_body_to_cover_or_grate` is actionable only when explicit text
-evidence names both articles in a pairing statement. Same-role profile pairings
-remain excluded as `same_role_pairing_not_actionable`, and profile-to-unknown
-pairs remain excluded unless `explicit_text_pairing` evidence exists.
+The `673001`, `673002`, and `673003` article numbers remain conservative
+`drain_body` or `drain_component` candidates when the source text supports that
+drain role. Accessories and ambiguous rows remain `unknown` or accessory-like
+unless text clearly identifies the role. Complete sets are summarized as sets
+and are not broadly paired into article-level compatibility candidates.
 
-Future TECEdrainprofile production promotion requires reviewed, article-level
-compatibility evidence that explicitly links the profile article, drain article,
-and any cover/grate/plate article; reviewed technical completeness for required
-benchmark fields; and an implemented promotion policy that keeps TECE rows out of
-canonical ACO exports until those criteria are approved. Until then, all
-TECEdrainprofile candidates are diagnostic-only, require manual review, keep
-`production_promotion_blocked=true`, and keep both readiness flags false.
+TECEdrainprofile diagnostic pairings now make the drain side explicit, for
+example `drain_body_to_profile_cover` or `drain_component_to_profile_cover`.
+The legacy shortlist fields `body_or_profile_article_number` and
+`cover_or_grate_or_drain_article_number` remain for compatibility, but new
+normalized fields (`primary_article_number`, `primary_article_role`,
+`secondary_article_number`, `secondary_article_role`, `drain_article_number`,
+`visible_article_number`, and `role_pair_semantic_note`) should be preferred for
+manual review.
 
-## Actionable vs excluded diagnostic candidates
-
-The diagnostics now separate raw diagnostic pairings from actionable assembly-review
-candidates. `compatibility_candidate_count` is the raw diagnostic total, while
-`actionable_candidate_count` counts only role pairs that are meaningful for a possible
-assembly audit, such as `drain_body_to_cover_or_grate`, `channel_body_to_cover_or_grate`,
-`profile_body_to_drain_body`, and `drain_body_to_cover_plate`. Excluded raw diagnostics
-remain visible through `excluded_candidate_count`, `excluded_reason_counts`, family-level
-excluded reason counts, and bounded excluded examples.
-
-Same-role pairings such as `drain_body_to_drain_body`, `cover_or_grate_to_cover_or_grate`,
-and `complete_set_to_complete_set` are excluded with
-`same_role_pairing_not_actionable` because they do not represent an assembly relation.
-Pairings involving `unknown` roles are excluded with
-`unknown_role_without_explicit_text_pairing` unless explicit text evidence names both
-articles in a pairing statement; this preserves the raw source rows without letting
-ambiguous catalogue rows create noisy assembly candidates.
-
-Complete-set articles are summarized separately under `complete_set_articles` and the
-top-level `complete_set_article_count`. They are not broadly paired into assemblies unless
-explicit article-level text evidence supports a specific relation, because set rows usually
-represent already packaged articles rather than component-to-component compatibility rules.
-
-All actionable and excluded TECE compatibility diagnostics remain diagnostic-only. Same
-length, same family, same catalogue section, and explicit section proximity are never used
-for production compatibility. `explicit_text_pairing` still requires manual review, and
-TECE production promotion remains blocked with `ready_for_benchmark=false` and
-`ready_for_customer_view=false`.
-
-## Actionable review shortlist
-
-`tools/report_tece_actionable_review_shortlist.py` produces a compact, diagnostic-only
-queue from the actionable rows in the compatibility evidence audit. It is intended
-for human reviewers who need to inspect the best TECE compatibility candidates
-without reading every actionable diagnostic pairing.
-
-Example:
-
-```bash
-python tools/report_tece_actionable_review_shortlist.py \
-  --source-pack tests/fixtures/tece/source_pack \
-  --json \
-  --out tece_review_shortlist.json \
-  --max-per-family 50
-```
-
-The shortlist ranks candidates by explicit evidence first, then confidence, known
-assembly role pairs, available technical fields, and nominal-length matches where
-applicable. Nominal length is only a review hint; it is never production
-compatibility evidence. Conditional technical values are carried through in the
-shortlist row so reviewers can see the conditions rather than flattening them into
-unconditional values.
-
-The shortlist is not a production evidence source. Every row remains
-`manual_review_status: pending_review`, `production_safe_candidate_count: 0`,
-`production_promotion_blocked: true`, `ready_for_benchmark: false`, and
-`ready_for_customer_view: false`. Generating the report must not add TECE rows to
-canonical Products, Comparison, BOM_Options, Final_Assemblies, or
-Final_Set_Details.
-
-Recommended manual review workflow:
-
-1. Generate the audit and shortlist from the same source pack.
-2. Review explicit-text and explicit-section candidates first, grouped by family.
-3. Check the source pages and evidence text for true article-level compatibility.
-4. Preserve all stated technical conditions when recording reviewer notes.
-5. Leave same-length-only candidates diagnostic unless a separate explicit source
-   proves compatibility.
-
-Future path: reviewed explicit pairings may become evidence fixtures only after
-manual approval. Those fixtures should encode the approved source, article pair,
-role pair, reviewer decision, and any conditional technical values. Until that
-manual approval path exists and is explicitly wired into production criteria, TECE
-production promotion remains blocked.
+Section-level TECEdrainprofile pairing remains diagnostic-only. Manual review
+must not approve production compatibility based only on same section, same
+nominal length, neighbouring page range, or physical proximity in the catalogue.
+Future production promotion requires explicit article-level evidence, such as a
+reviewed compatibility matrix or catalogue text that names both counterpart
+article numbers and states the compatibility relationship, plus complete
+technical evidence and production acceptance criteria. Until then, TECE
+production promotion remains blocked, `production_safe_candidate_count` remains
+`0`, and both customer-view and benchmark readiness remain false.
