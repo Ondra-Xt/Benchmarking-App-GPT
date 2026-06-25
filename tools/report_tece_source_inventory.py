@@ -549,7 +549,7 @@ def _tecedrainline_structured_column_contexts(text: str) -> list[tuple[str, str,
             continue
         data = block[header_in_block:]
         title = _table_title_before(text, header.start())
-        finish_pattern = r"(?:gebürstet|poliert|glänzend|satiniert|Edelstahl|schwarz(?:\s+gebürstet)?|chrom\s+schwarz\s+gebürstet|gold\s+optik\s+(?:gebürstet|glänzend)|rotgold\s+gebürstet|weiß|grau|farbig\s+beschichtet)"
+        finish_pattern = r"(?:Edelstahl\s+gebürstet|Edelstahl\s+poliert|gebürstet|poliert|glänzend|satiniert|Edelstahl|schwarz(?:\s+gebürstet)?|chrom\s+schwarz\s+gebürstet|gold\s+optik\s+(?:gebürstet|glänzend)|rotgold\s+gebürstet|weiß|grau|farbig\s+beschichtet)"
         row_re = re.compile(
             rf"(?P<length>6\d{{2}}|7\d{{2}}|8\d{{2}}|9\d{{2}}|1[0-6]\d{{2}})\s*mm\s+"
             rf"(?P<finish>{finish_pattern})\s+"
@@ -667,6 +667,27 @@ def _extract_source_pack_rows(path: Path, root: Path, manifest_source: dict[str,
         if re.search(r"(?i)(test fixture|synthetic|example\.invalid)", text):
             compat = False
         classification = classify_source_pack_row(f"Article number: {article} {context}", manifest_source, missing)
+        known_tecedrainline_cover_articles = {
+            "600751", "600851", "600951", "601051", "601251", "601551",
+            "600800", "600900", "601000", "601200", "601500",
+            "600810", "600811", "600910", "600911", "601010", "601011",
+            "601210", "601211", "601510", "601511",
+        }
+        if (
+            extraction_method.startswith("structured")
+            and (hinted_family == "TECEdrainline" or classification["tece_family_candidate"] == "TECEdrainline")
+            and (
+                article in known_tecedrainline_cover_articles
+                or re.search(r"(?i)designrost|designabdeckung|glasabdeckung|fliesenmulde|rost|abdeckung", context)
+            )
+            and classification["tece_article_role_candidate"] in {"unknown", "complete_set"}
+        ):
+            classification = {
+                **classification,
+                "tece_article_role_candidate": "cover_or_grate",
+                "classification_confidence": "high",
+                "classification_reason": "structured_tecedrainline_cover_grate_table",
+            }
         if classification["tece_article_role_candidate"] == "accessory":
             for technical_field in ("flow_rate_lps", "water_seal_mm", "outlet_dn", "height_adj_min_mm", "height_adj_max_mm", "installation_height_mm"):
                 fields[technical_field] = ""
