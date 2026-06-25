@@ -1284,3 +1284,78 @@ def test_tece_coverage_warns_for_high_tecedrainline_unknown_role_count(tmp_path)
 
     assert line["unknown_role_count"] >= 2
     assert "high_unknown_role_count" in line["extraction_warnings"]
+
+
+def test_exported_inventory_csv_prefers_structured_tecedrainline_rows(tmp_path):
+    import csv
+    from tools import export_tece_inventory_review_csv as csv_mod
+
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    (pack / "line_tables.txt").write_text(
+        'TECEdrainline Designrost "quadratum" aus Edelstahl für Duschrinne '
+        'Nennlänge Oberfläche Best.-Nr. LE 1 '
+        '700 mm 800 mm 900 mm 1000 mm 1200 mm 1500 mm '
+        'gebürstet gebürstet gebürstet gebürstet gebürstet gebürstet '
+        '600751 600851 600951 601051 601251 601551 1 1 1 1 1 1. '
+        'Generic bad context Article number: 601251 Nennlänge 700 mm complete set should not win. '
+        'TECEdrainline Designabdeckung steel II Nennlänge Oberfläche Best.-Nr. LE 1 '
+        '800 mm 900 mm 1000 mm 1200 mm 1500 mm Edelstahl Edelstahl Edelstahl Edelstahl Edelstahl '
+        '600800 600900 601000 601200 601500 1 1 1 1 1. '
+        'TECEdrainline Fliesenmulde plate Nennlänge Farbe Best.-Nr. LE 1 '
+        '800 mm 800 mm 900 mm 900 mm 1000 mm 1000 mm 1200 mm 1200 mm 1500 mm 1500 mm '
+        'Edelstahl schwarz Edelstahl schwarz Edelstahl schwarz Edelstahl schwarz Edelstahl schwarz '
+        '600810 600811 600910 600911 601010 601011 601210 601211 601510 601511 1 1 1 1 1 1 1 1 1 1.',
+        encoding="utf-8",
+    )
+    (pack / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "line_tables.txt", "source_type": "txt", "source_origin": "manual", "evidence_scope": "article_data",
+        "product_family_hint": "TECEdrainline", "page_start": 271, "page_end": 294,
+        "page_range_label": "TECEdrainline 271-294", "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+    out = tmp_path / "inventory_review.csv"
+
+    csv_mod.export_inventory_csv(pack, out)
+    with out.open(encoding="utf-8-sig", newline="") as fh:
+        rows = {row["article_number"]: row for row in csv.DictReader(fh)}
+
+    expected_lengths = {
+        "600851": "800", "600951": "900", "601051": "1000", "601251": "1200", "601551": "1500",
+        "600800": "800", "600900": "900", "601000": "1000", "601200": "1200", "601500": "1500",
+        "600810": "800", "600811": "800", "600910": "900", "600911": "900", "601010": "1000",
+        "601011": "1000", "601210": "1200", "601211": "1200", "601510": "1500", "601511": "1500",
+    }
+    for article, length in expected_lengths.items():
+        assert rows[article]["nominal_length_mm"] == length
+        assert rows[article]["finish_or_color"]
+        assert rows[article]["article_role"] == "cover_or_grate"
+        assert rows[article]["article_role"] not in {"unknown", "complete_set"}
+        assert rows[article]["extraction_method"] in {"structured_column_table", "structured_designrost_column_table"}
+        assert rows[article]["production_promotion_blocked"] == "True"
+        assert rows[article]["ready_for_benchmark"] == "False"
+        assert rows[article]["ready_for_customer_view"] == "False"
+    assert rows["601251"]["nominal_length_mm"] == "1200"
+    assert rows["601251"]["nominal_length_mm"] != "700"
+
+
+def test_tecedrainline_known_roles_and_accessories_do_not_inherit_technical_fields(tmp_path):
+    (tmp_path / "roles.txt").write_text(
+        "TECEdrainline Ablauf DN 50 Aufbauhöhe 95 mm Sperrwasserhöhe 50 mm Best.-Nr. 650000. "
+        "TECEdrainline Zubehör Ersatzteil nearby DN 50 Aufbauhöhe 95 mm Best.-Nr. 660004. "
+        "TECEdrainline Ersatzteil nearby DN 50 Sperrwasserhöhe 50 mm Best.-Nr. 668010.",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "roles.txt", "source_type": "txt", "source_origin": "manual", "evidence_scope": "article_data",
+        "product_family_hint": "TECEdrainline", "page_range_label": "TECEdrainline 271-294", "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+
+    report = report_mod.load_source_pack(tmp_path)
+    rows = {row.article_number: row for row in report.rows}
+
+    assert rows["650000"].tece_article_role_candidate == "drain_body"
+    for article in ("660004", "668010"):
+        assert rows[article].tece_article_role_candidate == "accessory"
+        assert rows[article].outlet_dn == ""
+        assert rows[article].water_seal_mm == ""
+        assert rows[article].installation_height_mm == ""

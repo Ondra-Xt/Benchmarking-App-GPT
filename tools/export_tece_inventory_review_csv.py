@@ -21,6 +21,7 @@ COLUMNS = [
     "height_adj_max_mm", "page_range_label", "source_file", "source_page_start", "source_page_end",
     "catalogue_page_label", "extraction_confidence", "classification_confidence", "classification_reason",
     "production_blocking_reason", "production_promotion_blocked", "ready_for_benchmark", "ready_for_customer_view",
+    "extraction_method", "extraction_priority",
 ]
 
 
@@ -68,6 +69,8 @@ def export_inventory_csv(source_pack: str | Path, out: str | Path) -> int:
                 "production_promotion_blocked": row.production_promotion_blocked,
                 "ready_for_benchmark": row.ready_for_benchmark,
                 "ready_for_customer_view": row.ready_for_customer_view,
+                "extraction_method": row.extraction_method,
+                "extraction_priority": row.extraction_priority,
             })
     return len(report.rows)
 
