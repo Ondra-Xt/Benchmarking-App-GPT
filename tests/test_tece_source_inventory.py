@@ -1295,17 +1295,17 @@ def test_exported_inventory_csv_prefers_structured_tecedrainline_rows(tmp_path):
     (pack / "line_tables.txt").write_text(
         'TECEdrainline Designrost "quadratum" aus Edelstahl für Duschrinne '
         'Nennlänge Oberfläche Best.-Nr. LE 1 '
-        '700 mm 800 mm 900 mm 1000 mm 1200 mm 1500 mm '
-        'gebürstet gebürstet gebürstet gebürstet gebürstet gebürstet '
-        '600751 600851 600951 601051 601251 601551 1 1 1 1 1 1. '
+        '700 mm gebürstet 600751 1 St. 800 mm gebürstet 600851 1 St. '
+        '900 mm gebürstet 600951 1 St. 1000 mm gebürstet 601051 1 St. '
+        '1200 mm gebürstet 601251 1 St. 1500 mm gebürstet 601551 1 St. '
         'Generic bad context Article number: 601251 Nennlänge 700 mm complete set should not win. '
         'TECEdrainline Designabdeckung steel II Nennlänge Oberfläche Best.-Nr. LE 1 '
-        '800 mm 900 mm 1000 mm 1200 mm 1500 mm Edelstahl Edelstahl Edelstahl Edelstahl Edelstahl '
-        '600800 600900 601000 601200 601500 1 1 1 1 1. '
+        '800 mm Edelstahl 600800 1 St. 900 mm Edelstahl 600900 1 St. 1000 mm Edelstahl 601000 1 St. '
+        '1200 mm Edelstahl 601200 1 St. 1500 mm Edelstahl 601500 1 St. '
         'TECEdrainline Fliesenmulde plate Nennlänge Farbe Best.-Nr. LE 1 '
-        '800 mm 800 mm 900 mm 900 mm 1000 mm 1000 mm 1200 mm 1200 mm 1500 mm 1500 mm '
-        'Edelstahl schwarz Edelstahl schwarz Edelstahl schwarz Edelstahl schwarz Edelstahl schwarz '
-        '600810 600811 600910 600911 601010 601011 601210 601211 601510 601511 1 1 1 1 1 1 1 1 1 1.',
+        '800 mm Edelstahl 600810 1 St. 800 mm schwarz 600811 1 St. 900 mm Edelstahl 600910 1 St. '
+        '900 mm schwarz 600911 1 St. 1000 mm Edelstahl 601010 1 St. 1000 mm schwarz 601011 1 St. '
+        '1200 mm Edelstahl 601210 1 St. 1200 mm schwarz 601211 1 St. 1500 mm Edelstahl 601510 1 St. 1500 mm schwarz 601511 1 St.',
         encoding="utf-8",
     )
     (pack / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{

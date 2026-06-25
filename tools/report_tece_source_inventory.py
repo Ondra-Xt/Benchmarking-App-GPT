@@ -548,6 +548,25 @@ def _tecedrainline_structured_column_contexts(text: str) -> list[tuple[str, str,
         if "tecedrainline" not in block[:header_in_block].lower() and "tecedrainline" not in block[:160].lower():
             continue
         data = block[header_in_block:]
+        title = _table_title_before(text, header.start())
+        finish_pattern = r"(?:gebürstet|poliert|glänzend|satiniert|Edelstahl|schwarz(?:\s+gebürstet)?|chrom\s+schwarz\s+gebürstet|gold\s+optik\s+(?:gebürstet|glänzend)|rotgold\s+gebürstet|weiß|grau|farbig\s+beschichtet)"
+        row_re = re.compile(
+            rf"(?P<length>6\d{{2}}|7\d{{2}}|8\d{{2}}|9\d{{2}}|1[0-6]\d{{2}})\s*mm\s+"
+            rf"(?P<finish>{finish_pattern})\s+"
+            r"(?P<article>(?:60|61|62|63|64|65|66|67|68|69)\d{4})\b"
+            r"(?:\s+(?:\d+\s*)?St\.)?",
+            re.I,
+        )
+        row_matches = list(row_re.finditer(data))
+        if row_matches:
+            for row_match in row_matches:
+                length = int(row_match.group("length"))
+                article = row_match.group("article")
+                finish = re.sub(r"\s+", " ", row_match.group("finish")).strip()
+                context = f"{title} structured product table row Nennlänge: {length} mm Oberfläche: {finish} Best.-Nr. {article}"
+                contexts.append((article, context, "structured_column_table", 120))
+            continue
+
         article_matches = list(re.finditer(r"\b((?:60|61|62|63|64|65|66|67|68|69)\d{4})\b", data))
         if not article_matches:
             continue
@@ -556,7 +575,7 @@ def _tecedrainline_structured_column_contexts(text: str) -> list[tuple[str, str,
         lengths = [int(value) for value in re.findall(r"\b(6\d{2}|7\d{2}|8\d{2}|9\d{2}|1[0-6]\d{2})\s*mm\b", before_articles, re.I)]
         if not lengths:
             continue
-        finishes = re.findall(r"\b(gebürstet|poliert|glänzend|satiniert|Edelstahl|schwarz(?:\s+gebürstet)?|chrom\s+schwarz\s+gebürstet|gold\s+optik\s+(?:gebürstet|glänzend)|rotgold\s+gebürstet|weiß|grau|farbig\s+beschichtet)\b", before_articles, re.I)
+        finishes = re.findall(rf"\b({finish_pattern})\b", before_articles, re.I)
         articles = [m.group(1) for m in article_matches[:len(lengths)]]
         if len(articles) < len(lengths):
             continue
@@ -566,7 +585,6 @@ def _tecedrainline_structured_column_contexts(text: str) -> list[tuple[str, str,
                 finishes = [finishes[0]] * len(lengths)
             else:
                 finishes = finishes[:len(lengths)] if len(finishes) > len(lengths) else []
-        title = _table_title_before(text, header.start())
         for idx, (length, article) in enumerate(zip(lengths, articles)):
             finish = finishes[idx] if len(finishes) == len(lengths) else (finishes[0] if finishes else "")
             finish = re.sub(r"\s+", " ", finish).strip()
