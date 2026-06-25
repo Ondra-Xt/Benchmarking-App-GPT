@@ -260,6 +260,8 @@ GENERATED_SOURCE_PACK_OUTPUTS = {
     "classification_report.json",
     "evidence_gap_report.json",
     "compatibility_diagnostics_report.json",
+    "coverage_report.json",
+    "review_shortlist_report.json",
 }
 EVIDENCE_SCOPES = {"article_data", "technical_datasheet", "cover_grate_matrix", "assembly_matrix", "unknown"}
 SOURCE_PACK_TECHNICAL_FIELDS = (
@@ -309,7 +311,7 @@ def classify_source_pack_row(text: str, manifest_source: dict[str, Any] | None =
                 family = candidate
                 break
 
-    article_match = re.search(r"(?i)\b(?:article number|best\.-?nr\.?|artikel(?:nummer)?)[:\s]*([0-9]{6})\b", haystack)
+    article_match = re.search(r"(?i)\b(?:article number|best\.-?nr\.?|artikel(?:nummer)?)[:\s]*([0-9]{5,8})\b", haystack)
     article = article_match.group(1) if article_match else ""
 
     role = "unknown"
@@ -331,9 +333,11 @@ def classify_source_pack_row(text: str, manifest_source: dict[str, Any] | None =
         role, reason = "cover_or_grate", "keyword=cover_or_grate"
     elif re.search(r"\b(complete\s+set|set|komplettset|komplett-set)\b", haystack):
         role, reason = "complete_set", "keyword=complete_set_candidate"
+    elif re.search(r"\b(zubehör|ersatzteil|accessory|spare\s+part)\b", haystack):
+        role, reason = "accessory", "keyword=accessory_or_spare_part"
     elif scope == "technical_datasheet":
         role, reason = "technical_datasheet_only", "evidence_scope=technical_datasheet"
-    elif re.search(r"\b(drain\s+body|ablauf|abläufe)\b", haystack):
+    elif re.search(r"\b(drain\s+body|ablauf|abläufe|siphon|ablaufset)\b", haystack):
         role, reason = "drain_body", "keyword=drain_body_or_ablauf"
 
     confidence = "low"
@@ -479,7 +483,7 @@ def _fields_from_text(text: str, conditional_values: list[dict[str, Any]]) -> di
         r"Ablaufleistung\s*[:=]?\s*([0-9]+[,.]?[0-9]*)\s*l/s(?![^.\n]{0,80}(?:10|20)\s*mm\s*Aufstau)",
     ], text)
     return {
-        "nominal_length_mm": _extract_int([r"(?:nominal\s*)?length\s*[:=]?\s*(\d{3,4})\s*mm", r"(?:Nennlänge|Länge|Length)\s*[:=]?\s*(\d{3,4})\s*mm", r"\b(7\d{2}|8\d{2}|9\d{2}|1[0-5]\d{2})\s*mm\b"], text),
+        "nominal_length_mm": _extract_int([r"(?:nominal\s*)?length\s*[:=]?\s*(\d{3,4})\s*mm", r"(?:Nennlänge|Länge|Length)\s*[:=]?\s*(\d{3,4})\s*mm", r"\b(6\d{2}|7\d{2}|8\d{2}|9\d{2}|1[0-6]\d{2})\s*mm\b"], text),
         "flow_rate_lps": "" if conditional_values else unconditional_flow,
         "water_seal_mm": _extract_int([r"(?:reduzierte\s*)?Sperrwasserhöhe\s*[:=]?\s*(\d{2,3})\s*mm", r"water\s*seal\s*[:=]?\s*(\d{2,3})\s*mm"], text),
         "outlet_dn": _first_match([r"(?:outlet\s*[:=]?\s*)?(DN\s*\d{2,3})\b"], text).replace(" ", ""),
@@ -492,24 +496,38 @@ def _fields_from_text(text: str, conditional_values: list[dict[str, Any]]) -> di
 
 
 
-def _tecedrainprofile_table_contexts(text: str) -> list[tuple[str, str]]:
-    """Extract same-row contexts from Länge/Breite/Farbe/Best.-Nr. profile-cover tables."""
+def _same_row_table_contexts(text: str) -> list[tuple[str, str]]:
+    """Extract same-row catalogue table contexts without using LE/index columns as dimensions."""
     contexts: list[tuple[str, str]] = []
-    row_re = re.compile(
-        r"(?P<length>\d{3,4})\s*mm\s+(?P<width>\d{2,4})\s*mm\s+(?P<finish>Edelstahl\s+(?:gebürstet|poliert))\s+(?P<article>67[01]\d{3})\b",
-        re.I,
-    )
-    for match in row_re.finditer(text):
-        length = match.group("length")
-        width = match.group("width")
-        finish = re.sub(r"\s+", " ", match.group("finish")).strip()
-        article = match.group("article")
-        context = (
-            "TECEdrainprofile visible profile cover table row "
-            f"Länge: {length} mm Breite: {width} mm Farbe: {finish} Best.-Nr. {article}"
-        )
-        contexts.append((article, context))
+    finish_words = r"(?:Chrom\s+schwarz\s+gebürstet|Gold\s+Optik\s+gebürstet|Gold\s+Optik\s+glänzend|Rotgold\s+gebürstet|Schwarz\s+gebürstet|Edelstahl\s+gebürstet|Edelstahl\s+poliert)"
+    row_patterns = [
+        re.compile(rf"(?P<length>\d{{3,4}})\s*mm\s+(?P<width>\d{{2,4}})\s*mm\s+(?P<finish>{finish_words})\s+(?P<article>\d{{6,8}})\b", re.I),
+        re.compile(rf"(?P<length>\d{{3,4}})\s*mm\s+(?P<finish>{finish_words})\s+(?P<article>\d{{6,8}})\b", re.I),
+        re.compile(r"(?P<article>\d{6,8})\s+(?P<length>\d{3,4})\s*mm(?:\s+(?P<width>\d{2,4})\s*mm)?(?:\s+(?P<finish>[^.;\n]{2,60}?))?(?=\s+\d{6,8}\b|$)", re.I),
+    ]
+    for row_re in row_patterns:
+        for match in row_re.finditer(text):
+            start = max(0, match.start() - 140)
+            header = text[start:match.start()].lower()
+            if re.search(r"best\.-?nr\.\s+le\s*1\s+le\s*2\s+le\s*3\s+seite", header):
+                continue
+            article = match.group("article")
+            length = match.group("length")
+            width = match.groupdict().get("width") or ""
+            finish = re.sub(r"\s+", " ", match.groupdict().get("finish") or "").strip()
+            family_hint = "TECEdrainprofile" if re.fullmatch(r"67[01]\d{3}", article) else "TECE catalogue"
+            context = f"{family_hint} product table row Länge: {length} mm"
+            if width:
+                context += f" Breite: {width} mm"
+            if finish:
+                context += f" Farbe: {finish}"
+            context += f" Best.-Nr. {article}"
+            contexts.append((article, context))
     return contexts
+
+
+def _tecedrainprofile_table_contexts(text: str) -> list[tuple[str, str]]:
+    return [(article, context.replace("TECE catalogue", "TECEdrainprofile visible profile cover")) for article, context in _same_row_table_contexts(text) if re.fullmatch(r"67[01]\d{3}", article)]
 
 def _extract_source_pack_rows(path: Path, root: Path, manifest_source: dict[str, Any] | None = None) -> list[TeceSourcePackRow]:
     manifest_source = manifest_source or {}
@@ -517,7 +535,7 @@ def _extract_source_pack_rows(path: Path, root: Path, manifest_source: dict[str,
     text = _strip_markup(raw) if path.suffix.lower() in {".html", ".htm"} else re.sub(r"\s+", " ", raw).strip()
     if not text:
         return []
-    contexts = _tecedrainprofile_table_contexts(text) + _article_contexts(text)
+    contexts = _same_row_table_contexts(text) + _article_contexts(text)
     if contexts:
         seen_articles: set[str] = set()
         contexts = [(a, c) for a, c in contexts if not (a in seen_articles or seen_articles.add(a))]
