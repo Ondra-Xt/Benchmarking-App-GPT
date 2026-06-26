@@ -1154,7 +1154,44 @@ def test_full_inventory_csv_exports_all_source_pack_rows(tmp_path):
     assert "600100" in text
     assert "601200" in text
     assert "650001" in text
+    assert "3601050" in text
     assert "production_blocking_reason" in text
+
+
+def test_exported_inventory_csv_includes_tecedrainpoint_s_sentinel_and_stays_blocked(tmp_path):
+    import csv
+    import json
+    from tools import export_tece_inventory_review_csv as csv_mod
+    from tools import report_tece_source_pack_coverage as coverage_mod
+
+    out = tmp_path / "inventory_review.csv"
+    csv_mod.export_inventory_csv("tests/fixtures/tece/source_pack", out)
+
+    with out.open(encoding="utf-8-sig", newline="") as fh:
+        rows = {row["article_number"]: row for row in csv.DictReader(fh)}
+
+    row = rows["3601050"]
+    conditional_values = json.loads(row["conditional_technical_values"])
+    assert row["tece_family_candidate"] == "TECEdrainpoint"
+    assert row["article_role"] == "drain_body"
+    assert row["flow_rate_lps"] == ""
+    assert conditional_values == [
+        {"condition_label": "10 mm Aufstau", "condition_type": "head_water_level", "condition_unit": "mm", "condition_value": 10, "parameter_name": "flow_rate_lps", "value": 0.52},
+        {"condition_label": "20 mm Aufstau", "condition_type": "head_water_level", "condition_unit": "mm", "condition_value": 20, "parameter_name": "flow_rate_lps", "value": 0.6},
+    ]
+    assert row["production_promotion_blocked"] == "True"
+    assert row["ready_for_benchmark"] == "False"
+    assert row["ready_for_customer_view"] == "False"
+
+    coverage = coverage_mod.build_coverage_report("tests/fixtures/tece/source_pack")
+    point = coverage["families"]["TECEdrainpoint S"]
+    assert "3601050" not in point["missing_sentinel_article_numbers"]
+    assert "missing_sentinel_articles" not in point["extraction_warnings"]
+    assert point["extracted_row_count"] >= 1
+    assert coverage["production_safe_candidate_count"] == 0
+    assert coverage["production_promotion_blocked"] is True
+    assert coverage["ready_for_benchmark"] is False
+    assert coverage["ready_for_customer_view"] is False
 
 
 def test_tece_source_pack_coverage_includes_all_four_families(tmp_path):
@@ -1218,6 +1255,7 @@ def test_tecedrainpoint_s_sentinel_and_conditional_flows_preserved(tmp_path):
     row = next(row for row in report.rows if row.article_number == "3601050")
 
     assert row.tece_family_candidate == "TECEdrainpoint"
+    assert row.tece_article_role_candidate == "drain_body"
     assert row.outlet_dn == "DN50"
     assert row.conditional_technical_values == [
         {"parameter_name": "flow_rate_lps", "value": 0.52, "condition_type": "head_water_level", "condition_value": 10, "condition_unit": "mm", "condition_label": "10 mm Aufstau"},

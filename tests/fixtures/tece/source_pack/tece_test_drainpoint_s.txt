@@ -1,0 +1,5 @@
+TEST FIXTURE ONLY - synthetic TECEdrainpoint S catalogue snippet.
+TECEdrainpoint S Ablaufset drain body DN 50 Aufbauhöhe 95 mm Sperrwasserhöhe 50 mm.
+Ablaufleistung >=0,52/>=0,60 l/s bei 10/20 mm Aufstau.
+Best.-Nr. 360 10 50
+This diagnostic fixture is not compatibility proof and must remain production-blocked.
