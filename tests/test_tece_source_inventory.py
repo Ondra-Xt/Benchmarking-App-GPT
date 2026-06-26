@@ -1172,7 +1172,8 @@ def test_exported_inventory_csv_includes_tecedrainpoint_s_sentinel_and_stays_blo
 
     row = rows["3601050"]
     conditional_values = json.loads(row["conditional_technical_values"])
-    assert row["tece_family_candidate"] == "TECEdrainpoint"
+    assert row["product_family"] == "TECEdrainpoint S"
+    assert row["tece_family_candidate"] == "TECEdrainpoint S"
     assert row["article_role"] == "drain_body"
     assert row["flow_rate_lps"] == ""
     assert conditional_values == [
@@ -1192,6 +1193,54 @@ def test_exported_inventory_csv_includes_tecedrainpoint_s_sentinel_and_stays_blo
     assert coverage["production_promotion_blocked"] is True
     assert coverage["ready_for_benchmark"] is False
     assert coverage["ready_for_customer_view"] is False
+
+
+def test_generated_source_pack_outputs_are_not_reingested(tmp_path):
+    import csv
+    import json
+    import shutil
+    from tools import export_tece_inventory_review_csv as csv_mod
+    from tools import report_tece_source_pack_coverage as coverage_mod
+
+    source_pack = tmp_path / "source_pack"
+    shutil.copytree("tests/fixtures/tece/source_pack", source_pack)
+    generated_payload = (
+        "article_number,product_family,article_role,description\n"
+        "3601050,TECEdrainpoint S,cover_or_grate,generated review row must be ignored\n"
+        "999999,TECEdrainline,drain_body,generated review row must be ignored\n"
+    )
+    for name in ("inventory_review.csv", "inventory_full_check.csv", "TECE.csv"):
+        (source_pack / name).write_text(generated_payload, encoding="utf-8")
+    (source_pack / "coverage_report.json").write_text(json.dumps({
+        "families": {
+            "TECEdrainpoint S": {
+                "article_numbers_sample": ["3601050"],
+                "extracted_row_count": 1000,
+            }
+        }
+    }), encoding="utf-8")
+
+    baseline_coverage = coverage_mod.build_coverage_report("tests/fixtures/tece/source_pack")
+    coverage = coverage_mod.build_coverage_report(source_pack)
+    out = tmp_path / "inventory_review_export.csv"
+    csv_mod.export_inventory_csv(source_pack, out)
+
+    with out.open(encoding="utf-8-sig", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+
+    assert sum(row["article_number"] == "3601050" for row in rows) == 1
+    assert "999999" not in {row["article_number"] for row in rows}
+    assert {row["source_file"] for row in rows}.isdisjoint({
+        "inventory_review.csv",
+        "inventory_full_check.csv",
+        "TECE.csv",
+        "coverage_report.json",
+    })
+    assert coverage["source_pack_candidate_count"] == baseline_coverage["source_pack_candidate_count"]
+    assert coverage["families"]["TECEdrainline"]["extracted_row_count"] == baseline_coverage["families"]["TECEdrainline"]["extracted_row_count"]
+    assert coverage["families"]["TECEdrainpoint S"]["extracted_row_count"] == baseline_coverage["families"]["TECEdrainpoint S"]["extracted_row_count"]
+    assert "3601050" not in coverage["families"]["TECEdrainpoint S"]["missing_sentinel_article_numbers"]
+    assert coverage["production_safe_candidate_count"] == 0
 
 
 def test_tece_source_pack_coverage_includes_all_four_families(tmp_path):
@@ -1254,7 +1303,8 @@ def test_tecedrainpoint_s_sentinel_and_conditional_flows_preserved(tmp_path):
     report = report_mod.load_source_pack(tmp_path)
     row = next(row for row in report.rows if row.article_number == "3601050")
 
-    assert row.tece_family_candidate == "TECEdrainpoint"
+    assert row.product_family == "TECEdrainpoint S"
+    assert row.tece_family_candidate == "TECEdrainpoint S"
     assert row.tece_article_role_candidate == "drain_body"
     assert row.outlet_dn == "DN50"
     assert row.conditional_technical_values == [
