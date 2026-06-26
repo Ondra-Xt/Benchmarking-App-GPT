@@ -542,9 +542,12 @@ def _tecedrainline_structured_column_contexts(text: str) -> list[tuple[str, str,
     """Extract TECEdrainline catalogue column tables by same index across length/finish/article columns."""
     contexts: list[tuple[str, str, str, int]] = []
     header_re = re.compile(r"(?i)(?:Nennlänge|Länge)\s+(?:(?:Breite|Oberfläche|Farbe)\s+){0,3}[^.;\n]{0,80}?Best\.-?Nr\.\s+LE\s*1")
-    for header in header_re.finditer(text):
-        block = text[max(0, header.start() - 260): min(len(text), header.end() + 1600)]
-        header_in_block = header.start() - max(0, header.start() - 260)
+    header_matches = list(header_re.finditer(text))
+    for header_index, header in enumerate(header_matches):
+        block_start = max(0, header.start() - 260)
+        block_end = min(len(text), header_matches[header_index + 1].start() if header_index + 1 < len(header_matches) else header.end() + 1600)
+        block = text[block_start:block_end]
+        header_in_block = header.start() - block_start
         if "tecedrainline" not in block[:header_in_block].lower() and "tecedrainline" not in block[:160].lower():
             continue
         data = block[header_in_block:]
@@ -566,6 +569,25 @@ def _tecedrainline_structured_column_contexts(text: str) -> list[tuple[str, str,
                 if not finish:
                     title_finish = re.search(r"(?i)\b(Edelstahl|gebürstet|poliert|satiniert|schwarz|weiß|grau)\b", title)
                     finish = title_finish.group(1) if title_finish else ""
+                context = f"{title} structured product table row Nennlänge: {length} mm"
+                if finish:
+                    context += f" Oberfläche: {finish}"
+                context += f" Best.-Nr. {article}"
+                contexts.append((article, context, "structured_column_table", 120))
+            continue
+
+
+        all_article_matches = list(re.finditer(r"\b((?:60|61|62|63|64|65|66|67|68|69)\d{4})\b", data))
+        compact_lengths: list[int] = []
+        for compact in re.finditer(r"\b((?:(?:6\d{2}|7\d{2}|8\d{2}|9\d{2}|1[0-6]\d{2})\s+){1,}(?:6\d{2}|7\d{2}|8\d{2}|9\d{2}|1[0-6]\d{2}))\s*mm\b", data, re.I):
+            compact_lengths.extend(int(value) for value in re.findall(r"6\d{2}|7\d{2}|8\d{2}|9\d{2}|1[0-6]\d{2}", compact.group(1)))
+        length_matches = [int(value) for value in re.findall(r"\b(6\d{2}|7\d{2}|8\d{2}|9\d{2}|1[0-6]\d{2})\s*mm\b", data, re.I)]
+        all_lengths = compact_lengths or length_matches
+        all_articles = [match.group(1) for match in all_article_matches]
+        if all_lengths and len(all_articles) == len(all_lengths):
+            title_finish = re.search(r"(?i)\b(Edelstahl|gebürstet|poliert|satiniert|schwarz|weiß|grau)\b", title)
+            finish = title_finish.group(1) if title_finish else ""
+            for length, article in zip(all_lengths, all_articles):
                 context = f"{title} structured product table row Nennlänge: {length} mm"
                 if finish:
                     context += f" Oberfläche: {finish}"
