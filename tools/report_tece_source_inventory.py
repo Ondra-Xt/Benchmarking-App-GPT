@@ -418,6 +418,10 @@ def classify_source_pack_row(text: str, manifest_source: dict[str, Any] | None =
         role, reason = "channel_body", "keyword=channel_body"
     elif re.search(r"\b(cover|grate|abdeckung|rost)\b|designrost|designabdeckung|glasabdeckung|fliesenmulde", haystack):
         role, reason = "cover_or_grate", "keyword=cover_or_grate"
+    elif family == "TECEdrainline" and re.search(r"\b(ablaufset|komplettset|komplett-set|complete\s+set|set)\b", haystack):
+        role, reason = "complete_set", "tecedrainline_keyword=explicit_set"
+    elif family == "TECEdrainline" and re.search(r"\b(ablaufkörper|ablaufkoerper|ablauf|drain\s+body)\b", haystack):
+        role, reason = "drain_body", "tecedrainline_keyword=explicit_drain_body_or_ablauf"
     elif family in {"TECEdrainpoint", "TECEdrainpoint S"} and re.search(r"\b(ablauf|abläufe|ablaufset)\b", haystack):
         role, reason = "drain_body", "tecedrainpoint_keyword=ablauf_or_ablaufset"
     elif re.search(r"\b(complete\s+set|set|komplettset|komplett-set)\b", haystack):
@@ -552,6 +556,23 @@ def _extract_conditional_flow_values(text: str) -> list[dict[str, Any]]:
 
 def _normalize_article_number(value: str) -> str:
     return re.sub(r"\D", "", value or "")
+
+
+def _article_role_context(article: str, context: str) -> str:
+    """Prefer the sentence/table fragment that explicitly contains the article for role classification."""
+    normalized_article = _normalize_article_number(article)
+    if not normalized_article:
+        return context
+    safe_context = re.sub(r"(?i)Best\.-?Nr\.", "Best-Nr", context)
+    fragments = re.split(r"(?<=[.;])\s+", safe_context)
+    role_re = re.compile(r"(?i)\b(ablauf|abläufe|ablaufset|ablaufkörper|ablaufkoerper|drain\s+body|cover|grate|abdeckung|rost|designrost|designabdeckung|zubehör|ersatzteil|accessory|spare\s+part|complete\s+set|komplettset|komplett-set|set)\b")
+    for idx, fragment in enumerate(fragments):
+        if _normalize_article_number(fragment).find(normalized_article) >= 0:
+            if not role_re.search(fragment) and idx > 0 and not re.search(r"(?i)\bTECEdrain", fragment):
+                previous_role_fragment = next((prev for prev in reversed(fragments[max(0, idx - 3):idx]) if role_re.search(prev)), fragments[idx - 1])
+                return f"{previous_role_fragment} {fragment}"
+            return fragment
+    return context
 
 
 def _article_contexts(text: str) -> list[tuple[str, str, str, int]]:
@@ -831,7 +852,8 @@ def _extract_source_pack_rows(path: Path, root: Path, manifest_source: dict[str,
         compat = bool(re.search(r"(?i)(compatibility\s+matrix|compatible\s+with\s+cover|cover\s*/\s*grate\s+compatibility)", context))
         if re.search(r"(?i)(test fixture|synthetic|example\.invalid)", text):
             compat = False
-        classification = classify_source_pack_row(f"Article number: {article} {context}", manifest_source, missing)
+        classification_context = _article_role_context(article, context)
+        classification = classify_source_pack_row(f"Article number: {article} {classification_context}", manifest_source, missing)
         known_tecedrainline_cover_articles = {
             "600751", "600851", "600951", "601051", "601251", "601551",
             "600800", "600900", "601000", "601200", "601500",
@@ -858,7 +880,7 @@ def _extract_source_pack_rows(path: Path, root: Path, manifest_source: dict[str,
                 fields[technical_field] = ""
             conditional = []
             missing = [field for field in SOURCE_PACK_TECHNICAL_FIELDS if _clean(fields[field]) == ""]
-            classification = classify_source_pack_row(f"Article number: {article} {context}", manifest_source, missing)
+            classification = classify_source_pack_row(f"Article number: {article} {classification_context}", manifest_source, missing)
         confidence = round((1 + sum(1 for v in fields.values() if _clean(v)) + (1 if conditional else 0) + (1 if product_name else 0)) / (len(SOURCE_PACK_TECHNICAL_FIELDS) + 3), 2)
         rows.append(TeceSourcePackRow(
             source_file=str(path.relative_to(root)), source_type=path.suffix.lower().lstrip(".") or "unknown",
