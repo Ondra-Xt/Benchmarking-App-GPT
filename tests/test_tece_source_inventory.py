@@ -1172,7 +1172,8 @@ def test_exported_inventory_csv_includes_tecedrainpoint_s_sentinel_and_stays_blo
 
     row = rows["3601050"]
     conditional_values = json.loads(row["conditional_technical_values"])
-    assert row["tece_family_candidate"] == "TECEdrainpoint"
+    assert row["product_family"] == "TECEdrainpoint S"
+    assert row["tece_family_candidate"] == "TECEdrainpoint S"
     assert row["article_role"] == "drain_body"
     assert row["flow_rate_lps"] == ""
     assert conditional_values == [
@@ -1254,7 +1255,8 @@ def test_tecedrainpoint_s_sentinel_and_conditional_flows_preserved(tmp_path):
     report = report_mod.load_source_pack(tmp_path)
     row = next(row for row in report.rows if row.article_number == "3601050")
 
-    assert row.tece_family_candidate == "TECEdrainpoint"
+    assert row.product_family == "TECEdrainpoint S"
+    assert row.tece_family_candidate == "TECEdrainpoint S"
     assert row.tece_article_role_candidate == "drain_body"
     assert row.outlet_dn == "DN50"
     assert row.conditional_technical_values == [

@@ -303,12 +303,12 @@ def classify_source_pack_row(text: str, manifest_source: dict[str, Any] | None =
 
     family = "unknown"
     hint = _clean(manifest_source.get("product_family_hint") or manifest_source.get("page_range_label"))
-    for candidate in ("TECEdrainprofile", "TECEdrainline", "TECEdrainpoint", "TECEdrainway"):
+    for candidate in ("TECEdrainprofile", "TECEdrainline", "TECEdrainpoint S", "TECEdrainpoint", "TECEdrainway"):
         if candidate.lower() in hint.lower():
             family = candidate
             break
     if family == "unknown":
-        for candidate in ("TECEdrainprofile", "TECEdrainline", "TECEdrainpoint", "TECEdrainway"):
+        for candidate in ("TECEdrainprofile", "TECEdrainline", "TECEdrainpoint S", "TECEdrainpoint", "TECEdrainway"):
             if candidate.lower() in haystack:
                 family = candidate
                 break
@@ -337,7 +337,7 @@ def classify_source_pack_row(text: str, manifest_source: dict[str, Any] | None =
         role, reason = "channel_body", "keyword=channel_body"
     elif re.search(r"\b(cover|grate|abdeckung|rost)\b|designrost|designabdeckung|glasabdeckung|fliesenmulde", haystack):
         role, reason = "cover_or_grate", "keyword=cover_or_grate"
-    elif family == "TECEdrainpoint" and re.search(r"\b(ablauf|abläufe|ablaufset)\b", haystack):
+    elif family in {"TECEdrainpoint", "TECEdrainpoint S"} and re.search(r"\b(ablauf|abläufe|ablaufset)\b", haystack):
         role, reason = "drain_body", "tecedrainpoint_keyword=ablauf_or_ablaufset"
     elif re.search(r"\b(complete\s+set|set|komplettset|komplett-set)\b", haystack):
         role, reason = "complete_set", "keyword=complete_set_candidate"
@@ -697,13 +697,28 @@ def _tecedrainline_designrost_column_contexts(text: str) -> list[tuple[str, str,
 def _tecedrainprofile_table_contexts(text: str) -> list[tuple[str, str, str, int]]:
     return [(article, context.replace("TECE catalogue", "TECEdrainprofile visible profile cover"), method, priority) for article, context, method, priority in _same_row_table_contexts(text) if re.fullmatch(r"67[01]\d{3}", article)]
 
+def _tecedrainpoint_s_contexts(text: str) -> list[tuple[str, str, str, int]]:
+    """Recover TECEdrainpoint S rows when catalogue text spaces the article number."""
+    contexts: list[tuple[str, str, str, int]] = []
+    article_re = re.compile(r"(?<!\d)360\s*10\s*50(?!\d)")
+    for match in article_re.finditer(text):
+        start = max(0, match.start() - 650)
+        end = min(len(text), match.end() + 350)
+        context = re.sub(r"\s+", " ", text[start:end]).strip()
+        if "tecedrainpoint s" not in context.lower():
+            continue
+        if not re.search(r"(?i)\b(ablauf|abläufe|ablaufset)\b", context):
+            continue
+        contexts.append(("3601050", context, "structured_tecedrainpoint_s_spaced_article", 140))
+    return contexts
+
 def _extract_source_pack_rows(path: Path, root: Path, manifest_source: dict[str, Any] | None = None) -> list[TeceSourcePackRow]:
     manifest_source = manifest_source or {}
     raw = _read_source_pack_file(path, manifest_source)
     text = _strip_markup(raw) if path.suffix.lower() in {".html", ".htm"} else re.sub(r"\s+", " ", raw).strip()
     if not text:
         return []
-    contexts = _tecedrainline_designrost_column_contexts(text) + _tecedrainline_known_cover_block_contexts(text) + _tecedrainline_structured_column_contexts(text) + _same_row_table_contexts(text) + _article_contexts(text)
+    contexts = _tecedrainpoint_s_contexts(text) + _tecedrainline_designrost_column_contexts(text) + _tecedrainline_known_cover_block_contexts(text) + _tecedrainline_structured_column_contexts(text) + _same_row_table_contexts(text) + _article_contexts(text)
     if contexts:
         best_by_article: dict[str, tuple[str, str, str, int]] = {}
         for item in contexts:
@@ -719,7 +734,7 @@ def _extract_source_pack_rows(path: Path, root: Path, manifest_source: dict[str,
     for article, context, extraction_method, extraction_priority in contexts:
         hinted_family = _clean(manifest_source.get("product_family_hint"))
         if not hinted_family:
-            for candidate in ("TECEdrainprofile", "TECEdrainline", "TECEdrainpoint", "TECEdrainway"):
+            for candidate in ("TECEdrainprofile", "TECEdrainline", "TECEdrainpoint S", "TECEdrainpoint", "TECEdrainway"):
                 if candidate.lower() in _clean(manifest_source.get("page_range_label")).lower():
                     hinted_family = candidate
                     break
@@ -817,7 +832,8 @@ def load_source_pack(path: str | Path) -> TeceSourcePackReport:
     if root.is_dir():
         all_files = sorted(p for p in root.rglob("*") if p.is_file() and p.name != SOURCE_PACK_MANIFEST and p.name not in GENERATED_SOURCE_PACK_OUTPUTS)
         source_entries = _manifest_source_entries(manifest)
-        files = [base / str(source.get("source_file")) for source in source_entries]
+        manifest_paths = {base / str(source.get("source_file")) for source in source_entries}
+        extra_files = sorted(p for p in all_files if p.suffix.lower() in SOURCE_PACK_EXTENSIONS and p not in manifest_paths)
         rows = [
             row
             for source in source_entries
@@ -825,6 +841,11 @@ def load_source_pack(path: str | Path) -> TeceSourcePackReport:
             and (base / str(source.get("source_file"))).suffix.lower() in SOURCE_PACK_EXTENSIONS
             for row in _extract_source_pack_rows(base / str(source.get("source_file")), base, source)
         ]
+        rows.extend(
+            row
+            for file in extra_files
+            for row in _extract_source_pack_rows(file, base, {})
+        )
     else:
         all_files = [root] if root.is_file() else []
         source_entries = []
