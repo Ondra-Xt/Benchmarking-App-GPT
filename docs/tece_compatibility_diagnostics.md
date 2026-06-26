@@ -112,3 +112,11 @@ article numbers and states the compatibility relationship, plus complete
 technical evidence and production acceptance criteria. Until then, TECE
 production promotion remains blocked, `production_safe_candidate_count` remains
 `0`, and both customer-view and benchmark readiness remain false.
+
+## Inventory coverage before shortlist review
+
+The actionable review shortlist is not the complete TECE inventory. It is a bounded set of diagnostic compatibility candidates intended for manual review after source-pack extraction coverage has been checked.
+
+Use `tools/export_tece_inventory_review_csv.py` for the full extracted source-pack inventory and `tools/report_tece_source_pack_coverage.py` for family/page-range coverage before relying on shortlist rows. The inventory CSV is the file for checking “what we already have”; the shortlist is only a compatibility-review subset.
+
+Article quick-search/index columns `LE 1`, `LE 2`, `LE 3`, and `Seite` must not be treated as product dimensions. TECE remains diagnostic-only and production-blocked until explicit article-level compatibility evidence is manually approved.
