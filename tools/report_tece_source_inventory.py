@@ -264,6 +264,9 @@ GENERATED_SOURCE_PACK_OUTPUTS = {
     "compatibility_diagnostics_report.json",
     "coverage_report.json",
     "review_shortlist_report.json",
+    "inventory_review.csv",
+    "inventory_full_check.csv",
+    "tece.csv",
 }
 EVIDENCE_SCOPES = {"article_data", "technical_datasheet", "cover_grate_matrix", "assembly_matrix", "unknown"}
 SOURCE_PACK_TECHNICAL_FIELDS = (
@@ -275,6 +278,84 @@ SOURCE_PACK_TECHNICAL_FIELDS = (
     "height_adj_max_mm",
     "installation_height_mm",
 )
+
+GENERATED_ARTIFACT_NAME_PATTERNS = (
+    re.compile(r"(?i)(?:^|[_-])(?:inventory|coverage|review|shortlist|report|export|output|full_check)(?:[_-]|$)"),
+    re.compile(r"(?i)^(?:tece|products|comparison|bom_options|final_assemblies|final_set_details)\.csv$"),
+)
+
+
+def _is_generated_source_pack_artifact(path: Path) -> bool:
+    """Return True for app-generated diagnostics/exports that must never be re-ingested."""
+    name = path.name
+    lower_name = name.lower()
+    if lower_name in GENERATED_SOURCE_PACK_OUTPUTS:
+        return True
+    if path.suffix.lower() not in {".csv", ".json"}:
+        return False
+    return any(pattern.search(name) for pattern in GENERATED_ARTIFACT_NAME_PATTERNS)
+
+
+def _source_row_family(row: TeceSourcePackRow) -> str:
+    family = _clean(row.tece_family_candidate) or _clean(row.product_family)
+    if "tecedrainpoint s" in family.lower():
+        return "TECEdrainpoint S"
+    return family
+
+
+def _source_row_page_range_key(row: TeceSourcePackRow) -> str:
+    if _clean(row.page_range_label):
+        return _clean(row.page_range_label)
+    if _clean(row.source_page_start) or _clean(row.source_page_end):
+        return f"{row.source_page_start}-{row.source_page_end}"
+    return ""
+
+
+def _source_row_quality_key(row: TeceSourcePackRow) -> tuple[int, int, int, int, int]:
+    has_manifest_range = 1 if _source_row_page_range_key(row) else 0
+    is_pdf = 1 if _clean(row.source_type).lower() == "pdf" else 0
+    has_conditional_values = 1 if row.conditional_technical_values else 0
+    return (
+        int(row.extraction_priority or 0),
+        has_manifest_range,
+        is_pdf,
+        has_conditional_values,
+        len(_clean(row.evidence_text)),
+    )
+
+
+def _deduplicate_source_pack_rows(rows: list[TeceSourcePackRow]) -> list[TeceSourcePackRow]:
+    """Keep one deterministic best diagnostic row per article/family/role/page-range."""
+    base_page_keys: dict[tuple[str, str, str], set[str]] = {}
+    for row in rows:
+        base_key = (
+            _clean(row.article_number),
+            _source_row_family(row),
+            _clean(row.tece_article_role_candidate) or "unknown",
+        )
+        page_key = _source_row_page_range_key(row)
+        if page_key:
+            base_page_keys.setdefault(base_key, set()).add(page_key)
+    best_by_key: dict[tuple[str, str, str, str], TeceSourcePackRow] = {}
+    order_by_key: dict[tuple[str, str, str, str], int] = {}
+    for idx, row in enumerate(rows):
+        base_key = (
+            _clean(row.article_number),
+            _source_row_family(row),
+            _clean(row.tece_article_role_candidate) or "unknown",
+        )
+        row_page_key = _source_row_page_range_key(row)
+        meaningful_page_ranges = base_page_keys.get(base_key, set())
+        page_key = row_page_key if len(meaningful_page_ranges) > 1 else (next(iter(meaningful_page_ranges)) if meaningful_page_ranges else "")
+        key = (*base_key, page_key)
+        existing = best_by_key.get(key)
+        if existing is None:
+            best_by_key[key] = row
+            order_by_key[key] = idx
+            continue
+        if _source_row_quality_key(row) > _source_row_quality_key(existing):
+            best_by_key[key] = row
+    return [best_by_key[key] for key, _idx in sorted(order_by_key.items(), key=lambda item: item[1])]
 
 
 
@@ -303,12 +384,12 @@ def classify_source_pack_row(text: str, manifest_source: dict[str, Any] | None =
 
     family = "unknown"
     hint = _clean(manifest_source.get("product_family_hint") or manifest_source.get("page_range_label"))
-    for candidate in ("TECEdrainprofile", "TECEdrainline", "TECEdrainpoint", "TECEdrainway"):
+    for candidate in ("TECEdrainprofile", "TECEdrainline", "TECEdrainpoint S", "TECEdrainpoint", "TECEdrainway"):
         if candidate.lower() in hint.lower():
             family = candidate
             break
     if family == "unknown":
-        for candidate in ("TECEdrainprofile", "TECEdrainline", "TECEdrainpoint", "TECEdrainway"):
+        for candidate in ("TECEdrainprofile", "TECEdrainline", "TECEdrainpoint S", "TECEdrainpoint", "TECEdrainway"):
             if candidate.lower() in haystack:
                 family = candidate
                 break
@@ -337,7 +418,7 @@ def classify_source_pack_row(text: str, manifest_source: dict[str, Any] | None =
         role, reason = "channel_body", "keyword=channel_body"
     elif re.search(r"\b(cover|grate|abdeckung|rost)\b|designrost|designabdeckung|glasabdeckung|fliesenmulde", haystack):
         role, reason = "cover_or_grate", "keyword=cover_or_grate"
-    elif family == "TECEdrainpoint" and re.search(r"\b(ablauf|abläufe|ablaufset)\b", haystack):
+    elif family in {"TECEdrainpoint", "TECEdrainpoint S"} and re.search(r"\b(ablauf|abläufe|ablaufset)\b", haystack):
         role, reason = "drain_body", "tecedrainpoint_keyword=ablauf_or_ablaufset"
     elif re.search(r"\b(complete\s+set|set|komplettset|komplett-set)\b", haystack):
         role, reason = "complete_set", "keyword=complete_set_candidate"
@@ -697,13 +778,28 @@ def _tecedrainline_designrost_column_contexts(text: str) -> list[tuple[str, str,
 def _tecedrainprofile_table_contexts(text: str) -> list[tuple[str, str, str, int]]:
     return [(article, context.replace("TECE catalogue", "TECEdrainprofile visible profile cover"), method, priority) for article, context, method, priority in _same_row_table_contexts(text) if re.fullmatch(r"67[01]\d{3}", article)]
 
+def _tecedrainpoint_s_contexts(text: str) -> list[tuple[str, str, str, int]]:
+    """Recover TECEdrainpoint S rows when catalogue text spaces the article number."""
+    contexts: list[tuple[str, str, str, int]] = []
+    article_re = re.compile(r"(?<!\d)360\s*10\s*50(?!\d)")
+    for match in article_re.finditer(text):
+        start = max(0, match.start() - 650)
+        end = min(len(text), match.end() + 350)
+        context = re.sub(r"\s+", " ", text[start:end]).strip()
+        if "tecedrainpoint s" not in context.lower():
+            continue
+        if not re.search(r"(?i)\b(ablauf|abläufe|ablaufset)\b", context):
+            continue
+        contexts.append(("3601050", context, "structured_tecedrainpoint_s_spaced_article", 140))
+    return contexts
+
 def _extract_source_pack_rows(path: Path, root: Path, manifest_source: dict[str, Any] | None = None) -> list[TeceSourcePackRow]:
     manifest_source = manifest_source or {}
     raw = _read_source_pack_file(path, manifest_source)
     text = _strip_markup(raw) if path.suffix.lower() in {".html", ".htm"} else re.sub(r"\s+", " ", raw).strip()
     if not text:
         return []
-    contexts = _tecedrainline_designrost_column_contexts(text) + _tecedrainline_known_cover_block_contexts(text) + _tecedrainline_structured_column_contexts(text) + _same_row_table_contexts(text) + _article_contexts(text)
+    contexts = _tecedrainpoint_s_contexts(text) + _tecedrainline_designrost_column_contexts(text) + _tecedrainline_known_cover_block_contexts(text) + _tecedrainline_structured_column_contexts(text) + _same_row_table_contexts(text) + _article_contexts(text)
     if contexts:
         best_by_article: dict[str, tuple[str, str, str, int]] = {}
         for item in contexts:
@@ -719,7 +815,7 @@ def _extract_source_pack_rows(path: Path, root: Path, manifest_source: dict[str,
     for article, context, extraction_method, extraction_priority in contexts:
         hinted_family = _clean(manifest_source.get("product_family_hint"))
         if not hinted_family:
-            for candidate in ("TECEdrainprofile", "TECEdrainline", "TECEdrainpoint", "TECEdrainway"):
+            for candidate in ("TECEdrainprofile", "TECEdrainline", "TECEdrainpoint S", "TECEdrainpoint", "TECEdrainway"):
                 if candidate.lower() in _clean(manifest_source.get("page_range_label")).lower():
                     hinted_family = candidate
                     break
@@ -815,21 +911,41 @@ def load_source_pack(path: str | Path) -> TeceSourcePackReport:
     manifest = _read_source_pack_manifest(root)
     base = root if root.is_dir() else root.parent
     if root.is_dir():
-        all_files = sorted(p for p in root.rglob("*") if p.is_file() and p.name != SOURCE_PACK_MANIFEST and p.name not in GENERATED_SOURCE_PACK_OUTPUTS)
+        all_files = sorted(
+            p
+            for p in root.rglob("*")
+            if p.is_file()
+            and p.name != SOURCE_PACK_MANIFEST
+            and not _is_generated_source_pack_artifact(p)
+        )
         source_entries = _manifest_source_entries(manifest)
-        files = [base / str(source.get("source_file")) for source in source_entries]
+        manifest_paths = {base / str(source.get("source_file")) for source in source_entries}
+        extra_files = sorted(p for p in all_files if p.suffix.lower() in SOURCE_PACK_EXTENSIONS and p not in manifest_paths)
         rows = [
             row
             for source in source_entries
             if (base / str(source.get("source_file"))).is_file()
             and (base / str(source.get("source_file"))).suffix.lower() in SOURCE_PACK_EXTENSIONS
+            and not _is_generated_source_pack_artifact(base / str(source.get("source_file")))
             for row in _extract_source_pack_rows(base / str(source.get("source_file")), base, source)
         ]
+        rows.extend(
+            row
+            for file in extra_files
+            for row in _extract_source_pack_rows(file, base, {})
+        )
     else:
         all_files = [root] if root.is_file() else []
         source_entries = []
         files = all_files
-        rows = [row for file in files if file.suffix.lower() in SOURCE_PACK_EXTENSIONS for row in _extract_source_pack_rows(file, base, None)]
+        rows = [
+            row
+            for file in files
+            if file.suffix.lower() in SOURCE_PACK_EXTENSIONS
+            and not _is_generated_source_pack_artifact(file)
+            for row in _extract_source_pack_rows(file, base, None)
+        ]
+    rows = _deduplicate_source_pack_rows(rows)
     coverage = {field: sum(1 for row in rows if _clean(getattr(row, field)) != "") for field in SOURCE_PACK_TECHNICAL_FIELDS}
     missing_counts = {field: sum(1 for row in rows if field in row.missing_fields) for field in SOURCE_PACK_TECHNICAL_FIELDS}
     scope_counts = {scope: 0 for scope in sorted(EVIDENCE_SCOPES)}
