@@ -1299,8 +1299,8 @@ def test_exported_inventory_csv_prefers_structured_tecedrainline_rows(tmp_path):
         '900 mm gebürstet 600951 1 St. 1000 mm gebürstet 601051 1 St. '
         '1200 mm gebürstet 601251 1 St. 1500 mm gebürstet 601551 1 St. '
         'Generic bad context Article number: 601251 Nennlänge 700 mm complete set should not win. '
-        'TECEdrainline Designabdeckung steel II aus Edelstahl Nennlänge Best.-Nr. LE 1 '
-        '600800 600900 601000 601200 601500 800 900 1000 1200 1500 mm '
+        'TECEdrainline Designabdeckung steel II aus Edelstahl Best.-Nr. LE 1 '
+        '600800 600900 601000 601200 601500 Nennlängen 800 900 1000 1200 1500 '
         'TECEdrainline Fliesenmulde plate Nennlänge Farbe Best.-Nr. LE 1 '
         '800 mm Edelstahl 600810 1 St. 800 mm schwarz 600811 1 St. 900 mm Edelstahl 600910 1 St. '
         '900 mm schwarz 600911 1 St. 1000 mm Edelstahl 601010 1 St. 1000 mm schwarz 601011 1 St. '
@@ -1329,7 +1329,7 @@ def test_exported_inventory_csv_prefers_structured_tecedrainline_rows(tmp_path):
         assert rows[article]["finish_or_color"]
         assert rows[article]["article_role"] == "cover_or_grate"
         assert rows[article]["article_role"] not in {"unknown", "complete_set"}
-        assert rows[article]["extraction_method"] in {"structured_column_table", "structured_designrost_column_table"}
+        assert rows[article]["extraction_method"] in {"structured_column_table", "structured_designrost_column_table", "structured_known_cover_table"}
         assert rows[article]["production_promotion_blocked"] == "True"
         assert rows[article]["ready_for_benchmark"] == "False"
         assert rows[article]["ready_for_customer_view"] == "False"

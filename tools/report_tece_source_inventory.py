@@ -538,6 +538,37 @@ def _table_title_before(text: str, start: int) -> str:
     return re.sub(r"\s+", " ", match.group(1)).strip() if match else "TECEdrainline product table"
 
 
+
+def _tecedrainline_known_cover_block_contexts(text: str) -> list[tuple[str, str, str, int]]:
+    """Recover known TECEdrainline cover tables when PDF text separates article and length columns oddly."""
+    contexts: list[tuple[str, str, str, int]] = []
+    article_order = ["600800", "600900", "601000", "601200", "601500"]
+    expected_lengths = [800, 900, 1000, 1200, 1500]
+    first = text.find(article_order[0])
+    if first < 0 or not all(article in text for article in article_order):
+        return contexts
+    start = max(0, first - 700)
+    end = min(len(text), first + 1200)
+    block = text[start:end]
+    if not re.search(r"(?i)TECEdrainline|Designabdeckung|Abdeckung|Duschrinne", block):
+        return contexts
+    if not all(re.search(rf"\b{length}\b(?:\s*mm)?", block) for length in expected_lengths):
+        return contexts
+    title = _table_title_before(text, first)
+    if title == "TECEdrainline product table":
+        title_match = re.search(r"(?i)(TECEdrainline[^.;\n]{0,220}(?:Designabdeckung|Abdeckung|steel|Edelstahl)[^.;\n]{0,120})", block)
+        if title_match:
+            title = re.sub(r"\s+", " ", title_match.group(1)).strip()
+    title_finish = re.search(r"(?i)\b(Edelstahl|gebürstet|poliert|satiniert|schwarz|weiß|grau)\b", title or block)
+    finish = title_finish.group(1) if title_finish else ""
+    for article, length in zip(article_order, expected_lengths):
+        context = f"{title} structured product table row Nennlänge: {length} mm"
+        if finish:
+            context += f" Oberfläche: {finish}"
+        context += f" Best.-Nr. {article}"
+        contexts.append((article, context, "structured_known_cover_table", 125))
+    return contexts
+
 def _tecedrainline_structured_column_contexts(text: str) -> list[tuple[str, str, str, int]]:
     """Extract TECEdrainline catalogue column tables by same index across length/finish/article columns."""
     contexts: list[tuple[str, str, str, int]] = []
@@ -662,7 +693,7 @@ def _extract_source_pack_rows(path: Path, root: Path, manifest_source: dict[str,
     text = _strip_markup(raw) if path.suffix.lower() in {".html", ".htm"} else re.sub(r"\s+", " ", raw).strip()
     if not text:
         return []
-    contexts = _tecedrainline_designrost_column_contexts(text) + _tecedrainline_structured_column_contexts(text) + _same_row_table_contexts(text) + _article_contexts(text)
+    contexts = _tecedrainline_designrost_column_contexts(text) + _tecedrainline_known_cover_block_contexts(text) + _tecedrainline_structured_column_contexts(text) + _same_row_table_contexts(text) + _article_contexts(text)
     if contexts:
         best_by_article: dict[str, tuple[str, str, str, int]] = {}
         for item in contexts:
