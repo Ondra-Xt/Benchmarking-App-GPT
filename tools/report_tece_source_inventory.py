@@ -337,6 +337,8 @@ def classify_source_pack_row(text: str, manifest_source: dict[str, Any] | None =
         role, reason = "channel_body", "keyword=channel_body"
     elif re.search(r"\b(cover|grate|abdeckung|rost)\b|designrost|designabdeckung|glasabdeckung|fliesenmulde", haystack):
         role, reason = "cover_or_grate", "keyword=cover_or_grate"
+    elif family == "TECEdrainpoint" and re.search(r"\b(ablauf|abläufe|ablaufset)\b", haystack):
+        role, reason = "drain_body", "tecedrainpoint_keyword=ablauf_or_ablaufset"
     elif re.search(r"\b(complete\s+set|set|komplettset|komplett-set)\b", haystack):
         role, reason = "complete_set", "keyword=complete_set_candidate"
     elif re.search(r"\b(zubehör|ersatzteil|accessory|spare\s+part)\b", haystack):
@@ -467,12 +469,20 @@ def _extract_conditional_flow_values(text: str) -> list[dict[str, Any]]:
     return values
 
 
+def _normalize_article_number(value: str) -> str:
+    return re.sub(r"\D", "", value or "")
+
+
 def _article_contexts(text: str) -> list[tuple[str, str, str, int]]:
-    matches = list(re.finditer(r"(?i)(?:Best\.-?Nr\.?|Artikel(?:\s*(?:Nr\.?|nummer))?|Article(?:\s*(?:no\.?|number))?)\s*[:#-]?\s*([0-9]{5,8})|\b([0-9]{6})\b", text))
+    article_label = r"(?:Best\.-?Nr\.?|Artikel(?:\s*(?:Nr\.?|nummer))?|Article(?:\s*(?:no\.?|number))?)"
+    article_value = r"([0-9](?:\s*[0-9]){4,7})"
+    matches = list(re.finditer(rf"(?i){article_label}\s*[:#-]?\s*{article_value}|\b([0-9]{{6,8}})\b", text))
     contexts: list[tuple[str, str, str, int]] = []
     seen: set[str] = set()
     for idx, match in enumerate(matches):
-        article = match.group(1) or match.group(2)
+        article = _normalize_article_number(match.group(1) or match.group(2) or "")
+        if len(article) not in {5, 6, 7, 8}:
+            continue
         if not article or article in seen:
             continue
         seen.add(article)

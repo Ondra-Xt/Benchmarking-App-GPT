@@ -47,6 +47,19 @@
       "evidence_scope": "cover_grate_matrix",
       "approved_for_benchmark_evidence": false,
       "notes": "Synthetic test-only compatibility matrix fixture; not production evidence."
+    },
+    {
+      "source_file": "tece_test_drainpoint_s.txt",
+      "source_type": "txt",
+      "source_origin": "unknown",
+      "source_url": "https://example.invalid/tece/test-fixture-3601050",
+      "source_date": "2026-06-26",
+      "document_title": "TEST FIXTURE ONLY - synthetic TECEdrainpoint S snippet",
+      "product_family_hint": "TECEdrainpoint S",
+      "evidence_scope": "article_data",
+      "page_range_label": "TECEdrainpoint S 295-326",
+      "approved_for_benchmark_evidence": false,
+      "notes": "Synthetic test-only drainpoint fixture; not production evidence."
     }
   ]
 }
