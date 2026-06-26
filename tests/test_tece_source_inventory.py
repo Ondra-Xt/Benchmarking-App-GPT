@@ -1243,6 +1243,83 @@ def test_generated_source_pack_outputs_are_not_reingested(tmp_path):
     assert coverage["production_safe_candidate_count"] == 0
 
 
+def test_overlapping_source_inputs_keep_one_best_diagnostic_row(tmp_path):
+    import csv
+    import json
+    from tools import export_tece_inventory_review_csv as csv_mod
+    from tools import report_tece_source_pack_coverage as coverage_mod
+
+    (tmp_path / "point_manifest.txt").write_text(
+        "TECEdrainpoint S Ablaufset DN 50 Aufbauhöhe 95 mm Sperrwasserhöhe 50 mm "
+        "Ablaufleistung >=0,52/>=0,60 l/s bei 10/20 mm Aufstau Best.-Nr. 360 10 50",
+        encoding="utf-8",
+    )
+    (tmp_path / "point_auxiliary_raw_text.txt").write_text(
+        "Auxiliary raw extraction duplicate: TECEdrainpoint S Ablaufset DN 50 Best.-Nr. 360 10 50",
+        encoding="utf-8",
+    )
+    (tmp_path / "line_generic.txt").write_text(
+        "TECEdrainline Abdeckung Article number: 600800 Nominal length: 800 mm.",
+        encoding="utf-8",
+    )
+    (tmp_path / "line_structured.txt").write_text(
+        "TECEdrainline Designabdeckung Edelstahl Nennlänge Oberfläche Best.-Nr. LE 1 "
+        "800 mm Edelstahl gebürstet 600800 1 St.",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [
+        {
+            "source_file": "point_manifest.txt",
+            "source_type": "txt",
+            "source_origin": "manual",
+            "evidence_scope": "article_data",
+            "product_family_hint": "TECEdrainpoint S",
+            "page_range_label": "TECEdrainpoint S 295-326",
+            "approved_for_benchmark_evidence": False,
+        },
+        {
+            "source_file": "line_generic.txt",
+            "source_type": "txt",
+            "source_origin": "manual",
+            "evidence_scope": "article_data",
+            "product_family_hint": "TECEdrainline",
+            "page_range_label": "TECEdrainline covers 271-294",
+            "approved_for_benchmark_evidence": False,
+        },
+        {
+            "source_file": "line_structured.txt",
+            "source_type": "txt",
+            "source_origin": "manual",
+            "evidence_scope": "article_data",
+            "product_family_hint": "TECEdrainline",
+            "page_range_label": "TECEdrainline covers 271-294",
+            "approved_for_benchmark_evidence": False,
+        },
+    ]}), encoding="utf-8")
+
+    out = tmp_path / "inventory.csv"
+    csv_mod.export_inventory_csv(tmp_path, out)
+    with out.open(encoding="utf-8-sig", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    by_article = {row["article_number"]: row for row in rows}
+
+    assert sum(row["article_number"] == "3601050" for row in rows) == 1
+    assert by_article["3601050"]["source_file"] == "point_manifest.txt"
+    assert by_article["3601050"]["product_family"] == "TECEdrainpoint S"
+    assert by_article["3601050"]["article_role"] == "drain_body"
+    assert by_article["3601050"]["flow_rate_lps"] == ""
+    assert sum(row["article_number"] == "600800" for row in rows) == 1
+    assert by_article["600800"]["source_file"] == "line_structured.txt"
+    assert by_article["600800"]["extraction_method"].startswith("structured")
+
+    coverage = coverage_mod.build_coverage_report(tmp_path)
+    assert "3601050" not in coverage["families"]["TECEdrainpoint S"]["missing_sentinel_article_numbers"]
+    assert coverage["production_safe_candidate_count"] == 0
+    assert coverage["production_promotion_blocked"] is True
+    assert coverage["ready_for_benchmark"] is False
+    assert coverage["ready_for_customer_view"] is False
+
+
 def test_tece_source_pack_coverage_includes_all_four_families(tmp_path):
     from tools import report_tece_source_pack_coverage as coverage_mod
     (tmp_path / "pack.txt").write_text(

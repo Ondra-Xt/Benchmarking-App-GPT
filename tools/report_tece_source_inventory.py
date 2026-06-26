@@ -296,6 +296,68 @@ def _is_generated_source_pack_artifact(path: Path) -> bool:
     return any(pattern.search(name) for pattern in GENERATED_ARTIFACT_NAME_PATTERNS)
 
 
+def _source_row_family(row: TeceSourcePackRow) -> str:
+    family = _clean(row.tece_family_candidate) or _clean(row.product_family)
+    if "tecedrainpoint s" in family.lower():
+        return "TECEdrainpoint S"
+    return family
+
+
+def _source_row_page_range_key(row: TeceSourcePackRow) -> str:
+    if _clean(row.page_range_label):
+        return _clean(row.page_range_label)
+    if _clean(row.source_page_start) or _clean(row.source_page_end):
+        return f"{row.source_page_start}-{row.source_page_end}"
+    return ""
+
+
+def _source_row_quality_key(row: TeceSourcePackRow) -> tuple[int, int, int, int, int]:
+    has_manifest_range = 1 if _source_row_page_range_key(row) else 0
+    is_pdf = 1 if _clean(row.source_type).lower() == "pdf" else 0
+    has_conditional_values = 1 if row.conditional_technical_values else 0
+    return (
+        int(row.extraction_priority or 0),
+        has_manifest_range,
+        is_pdf,
+        has_conditional_values,
+        len(_clean(row.evidence_text)),
+    )
+
+
+def _deduplicate_source_pack_rows(rows: list[TeceSourcePackRow]) -> list[TeceSourcePackRow]:
+    """Keep one deterministic best diagnostic row per article/family/role/page-range."""
+    base_page_keys: dict[tuple[str, str, str], set[str]] = {}
+    for row in rows:
+        base_key = (
+            _clean(row.article_number),
+            _source_row_family(row),
+            _clean(row.tece_article_role_candidate) or "unknown",
+        )
+        page_key = _source_row_page_range_key(row)
+        if page_key:
+            base_page_keys.setdefault(base_key, set()).add(page_key)
+    best_by_key: dict[tuple[str, str, str, str], TeceSourcePackRow] = {}
+    order_by_key: dict[tuple[str, str, str, str], int] = {}
+    for idx, row in enumerate(rows):
+        base_key = (
+            _clean(row.article_number),
+            _source_row_family(row),
+            _clean(row.tece_article_role_candidate) or "unknown",
+        )
+        row_page_key = _source_row_page_range_key(row)
+        meaningful_page_ranges = base_page_keys.get(base_key, set())
+        page_key = row_page_key if len(meaningful_page_ranges) > 1 else (next(iter(meaningful_page_ranges)) if meaningful_page_ranges else "")
+        key = (*base_key, page_key)
+        existing = best_by_key.get(key)
+        if existing is None:
+            best_by_key[key] = row
+            order_by_key[key] = idx
+            continue
+        if _source_row_quality_key(row) > _source_row_quality_key(existing):
+            best_by_key[key] = row
+    return [best_by_key[key] for key, _idx in sorted(order_by_key.items(), key=lambda item: item[1])]
+
+
 
 def _count_values(rows: list[Any], attr: str) -> dict[str, int]:
     counts: dict[str, int] = {}
@@ -876,7 +938,14 @@ def load_source_pack(path: str | Path) -> TeceSourcePackReport:
         all_files = [root] if root.is_file() else []
         source_entries = []
         files = all_files
-        rows = [row for file in files if file.suffix.lower() in SOURCE_PACK_EXTENSIONS for row in _extract_source_pack_rows(file, base, None)]
+        rows = [
+            row
+            for file in files
+            if file.suffix.lower() in SOURCE_PACK_EXTENSIONS
+            and not _is_generated_source_pack_artifact(file)
+            for row in _extract_source_pack_rows(file, base, None)
+        ]
+    rows = _deduplicate_source_pack_rows(rows)
     coverage = {field: sum(1 for row in rows if _clean(getattr(row, field)) != "") for field in SOURCE_PACK_TECHNICAL_FIELDS}
     missing_counts = {field: sum(1 for row in rows if field in row.missing_fields) for field in SOURCE_PACK_TECHNICAL_FIELDS}
     scope_counts = {scope: 0 for scope in sorted(EVIDENCE_SCOPES)}
