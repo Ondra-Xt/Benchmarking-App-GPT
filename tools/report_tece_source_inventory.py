@@ -264,6 +264,9 @@ GENERATED_SOURCE_PACK_OUTPUTS = {
     "compatibility_diagnostics_report.json",
     "coverage_report.json",
     "review_shortlist_report.json",
+    "inventory_review.csv",
+    "inventory_full_check.csv",
+    "tece.csv",
 }
 EVIDENCE_SCOPES = {"article_data", "technical_datasheet", "cover_grate_matrix", "assembly_matrix", "unknown"}
 SOURCE_PACK_TECHNICAL_FIELDS = (
@@ -275,6 +278,22 @@ SOURCE_PACK_TECHNICAL_FIELDS = (
     "height_adj_max_mm",
     "installation_height_mm",
 )
+
+GENERATED_ARTIFACT_NAME_PATTERNS = (
+    re.compile(r"(?i)(?:^|[_-])(?:inventory|coverage|review|shortlist|report|export|output|full_check)(?:[_-]|$)"),
+    re.compile(r"(?i)^(?:tece|products|comparison|bom_options|final_assemblies|final_set_details)\.csv$"),
+)
+
+
+def _is_generated_source_pack_artifact(path: Path) -> bool:
+    """Return True for app-generated diagnostics/exports that must never be re-ingested."""
+    name = path.name
+    lower_name = name.lower()
+    if lower_name in GENERATED_SOURCE_PACK_OUTPUTS:
+        return True
+    if path.suffix.lower() not in {".csv", ".json"}:
+        return False
+    return any(pattern.search(name) for pattern in GENERATED_ARTIFACT_NAME_PATTERNS)
 
 
 
@@ -830,7 +849,13 @@ def load_source_pack(path: str | Path) -> TeceSourcePackReport:
     manifest = _read_source_pack_manifest(root)
     base = root if root.is_dir() else root.parent
     if root.is_dir():
-        all_files = sorted(p for p in root.rglob("*") if p.is_file() and p.name != SOURCE_PACK_MANIFEST and p.name not in GENERATED_SOURCE_PACK_OUTPUTS)
+        all_files = sorted(
+            p
+            for p in root.rglob("*")
+            if p.is_file()
+            and p.name != SOURCE_PACK_MANIFEST
+            and not _is_generated_source_pack_artifact(p)
+        )
         source_entries = _manifest_source_entries(manifest)
         manifest_paths = {base / str(source.get("source_file")) for source in source_entries}
         extra_files = sorted(p for p in all_files if p.suffix.lower() in SOURCE_PACK_EXTENSIONS and p not in manifest_paths)
@@ -839,6 +864,7 @@ def load_source_pack(path: str | Path) -> TeceSourcePackReport:
             for source in source_entries
             if (base / str(source.get("source_file"))).is_file()
             and (base / str(source.get("source_file"))).suffix.lower() in SOURCE_PACK_EXTENSIONS
+            and not _is_generated_source_pack_artifact(base / str(source.get("source_file")))
             for row in _extract_source_pack_rows(base / str(source.get("source_file")), base, source)
         ]
         rows.extend(
