@@ -1523,3 +1523,69 @@ def test_tecedrainline_known_roles_and_accessories_do_not_inherit_technical_fiel
         assert rows[article].outlet_dn == ""
         assert rows[article].water_seal_mm == ""
         assert rows[article].installation_height_mm == ""
+
+
+def test_tecedrainline_explicit_role_phrases_keep_ambiguous_rows_unknown_and_blocked(tmp_path):
+    from tools import report_tece_source_pack_coverage as coverage_mod
+
+    (tmp_path / "line_roles.txt").write_text(
+        "TECEdrainline Ablaufkörper waagerecht DN 50 Aufbauhöhe 95 mm Best.-Nr. 650010. "
+        "TECEdrainline Ablaufset DN 50 mit Dichtband Best.-Nr. 650011. "
+        "TECEdrainline Designrost Edelstahl gebürstet Nennlänge 900 mm Best.-Nr. 600906. "
+        "TECEdrainline Zubehör Montagefüße höhenverstellbar Best.-Nr. 660099. "
+        "TECEdrainline Duschrinne gerade Länge 1000 mm Best.-Nr. 650099. "
+        "TECEdrainline Zubehör Schallschutzmatte Nennlänge Breite Oberfläche Best.-Nr. LE 1 "
+        "1200 mm 120 mm Edelstahl gebürstet 660120 "
+        "TECEdrainline Ablaufkörper waagerecht Nennlänge Oberfläche Best.-Nr. LE 1 "
+        "1200 mm Edelstahl gebürstet 650120 "
+        "TECEdrainline Ablaufset Nennlänge Oberfläche Best.-Nr. LE 1 "
+        "1200 mm Edelstahl gebürstet 650121 "
+        "TECEdrainline Duschrinne gerade Nennlänge Oberfläche Best.-Nr. LE 1 "
+        "1200 mm Edelstahl gebürstet 650122",
+        encoding="utf-8",
+    )
+    (tmp_path / "point.txt").write_text(
+        "TECEdrainpoint S Ablaufset DN 50 Aufbauhöhe 95 mm Sperrwasserhöhe 50 mm "
+        "Ablaufleistung >=0,52/>=0,60 l/s bei 10/20 mm Aufstau Best.-Nr. 360 10 50",
+        encoding="utf-8",
+    )
+    (tmp_path / "inventory_review.csv").write_text(
+        "article_number,product_family,article_role\n999999,TECEdrainline,drain_body\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [
+        {
+            "source_file": "line_roles.txt", "source_type": "txt", "source_origin": "manual_download",
+            "evidence_scope": "article_data", "product_family_hint": "TECEdrainline",
+            "page_range_label": "TECEdrainline 271-294", "approved_for_benchmark_evidence": False,
+        },
+        {
+            "source_file": "point.txt", "source_type": "txt", "source_origin": "manual_download",
+            "evidence_scope": "article_data", "product_family_hint": "TECEdrainpoint S",
+            "page_range_label": "TECEdrainpoint S 295-326", "approved_for_benchmark_evidence": False,
+        },
+    ]}), encoding="utf-8")
+
+    report = report_mod.load_source_pack(tmp_path)
+    roles = {row.article_number: row.tece_article_role_candidate for row in report.rows}
+
+    assert roles["650010"] == "drain_body"
+    assert roles["650011"] == "complete_set"
+    assert roles["600906"] == "cover_or_grate"
+    assert roles["660099"] == "accessory"
+    assert roles["660120"] == "accessory"
+    assert roles["650120"] == "drain_body"
+    assert roles["650121"] == "complete_set"
+    assert roles["650099"] == "unknown"
+    assert roles["650122"] == "unknown"
+    assert "999999" not in roles
+    assert sum(row.article_number == "3601050" for row in report.rows) == 1
+    assert report.production_promotion_blocked is True
+    assert report.ready_for_benchmark is False
+    assert report.ready_for_customer_view is False
+
+    coverage = coverage_mod.build_coverage_report(tmp_path)
+    assert coverage["families"]["TECEdrainline"]["role_counts"]["unknown"] == 2
+    assert coverage["families"]["TECEdrainline"]["unknown_role_count"] < coverage["families"]["TECEdrainline"]["extracted_row_count"]
+    assert coverage["production_safe_candidate_count"] == 0
+    assert coverage["production_promotion_blocked"] is True
