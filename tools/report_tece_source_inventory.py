@@ -420,6 +420,8 @@ def classify_source_pack_row(text: str, manifest_source: dict[str, Any] | None =
         role, reason = "cover_or_grate", "keyword=cover_or_grate"
     elif family == "TECEdrainline" and re.search(r"\b(ablaufset|komplettset|komplett-set|complete\s+set|set)\b", haystack):
         role, reason = "complete_set", "tecedrainline_keyword=explicit_set"
+    elif family == "TECEdrainline" and re.search(r"\b(zubehör|ersatzteil|accessory|spare\s+part|montagefüße|montagefuesse|dichtband|schallschutz(?:matte|streifen)?)\b", haystack):
+        role, reason = "accessory", "tecedrainline_keyword=explicit_accessory"
     elif family == "TECEdrainline" and re.search(r"\b(ablaufkörper|ablaufkoerper|ablauf|drain\s+body)\b", haystack):
         role, reason = "drain_body", "tecedrainline_keyword=explicit_drain_body_or_ablauf"
     elif family in {"TECEdrainpoint", "TECEdrainpoint S"} and re.search(r"\b(ablauf|abläufe|ablaufset)\b", haystack):
@@ -633,7 +635,8 @@ def _same_row_table_contexts(text: str) -> list[tuple[str, str, str, int]]:
             length = match.group("length")
             width = match.groupdict().get("width") or ""
             finish = re.sub(r"\s+", " ", match.groupdict().get("finish") or "").strip()
-            family_hint = "TECEdrainprofile" if re.fullmatch(r"67[01]\d{3}", article) else "TECE catalogue"
+            table_title = _table_title_before(text, match.start())
+            family_hint = "TECEdrainprofile" if re.fullmatch(r"67[01]\d{3}", article) else table_title
             context = f"{family_hint} product table row Länge: {length} mm"
             if width:
                 context += f" Breite: {width} mm"
@@ -645,9 +648,9 @@ def _same_row_table_contexts(text: str) -> list[tuple[str, str, str, int]]:
 
 
 def _table_title_before(text: str, start: int) -> str:
-    left = text[max(0, start - 260):start]
-    match = re.search(r"(TECEdrainline[^.;\n]{0,220}(?:Designrost|Designabdeckung|Glasabdeckung|Fliesenmulde|Duschrinne|Naturstein|Trägerblech)[^.;\n]{0,120})", left, re.I)
-    return re.sub(r"\s+", " ", match.group(1)).strip() if match else "TECEdrainline product table"
+    left = text[max(0, start - 420):start]
+    matches = list(re.finditer(r"(TECEdrainline(?:(?!TECEdrainline)[^.;\n]){0,260}(?:Designrost|Designabdeckung|Glasabdeckung|Fliesenmulde|Duschrinne|Naturstein|Trägerblech|Ablaufkörper|Ablaufkoerper|Ablaufset|Ablauf|Zubehör|Ersatzteil|Montagefüße|Dichtband|Schallschutz)(?:(?!TECEdrainline)[^.;\n]){0,160})", left, re.I))
+    return re.sub(r"\s+", " ", matches[-1].group(1)).strip() if matches else "TECEdrainline product table"
 
 
 

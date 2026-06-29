@@ -1533,7 +1533,15 @@ def test_tecedrainline_explicit_role_phrases_keep_ambiguous_rows_unknown_and_blo
         "TECEdrainline Ablaufset DN 50 mit Dichtband Best.-Nr. 650011. "
         "TECEdrainline Designrost Edelstahl gebürstet Nennlänge 900 mm Best.-Nr. 600906. "
         "TECEdrainline Zubehör Montagefüße höhenverstellbar Best.-Nr. 660099. "
-        "TECEdrainline Duschrinne gerade Länge 1000 mm Best.-Nr. 650099.",
+        "TECEdrainline Duschrinne gerade Länge 1000 mm Best.-Nr. 650099. "
+        "TECEdrainline Zubehör Schallschutzmatte Nennlänge Breite Oberfläche Best.-Nr. LE 1 "
+        "1200 mm 120 mm Edelstahl gebürstet 660120 "
+        "TECEdrainline Ablaufkörper waagerecht Nennlänge Oberfläche Best.-Nr. LE 1 "
+        "1200 mm Edelstahl gebürstet 650120 "
+        "TECEdrainline Ablaufset Nennlänge Oberfläche Best.-Nr. LE 1 "
+        "1200 mm Edelstahl gebürstet 650121 "
+        "TECEdrainline Duschrinne gerade Nennlänge Oberfläche Best.-Nr. LE 1 "
+        "1200 mm Edelstahl gebürstet 650122",
         encoding="utf-8",
     )
     (tmp_path / "point.txt").write_text(
@@ -1565,7 +1573,11 @@ def test_tecedrainline_explicit_role_phrases_keep_ambiguous_rows_unknown_and_blo
     assert roles["650011"] == "complete_set"
     assert roles["600906"] == "cover_or_grate"
     assert roles["660099"] == "accessory"
+    assert roles["660120"] == "accessory"
+    assert roles["650120"] == "drain_body"
+    assert roles["650121"] == "complete_set"
     assert roles["650099"] == "unknown"
+    assert roles["650122"] == "unknown"
     assert "999999" not in roles
     assert sum(row.article_number == "3601050" for row in report.rows) == 1
     assert report.production_promotion_blocked is True
@@ -1573,6 +1585,7 @@ def test_tecedrainline_explicit_role_phrases_keep_ambiguous_rows_unknown_and_blo
     assert report.ready_for_customer_view is False
 
     coverage = coverage_mod.build_coverage_report(tmp_path)
-    assert coverage["families"]["TECEdrainline"]["role_counts"]["unknown"] == 1
+    assert coverage["families"]["TECEdrainline"]["role_counts"]["unknown"] == 2
+    assert coverage["families"]["TECEdrainline"]["unknown_role_count"] < coverage["families"]["TECEdrainline"]["extracted_row_count"]
     assert coverage["production_safe_candidate_count"] == 0
     assert coverage["production_promotion_blocked"] is True
