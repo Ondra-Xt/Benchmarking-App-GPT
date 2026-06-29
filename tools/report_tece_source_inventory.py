@@ -565,13 +565,24 @@ def _article_role_context(article: str, context: str) -> str:
     normalized_article = _normalize_article_number(article)
     if not normalized_article:
         return context
+    article_pattern = r"\s*".join(re.escape(char) for char in normalized_article)
     safe_context = re.sub(r"(?i)Best\.-?Nr\.", "Best-Nr", context)
     fragments = re.split(r"(?<=[.;])\s+", safe_context)
     role_re = re.compile(r"(?i)\b(ablauf|abläufe|ablaufset|ablaufkörper|ablaufkoerper|drain\s+body|cover|grate|abdeckung|rost|designrost|designabdeckung|zubehör|ersatzteil|accessory|spare\s+part|complete\s+set|komplettset|komplett-set|set)\b")
     for idx, fragment in enumerate(fragments):
         if _normalize_article_number(fragment).find(normalized_article) >= 0:
+            article_match = re.search(article_pattern, fragment)
+            if article_match:
+                tece_starts = [m.start() for m in re.finditer(r"(?i)\bTECEdrain", fragment[:article_match.start()])]
+                if tece_starts:
+                    fragment = fragment[tece_starts[-1]:]
             if not role_re.search(fragment) and idx > 0 and not re.search(r"(?i)\bTECEdrain", fragment):
-                previous_role_fragment = next((prev for prev in reversed(fragments[max(0, idx - 3):idx]) if role_re.search(prev)), fragments[idx - 1])
+                preceding_fragments = []
+                for previous in reversed(fragments[:idx]):
+                    if re.search(r"\b[0-9](?:\s*[0-9]){4,7}\b", previous):
+                        break
+                    preceding_fragments.append(previous)
+                previous_role_fragment = next((prev for prev in preceding_fragments if role_re.search(prev)), fragments[idx - 1])
                 return f"{previous_role_fragment} {fragment}"
             return fragment
     return context
@@ -636,7 +647,7 @@ def _same_row_table_contexts(text: str) -> list[tuple[str, str, str, int]]:
             width = match.groupdict().get("width") or ""
             finish = re.sub(r"\s+", " ", match.groupdict().get("finish") or "").strip()
             table_title = _table_title_before(text, match.start())
-            family_hint = "TECEdrainprofile" if re.fullmatch(r"67[01]\d{3}", article) else table_title
+            family_hint = "TECEdrainprofile" if re.fullmatch(r"67[01]\d{3}", article) else (table_title or "TECE catalogue")
             context = f"{family_hint} product table row Länge: {length} mm"
             if width:
                 context += f" Breite: {width} mm"
@@ -649,8 +660,10 @@ def _same_row_table_contexts(text: str) -> list[tuple[str, str, str, int]]:
 
 def _table_title_before(text: str, start: int) -> str:
     left = text[max(0, start - 420):start]
-    matches = list(re.finditer(r"(TECEdrainline(?:(?!TECEdrainline)[^.;\n]){0,260}(?:Designrost|Designabdeckung|Glasabdeckung|Fliesenmulde|Duschrinne|Naturstein|Trägerblech|Ablaufkörper|Ablaufkoerper|Ablaufset|Ablauf|Zubehör|Ersatzteil|Montagefüße|Dichtband|Schallschutz)(?:(?!TECEdrainline)[^.;\n]){0,160})", left, re.I))
-    return re.sub(r"\s+", " ", matches[-1].group(1)).strip() if matches else "TECEdrainline product table"
+    family_pattern = r"TECEdrainline|TECEdrainpoint\s*S|TECEdrainpoint"
+    role_pattern = r"Designrost|Designabdeckung|Glasabdeckung|Fliesenmulde|Duschrinne|Naturstein|Trägerblech|Ablaufkörper|Ablaufkoerper|Ablaufset|Ablauf|Zubehör|Ersatzteil|Montagefüße|Dichtband|Schallschutz|Rost|Abdeckung"
+    matches = list(re.finditer(rf"((?:{family_pattern})(?:(?!(?:{family_pattern}))[^.;\n]){{0,260}}(?:{role_pattern})(?:(?!(?:{family_pattern}))[^.;\n]){{0,160}})", left, re.I))
+    return re.sub(r"\s+", " ", matches[-1].group(1)).strip() if matches else ""
 
 
 

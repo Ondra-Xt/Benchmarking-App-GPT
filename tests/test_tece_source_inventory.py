@@ -1589,3 +1589,31 @@ def test_tecedrainline_explicit_role_phrases_keep_ambiguous_rows_unknown_and_blo
     assert coverage["families"]["TECEdrainline"]["unknown_role_count"] < coverage["families"]["TECEdrainline"]["extracted_row_count"]
     assert coverage["production_safe_candidate_count"] == 0
     assert coverage["production_promotion_blocked"] is True
+
+
+def test_tecedrainpoint_s_table_titles_do_not_regress_cover_roles_or_sentinel(tmp_path):
+    (tmp_path / "point_tables.txt").write_text(
+        "TECEdrainpoint S Rost Nennlänge Oberfläche Best.-Nr. LE 1 "
+        "1200 mm Edelstahl gebürstet 360120 "
+        "TECEdrainpoint S Abdeckung Nennlänge Oberfläche Best.-Nr. LE 1 "
+        "1200 mm Edelstahl gebürstet 360121 "
+        "TECEdrainpoint S Ablauf DN 50 Aufbauhöhe 95 mm Sperrwasserhöhe 50 mm "
+        "Ablaufleistung >=0,52/>=0,60 l/s bei 10/20 mm Aufstau Best.-Nr. 360 10 50",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "point_tables.txt", "source_type": "txt", "source_origin": "manual_download",
+        "evidence_scope": "article_data", "product_family_hint": "TECEdrainpoint S",
+        "page_range_label": "TECEdrainpoint S 295-326", "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+
+    report = report_mod.load_source_pack(tmp_path)
+    roles = {row.article_number: row.tece_article_role_candidate for row in report.rows}
+
+    assert roles["360120"] == "cover_or_grate"
+    assert roles["360121"] == "cover_or_grate"
+    assert roles["3601050"] == "drain_body"
+    assert sum(row.article_number == "3601050" for row in report.rows) == 1
+    assert report.production_promotion_blocked is True
+    assert report.ready_for_benchmark is False
+    assert report.ready_for_customer_view is False
