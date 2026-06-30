@@ -176,3 +176,24 @@ def test_unknown_json_report_still_fails(tmp_path):
 
     assert result.valid is False
     assert "unexpected_report.json" in result.unknown_files
+
+
+def test_validator_ignores_generated_tece_diagnostic_artifacts(tmp_path):
+    root = _copy_fixture(tmp_path)
+    for name in (
+        "tecedrainline_unknown_role_contexts.json",
+        "tecedrainline_unknown_role_contexts_pilot_001.json",
+        "tece_unknown_role_contexts.json",
+        "unknown_role_contexts.json",
+        "coverage_report.json",
+        "review_shortlist_report.json",
+        "tece_inventory_review.csv",
+        "tece_inventory_review_pilot_001.csv",
+    ):
+        (root / name).write_text('{"article_number":"999999"}', encoding="utf-8")
+
+    result = validate_source_pack(root)
+
+    assert result.valid is True
+    assert result.unknown_files == []
+    assert all("unknown unlisted file" not in error for error in result.errors)

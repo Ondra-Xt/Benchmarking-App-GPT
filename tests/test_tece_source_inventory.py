@@ -10,6 +10,9 @@ from tools import report_tece_source_inventory as report_mod
 from tools import report_tece_compatibility_diagnostics as compat_mod
 from tools import report_tece_source_pack_classification as classification_mod
 from tools import report_tece_evidence_gap as gap_mod
+from tools import report_tece_source_pack_coverage as coverage_mod
+from tools import report_tece_unknown_role_contexts as unknown_mod
+from tools.export_tece_inventory_review_csv import export_inventory_csv
 from tools.tece_report_output import write_json_output
 from tools.report_tece_source_inventory import TeceSourcePackRow
 
@@ -325,8 +328,6 @@ def test_tece_source_pack_classification_counts_are_in_json_report(monkeypatch, 
 
 
 def test_tece_evidence_gap_synthetic_fixture_pack_status_and_json(capsys):
-    from tools import report_tece_evidence_gap as gap_mod
-
     report = gap_mod.build_evidence_gap_report("tests/fixtures/tece/source_pack")
 
     assert report.overall_status == "OVERALL: TECE_EVIDENCE_GAP_SYNTHETIC_ONLY"
@@ -344,8 +345,6 @@ def test_tece_evidence_gap_synthetic_fixture_pack_status_and_json(capsys):
 
 
 def test_tece_evidence_gap_missing_cover_grate_matrix_is_blocker(tmp_path):
-    from tools import report_tece_evidence_gap as gap_mod
-
     (tmp_path / "tece_real_product.txt").write_text(
         "Product name: TECEdrainline channel body approved sample\n"
         "Article number: 700100\nProduct family: TECEdrainline\n"
@@ -377,8 +376,6 @@ def test_tece_evidence_gap_missing_cover_grate_matrix_is_blocker(tmp_path):
 
 
 def test_tece_evidence_gap_reports_missing_technical_fields(tmp_path):
-    from tools import report_tece_evidence_gap as gap_mod
-
     (tmp_path / "tece_real_product.txt").write_text(
         "Product name: TECEdrainline channel body approved sample\n"
         "Article number: 700100\nProduct family: TECEdrainline\n"
@@ -471,6 +468,93 @@ def test_source_pack_report_json_outputs_are_not_ingested(tmp_path):
     assert report.ready_for_benchmark is False
     assert report.ready_for_customer_view is False
 
+
+def test_generated_unknown_role_context_json_is_ignored_by_inventory_export_and_coverage(tmp_path):
+    source = tmp_path / "tece_product.txt"
+    source.write_text(
+        "Product name: TECEdrainline cover Article number: 700100 Nominal length: 1200 mm",
+        encoding="utf-8",
+    )
+    manifest = {"sources": [{
+        "source_file": source.name,
+        "source_type": "txt",
+        "source_origin": "unknown",
+        "evidence_scope": "article_data",
+        "approved_for_benchmark_evidence": False,
+    }]}
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    before = report_mod.load_source_pack(tmp_path)
+    before_roles = before.source_pack_classification_summary["role_counts"]
+    before_coverage = coverage_mod.build_coverage_report(tmp_path)
+
+    (tmp_path / "tecedrainline_unknown_role_contexts.json").write_text(
+        json.dumps({"article_number": "999999", "product_family": "TECEdrainline", "tece_article_role_candidate": "cover_or_grate"}),
+        encoding="utf-8",
+    )
+
+    after = report_mod.load_source_pack(tmp_path)
+    after_roles = after.source_pack_classification_summary["role_counts"]
+    out = tmp_path / "tece_inventory_review.csv"
+    exported_count = export_inventory_csv(tmp_path, out)
+    after_coverage = coverage_mod.build_coverage_report(tmp_path)
+
+    assert before.source_pack_candidate_count == after.source_pack_candidate_count == 1
+    assert before.article_numbers == after.article_numbers == ["700100"]
+    assert before_roles == after_roles
+    assert exported_count == 1
+    assert "999999" not in out.read_text(encoding="utf-8-sig")
+    assert before_coverage["source_pack_candidate_count"] == after_coverage["source_pack_candidate_count"] == 1
+    assert after_coverage["families"]["TECEdrainline"]["role_counts"] == before_coverage["families"]["TECEdrainline"]["role_counts"]
+
+
+def test_generated_review_artifacts_with_tece_inventory_review_prefix_are_ignored(tmp_path):
+    (tmp_path / "tece_product.txt").write_text(
+        "Product name: TECEdrainline channel body Article number: 700100 Nominal length: 1200 mm",
+        encoding="utf-8",
+    )
+    for name in (
+        "coverage_report.json",
+        "review_shortlist_report.json",
+        "tece_inventory_review.csv",
+        "tece_inventory_review_pilot_001.csv",
+        "tece_unknown_role_contexts_2026_06_30.json",
+        "unknown_role_contexts.json",
+    ):
+        (tmp_path / name).write_text('article_number,product_family\n999999,TECEdrainline\n', encoding="utf-8")
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "tece_product.txt",
+        "source_type": "txt",
+        "source_origin": "unknown",
+        "evidence_scope": "article_data",
+        "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+
+    report = report_mod.load_source_pack(tmp_path)
+
+    assert report.article_numbers == ["700100"]
+    assert all(row.article_number != "999999" for row in report.rows)
+
+
+def test_unknown_role_context_report_remains_diagnostic_only_and_blocked(tmp_path):
+    (tmp_path / "tece_product.txt").write_text(
+        "Product name: TECEdrainline Duschrinne Article number: 700100 Nominal length: 1200 mm",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "tece_product.txt",
+        "source_type": "txt",
+        "source_origin": "unknown",
+        "evidence_scope": "article_data",
+        "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+
+    payload = unknown_mod.build_unknown_role_context_report(tmp_path)
+
+    assert payload["production_promotion_blocked"] is True
+    assert payload["ready_for_benchmark"] is False
+    assert payload["ready_for_customer_view"] is False
+    assert "Diagnostic-only" in payload["report_note"]
 
 def test_same_pdf_manifest_entries_extract_independent_page_ranges(tmp_path, monkeypatch):
     pdf = tmp_path / "catalog.pdf"
@@ -597,8 +681,6 @@ def test_real_catalog_source_pack_is_not_synthetic_only_and_is_compatibility_blo
         "evidence_scope": "article_data",
         "approved_for_benchmark_evidence": False,
     }]}), encoding="utf-8")
-
-    from tools import report_tece_evidence_gap as gap_mod
 
     report = gap_mod.build_evidence_gap_report(tmp_path)
 
