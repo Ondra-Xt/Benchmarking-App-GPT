@@ -1580,3 +1580,29 @@ def test_unknown_role_context_report_json_cli_writes_utf8(tmp_path):
     assert payload["unknown_role_count"] == 1
     assert payload["candidate_term_counts"]["Schallschutz"] == 1
     assert payload["groups"]["candidate_terms:Schallschutz"]["examples"][0]["article_number"] == "660121"
+
+
+def test_unknown_role_context_report_does_not_change_existing_tece_outputs(tmp_path):
+    from tools import export_tece_inventory_review_csv as csv_mod
+    from tools import report_tece_actionable_review_shortlist as shortlist_mod
+    from tools import report_tece_source_pack_coverage as coverage_mod
+    from tools import report_tece_unknown_role_contexts as unknown_mod
+
+    source_pack = "tests/fixtures/tece/source_pack"
+    before_csv = tmp_path / "before.csv"
+    after_csv = tmp_path / "after.csv"
+
+    csv_mod.export_inventory_csv(source_pack, before_csv)
+    before_coverage = coverage_mod.build_coverage_report(source_pack)
+    before_shortlist = shortlist_mod.build_shortlist_report(source_pack)
+
+    diagnostic = unknown_mod.build_unknown_role_context_report(source_pack)
+
+    csv_mod.export_inventory_csv(source_pack, after_csv)
+    after_coverage = coverage_mod.build_coverage_report(source_pack)
+    after_shortlist = shortlist_mod.build_shortlist_report(source_pack)
+
+    assert diagnostic["report_note"].startswith("Diagnostic-only unknown role context report")
+    assert before_csv.read_bytes() == after_csv.read_bytes()
+    assert before_coverage == after_coverage
+    assert before_shortlist == after_shortlist
