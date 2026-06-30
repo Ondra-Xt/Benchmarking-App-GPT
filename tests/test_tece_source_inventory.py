@@ -1523,3 +1523,86 @@ def test_tecedrainline_known_roles_and_accessories_do_not_inherit_technical_fiel
         assert rows[article].outlet_dn == ""
         assert rows[article].water_seal_mm == ""
         assert rows[article].installation_height_mm == ""
+
+
+def test_unknown_role_context_report_is_diagnostic_only(tmp_path):
+    from tools import report_tece_unknown_role_contexts as unknown_mod
+
+    (tmp_path / "unknowns.txt").write_text(
+        "TECEdrainline Montagefüße höhenverstellbar Best.-Nr. 660120. "
+        "TECEdrainline Duschrinne gerade Länge 1000 mm Best.-Nr. 650099.",
+        encoding="utf-8",
+    )
+    (tmp_path / "inventory_review.csv").write_text(
+        "article_number,product_family,article_role\n999999,TECEdrainline,drain_body\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "unknowns.txt", "source_type": "txt", "source_origin": "manual_download",
+        "evidence_scope": "article_data", "product_family_hint": "TECEdrainline",
+        "page_range_label": "TECEdrainline 271-294", "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+
+    inventory = report_mod.load_source_pack(tmp_path)
+    roles = {row.article_number: row.tece_article_role_candidate for row in inventory.rows}
+    report = unknown_mod.build_unknown_role_context_report(tmp_path)
+
+    assert roles["660120"] == "unknown"
+    assert roles["650099"] == "unknown"
+    assert "999999" not in roles
+    assert report["unknown_role_count"] == 2
+    assert report["candidate_term_counts"]["Montagefüße"] == 1
+    assert report["candidate_term_counts"]["(none)"] == 1
+    assert report["production_promotion_blocked"] is True
+    assert report["ready_for_benchmark"] is False
+    assert report["ready_for_customer_view"] is False
+    assert "candidate_terms:Montagefüße" in report["groups"]
+    assert "ambiguous:duschrinne_only_or_no_role_term" in report["groups"]
+
+
+def test_unknown_role_context_report_json_cli_writes_utf8(tmp_path):
+    from tools import report_tece_unknown_role_contexts as unknown_mod
+
+    (tmp_path / "unknowns.txt").write_text(
+        "TECEdrainline Schallschutzmatte Best.-Nr. 660121.",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "unknowns.txt", "source_type": "txt", "source_origin": "manual_download",
+        "evidence_scope": "article_data", "product_family_hint": "TECEdrainline",
+        "page_range_label": "TECEdrainline 271-294", "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+    out = tmp_path / "unknown_contexts.json"
+
+    assert unknown_mod.main(["--source-pack", str(tmp_path), "--json", "--out", str(out)]) == 0
+
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["unknown_role_count"] == 1
+    assert payload["candidate_term_counts"]["Schallschutz"] == 1
+    assert payload["groups"]["candidate_terms:Schallschutz"]["examples"][0]["article_number"] == "660121"
+
+
+def test_unknown_role_context_report_does_not_change_existing_tece_outputs(tmp_path):
+    from tools import export_tece_inventory_review_csv as csv_mod
+    from tools import report_tece_actionable_review_shortlist as shortlist_mod
+    from tools import report_tece_source_pack_coverage as coverage_mod
+    from tools import report_tece_unknown_role_contexts as unknown_mod
+
+    source_pack = "tests/fixtures/tece/source_pack"
+    before_csv = tmp_path / "before.csv"
+    after_csv = tmp_path / "after.csv"
+
+    csv_mod.export_inventory_csv(source_pack, before_csv)
+    before_coverage = coverage_mod.build_coverage_report(source_pack)
+    before_shortlist = shortlist_mod.build_shortlist_report(source_pack)
+
+    diagnostic = unknown_mod.build_unknown_role_context_report(source_pack)
+
+    csv_mod.export_inventory_csv(source_pack, after_csv)
+    after_coverage = coverage_mod.build_coverage_report(source_pack)
+    after_shortlist = shortlist_mod.build_shortlist_report(source_pack)
+
+    assert diagnostic["report_note"].startswith("Diagnostic-only unknown role context report")
+    assert before_csv.read_bytes() == after_csv.read_bytes()
+    assert before_coverage == after_coverage
+    assert before_shortlist == after_shortlist
