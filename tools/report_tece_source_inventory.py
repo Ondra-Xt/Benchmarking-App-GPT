@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import io
 import html
 import json
@@ -268,6 +269,12 @@ GENERATED_SOURCE_PACK_OUTPUTS = {
     "inventory_full_check.csv",
     "tece.csv",
 }
+GENERATED_SOURCE_PACK_OUTPUT_PATTERNS = (
+    "tecedrainline_unknown_role_contexts*.json",
+    "tece_unknown_role_contexts*.json",
+    "unknown_role_contexts*.json",
+    "tece_inventory_review*.csv",
+)
 EVIDENCE_SCOPES = {"article_data", "technical_datasheet", "cover_grate_matrix", "assembly_matrix", "unknown"}
 SOURCE_PACK_TECHNICAL_FIELDS = (
     "nominal_length_mm",
@@ -290,6 +297,8 @@ def _is_generated_source_pack_artifact(path: Path) -> bool:
     name = path.name
     lower_name = name.lower()
     if lower_name in GENERATED_SOURCE_PACK_OUTPUTS:
+        return True
+    if any(fnmatch.fnmatchcase(lower_name, pattern) for pattern in GENERATED_SOURCE_PACK_OUTPUT_PATTERNS):
         return True
     if path.suffix.lower() not in {".csv", ".json"}:
         return False
