@@ -274,6 +274,9 @@ GENERATED_SOURCE_PACK_OUTPUT_PATTERNS = (
     "tece_unknown_role_contexts*.json",
     "unknown_role_contexts*.json",
     "tece_inventory_review*.csv",
+    "tece_unknown_role_review*.csv",
+    "tecedrainline_unknown_role_review*.csv",
+    "unknown_role_review*.csv",
 )
 EVIDENCE_SCOPES = {"article_data", "technical_datasheet", "cover_grate_matrix", "assembly_matrix", "unknown"}
 SOURCE_PACK_TECHNICAL_FIELDS = (

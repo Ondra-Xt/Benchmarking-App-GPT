@@ -1642,6 +1642,105 @@ def test_unknown_role_context_report_is_diagnostic_only(tmp_path):
     assert "ambiguous:duschrinne_only_or_no_role_term" in report["groups"]
 
 
+
+def test_unknown_role_review_csv_exports_manual_fields_only_and_is_diagnostic(tmp_path):
+    import csv
+    from tools import export_tece_unknown_role_review_csv as review_mod
+
+    (tmp_path / "unknowns.txt").write_text(
+        "TECEdrainline Montagefüße höhenverstellbar Best.-Nr. 660120. "
+        "TECEdrainline Duschrinne gerade Länge 1000 mm Best.-Nr. 650099.",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "unknowns.txt", "source_type": "txt", "source_origin": "manual_download",
+        "evidence_scope": "article_data", "product_family_hint": "TECEdrainline",
+        "page_range_label": "TECEdrainline 271-294", "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+    before = report_mod.load_source_pack(tmp_path)
+    before_roles = {row.article_number: row.tece_article_role_candidate for row in before.rows}
+    before_coverage = coverage_mod.build_coverage_report(tmp_path)
+    out = tmp_path / "tece_unknown_role_review.csv"
+
+    exported = review_mod.export_unknown_role_review_csv(tmp_path, out)
+
+    after = report_mod.load_source_pack(tmp_path)
+    after_coverage = coverage_mod.build_coverage_report(tmp_path)
+    with out.open(encoding="utf-8-sig", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+
+    assert exported == 2
+    assert {row["article_number"] for row in rows} == {"660120", "650099"}
+    row_by_article = {row["article_number"]: row for row in rows}
+    assert row_by_article["660120"]["candidate_terms"] == "Montagefüße"
+    assert row_by_article["660120"]["context_group"] == "candidate_terms:Montagefüße"
+    assert all(row["reviewer_role_decision"] == "" for row in rows)
+    assert all(row["reviewer_notes"] == "" for row in rows)
+    assert all(row["safe_to_apply_automatically"] == "" for row in rows)
+    assert before_roles == {row.article_number: row.tece_article_role_candidate for row in after.rows}
+    assert after_coverage == before_coverage
+    assert after.source_pack_classification_summary["role_counts"]["unknown"] == before.source_pack_classification_summary["role_counts"]["unknown"]
+
+
+def test_generated_unknown_role_review_csv_is_ignored_by_source_pack_loading_and_validation(tmp_path):
+    from tools import export_tece_unknown_role_review_csv as review_mod
+    from tools import validate_tece_source_pack as validator_mod
+
+    (tmp_path / "tece_product.txt").write_text(
+        "TECEdrainline Duschrinne gerade Länge 1000 mm Best.-Nr. 650099.",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_unknown_role_review.csv").write_text(
+        "article_number,product_family,article_role,tece_article_role_candidate\n"
+        "999999,TECEdrainline,drain_body,drain_body\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tecedrainline_unknown_role_review_pilot.csv").write_text(
+        "article_number,product_family,article_role,tece_article_role_candidate\n"
+        "888888,TECEdrainline,cover_or_grate,cover_or_grate\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "tece_product.txt", "source_type": "txt", "source_origin": "manual_download",
+        "evidence_scope": "article_data", "product_family_hint": "TECEdrainline",
+        "page_range_label": "TECEdrainline 271-294", "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+    out = tmp_path / "review_out.csv"
+
+    report = report_mod.load_source_pack(tmp_path)
+    validation = validator_mod.validate_source_pack(tmp_path)
+    exported = review_mod.export_unknown_role_review_csv(tmp_path, out)
+
+    assert report.article_numbers == ["650099"]
+    assert exported == 1
+    assert validation.valid is True
+    assert not any("tece_unknown_role_review" in warning for warning in validation.warnings)
+    assert "999999" not in {row.article_number for row in report.rows}
+    assert "888888" not in {row.article_number for row in report.rows}
+
+
+def test_unknown_rows_remain_unknown_after_unknown_role_review_export(tmp_path):
+    from tools import export_tece_unknown_role_review_csv as review_mod
+
+    (tmp_path / "unknowns.txt").write_text(
+        "TECEdrainline Schallschutzmatte Best.-Nr. 660121. "
+        "TECEdrainline Dichtband Best.-Nr. 660122.",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "unknowns.txt", "source_type": "txt", "source_origin": "manual_download",
+        "evidence_scope": "article_data", "product_family_hint": "TECEdrainline",
+        "page_range_label": "TECEdrainline 271-294", "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+    out = tmp_path / "tecedrainline_unknown_role_review.csv"
+
+    before_roles = {row.article_number: row.tece_article_role_candidate for row in report_mod.load_source_pack(tmp_path).rows}
+    review_mod.export_unknown_role_review_csv(tmp_path, out)
+    after_roles = {row.article_number: row.tece_article_role_candidate for row in report_mod.load_source_pack(tmp_path).rows}
+
+    assert before_roles == {"660121": "unknown", "660122": "unknown"}
+    assert after_roles == before_roles
+
 def test_unknown_role_context_report_json_cli_writes_utf8(tmp_path):
     from tools import report_tece_unknown_role_contexts as unknown_mod
 
