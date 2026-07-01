@@ -1957,3 +1957,138 @@ def test_unknown_role_review_validator_does_not_change_aco_canonical_export(tmp_
     assert after.excluded.equals(before.excluded)
     assert after.evidence.equals(before.evidence)
     assert after.bom_options.equals(before.bom_options)
+
+
+def test_unknown_role_review_impact_report_generated_empty_csv(tmp_path):
+    from tools import export_tece_unknown_role_review_csv as export_mod
+    from tools import report_tece_unknown_role_review_impact as impact_mod
+
+    _write_unknown_role_review_validation_pack(tmp_path)
+    review_csv = tmp_path / "tece_unknown_role_review.csv"
+    export_mod.export_unknown_role_review_csv(tmp_path, review_csv)
+
+    report = impact_mod.build_impact_report(review_csv, tmp_path)
+
+    assert report["valid"] is True
+    assert report["total_review_rows"] == 2
+    assert report["matched_unknown_inventory_rows"] == 2
+    assert report["decision_counts"] == {"(empty)": 2}
+    assert report["safe_to_apply_true_count"] == 0
+    assert report["blocked_count"] == 2
+    assert report["current_inventory_role_counts"]["unknown"] == 2
+    assert report["hypothetical_role_counts_after_safe_apply_only"] == report["current_inventory_role_counts"]
+    assert report["hypothetical_unknown_reduction_safe_apply_only"] == 0
+    assert report["production_promotion_blocked"] is True
+    assert report["ready_for_benchmark"] is False
+    assert report["ready_for_customer_view"] is False
+
+
+def test_unknown_role_review_impact_report_manual_fixture_safe_and_blocked_rows(tmp_path):
+    import csv
+    from tools import export_tece_unknown_role_review_csv as export_mod
+    from tools import report_tece_unknown_role_review_impact as impact_mod
+
+    _write_unknown_role_review_validation_pack(tmp_path)
+    review_csv = tmp_path / "manual_review.csv"
+    export_mod.export_unknown_role_review_csv(tmp_path, review_csv)
+    with review_csv.open(encoding="utf-8-sig", newline="") as fh:
+        reader = csv.DictReader(fh)
+        rows = list(reader); fields = reader.fieldnames
+    rows_by_article = {row["article_number"]: row for row in rows}
+    rows_by_article["660120"]["reviewer_role_decision"] = "accessory"
+    rows_by_article["660120"]["safe_to_apply_automatically"] = "true"
+    rows_by_article["650099"]["reviewer_role_decision"] = "drain_body"
+    rows_by_article["650099"]["safe_to_apply_automatically"] = "true"
+    with review_csv.open("w", encoding="utf-8-sig", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fields)
+        writer.writeheader(); writer.writerows(rows)
+
+    before_inventory = {path.name: path.read_bytes() for path in tmp_path.iterdir() if path.is_file()}
+    before_roles = {row.article_number: row.tece_article_role_candidate for row in report_mod.load_source_pack(tmp_path).rows}
+    report = impact_mod.build_impact_report(review_csv, tmp_path)
+    after_inventory = {path.name: path.read_bytes() for path in tmp_path.iterdir() if path.is_file()}
+    after_roles = {row.article_number: row.tece_article_role_candidate for row in report_mod.load_source_pack(tmp_path).rows}
+
+    assert report["valid"] is True
+    assert report["decision_counts"] == {"accessory": 1, "drain_body": 1}
+    assert report["safe_to_apply_true_count"] == 2
+    assert report["blocked_count"] == 0
+    assert report["current_inventory_role_counts"]["unknown"] == 2
+    assert report["hypothetical_role_counts_after_safe_apply_only"]["accessory"] == report["current_inventory_role_counts"].get("accessory", 0) + 1
+    assert report["hypothetical_role_counts_after_safe_apply_only"]["drain_body"] == report["current_inventory_role_counts"].get("drain_body", 0) + 1
+    assert report["hypothetical_role_counts_after_safe_apply_only"].get("unknown", 0) == 0
+    assert report["hypothetical_unknown_reduction_safe_apply_only"] == 2
+    assert report["examples_by_decision"]["accessory"][0]["article_number"] == "660120"
+    assert before_inventory == after_inventory
+    assert before_roles == after_roles
+
+
+def test_unknown_role_review_impact_report_blocked_rows_stay_blocked(tmp_path):
+    import csv
+    from tools import export_tece_unknown_role_review_csv as export_mod
+    from tools import report_tece_unknown_role_review_impact as impact_mod
+
+    _write_unknown_role_review_validation_pack(tmp_path)
+    review_csv = tmp_path / "blocked_review.csv"
+    export_mod.export_unknown_role_review_csv(tmp_path, review_csv)
+    with review_csv.open(encoding="utf-8-sig", newline="") as fh:
+        reader = csv.DictReader(fh)
+        rows = list(reader); fields = reader.fieldnames
+    rows[0]["reviewer_role_decision"] = "ambiguous"
+    rows[0]["safe_to_apply_automatically"] = "false"
+    rows[1]["reviewer_role_decision"] = "cover_or_grate"
+    rows[1]["safe_to_apply_automatically"] = "false"
+    with review_csv.open("w", encoding="utf-8-sig", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fields)
+        writer.writeheader(); writer.writerows(rows)
+
+    report = impact_mod.build_impact_report(review_csv, tmp_path)
+
+    assert report["valid"] is True
+    assert report["blocked_count"] == 2
+    assert report["blocked_decision_counts"] == {"ambiguous": 1, "cover_or_grate": 1}
+    assert report["hypothetical_role_counts_after_safe_apply_only"] == report["current_inventory_role_counts"]
+    assert report["production_promotion_blocked"] is True
+    assert report["ready_for_benchmark"] is False
+    assert report["ready_for_customer_view"] is False
+
+
+def test_unknown_role_review_impact_report_does_not_change_aco_canonical_export(tmp_path):
+    from src.canonical_aco_export import build_canonical_aco_frames
+    from tools import export_tece_unknown_role_review_csv as export_mod
+    from tools import report_tece_unknown_role_review_impact as impact_mod
+
+    _write_unknown_role_review_validation_pack(tmp_path)
+    review_csv = tmp_path / "review.csv"
+    export_mod.export_unknown_role_review_csv(tmp_path, review_csv)
+    before = build_canonical_aco_frames()
+
+    report = impact_mod.build_impact_report(review_csv, tmp_path)
+
+    after = build_canonical_aco_frames()
+    assert report["production_promotion_blocked"] is True
+    assert after.registry.equals(before.registry)
+    assert after.products.equals(before.products)
+    assert after.comparison.equals(before.comparison)
+    assert after.excluded.equals(before.excluded)
+    assert after.evidence.equals(before.evidence)
+    assert after.bom_options.equals(before.bom_options)
+
+
+def test_unknown_role_review_impact_report_cli_json_out(tmp_path, capsys):
+    from tools import export_tece_unknown_role_review_csv as export_mod
+    from tools import report_tece_unknown_role_review_impact as impact_mod
+
+    _write_unknown_role_review_validation_pack(tmp_path)
+    review_csv = tmp_path / "review.csv"
+    out = tmp_path / "impact.json"
+    export_mod.export_unknown_role_review_csv(tmp_path, review_csv)
+
+    assert impact_mod.main(["--review-csv", str(review_csv), "--source-pack", str(tmp_path), "--json", "--out", str(out)]) == 0
+
+    assert capsys.readouterr().out == ""
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["total_review_rows"] == 2
+    assert payload["production_promotion_blocked"] is True
+    assert payload["ready_for_benchmark"] is False
+    assert payload["ready_for_customer_view"] is False
