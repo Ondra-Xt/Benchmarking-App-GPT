@@ -1787,3 +1787,173 @@ def test_unknown_role_context_report_does_not_change_existing_tece_outputs(tmp_p
     assert before_csv.read_bytes() == after_csv.read_bytes()
     assert before_coverage == after_coverage
     assert before_shortlist == after_shortlist
+
+
+def _write_unknown_role_review_validation_pack(tmp_path):
+    (tmp_path / "unknowns.txt").write_text(
+        "TECEdrainline Montagefüße höhenverstellbar Best.-Nr. 660120. "
+        "TECEdrainline Duschrinne gerade Länge 1000 mm Best.-Nr. 650099.",
+        encoding="utf-8",
+    )
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [{
+        "source_file": "unknowns.txt", "source_type": "txt", "source_origin": "manual_download",
+        "evidence_scope": "article_data", "product_family_hint": "TECEdrainline",
+        "page_range_label": "TECEdrainline 271-294", "approved_for_benchmark_evidence": False,
+    }]}), encoding="utf-8")
+
+
+def test_empty_unknown_role_review_csv_generated_by_export_validates_successfully(tmp_path):
+    from tools import export_tece_unknown_role_review_csv as export_mod
+    from tools import validate_tece_unknown_role_review_csv as validator_mod
+
+    _write_unknown_role_review_validation_pack(tmp_path)
+    review_csv = tmp_path / "tece_unknown_role_review.csv"
+    export_mod.export_unknown_role_review_csv(tmp_path, review_csv)
+
+    report = validator_mod.validate_unknown_role_review_csv(review_csv, tmp_path)
+
+    assert report["valid"] is True
+    assert report["total_review_rows"] == 2
+    assert report["matched_unknown_inventory_rows"] == 2
+    assert report["unmatched_rows"] == []
+    assert report["production_promotion_blocked"] is True
+    assert report["ready_for_benchmark"] is False
+    assert report["ready_for_customer_view"] is False
+
+
+def test_unknown_role_review_validator_rejects_invalid_decision(tmp_path):
+    import csv
+    from tools import export_tece_unknown_role_review_csv as export_mod
+    from tools import validate_tece_unknown_role_review_csv as validator_mod
+
+    _write_unknown_role_review_validation_pack(tmp_path)
+    review_csv = tmp_path / "review.csv"
+    export_mod.export_unknown_role_review_csv(tmp_path, review_csv)
+    with review_csv.open(encoding="utf-8-sig", newline="") as fh:
+        reader = csv.DictReader(fh)
+        rows = list(reader)
+        fields = reader.fieldnames
+    rows[0]["reviewer_role_decision"] = "definitely_body"
+    with review_csv.open("w", encoding="utf-8-sig", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fields)
+        writer.writeheader(); writer.writerows(rows)
+
+    report = validator_mod.validate_unknown_role_review_csv(review_csv, tmp_path)
+
+    assert report["valid"] is False
+    assert any("invalid reviewer_role_decision" in error for error in report["errors"])
+
+
+def test_unknown_role_review_validator_rejects_safe_true_with_ambiguous_or_keep_unknown(tmp_path):
+    import csv
+    from tools import export_tece_unknown_role_review_csv as export_mod
+    from tools import validate_tece_unknown_role_review_csv as validator_mod
+
+    _write_unknown_role_review_validation_pack(tmp_path)
+    review_csv = tmp_path / "review.csv"
+    export_mod.export_unknown_role_review_csv(tmp_path, review_csv)
+    with review_csv.open(encoding="utf-8-sig", newline="") as fh:
+        reader = csv.DictReader(fh)
+        rows = list(reader)
+        fields = reader.fieldnames
+    rows[0]["reviewer_role_decision"] = "ambiguous"
+    rows[0]["safe_to_apply_automatically"] = "true"
+    rows[1]["reviewer_role_decision"] = "keep_unknown"
+    rows[1]["safe_to_apply_automatically"] = "true"
+    with review_csv.open("w", encoding="utf-8-sig", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fields)
+        writer.writeheader(); writer.writerows(rows)
+
+    report = validator_mod.validate_unknown_role_review_csv(review_csv, tmp_path)
+
+    assert report["valid"] is False
+    assert report["safe_to_apply_true_count"] == 2
+    assert sum("cannot be safe_to_apply_automatically=true" in error for error in report["errors"]) == 2
+
+
+def test_unknown_role_review_validator_reports_unknown_article_number(tmp_path):
+    import csv
+    from tools import export_tece_unknown_role_review_csv as export_mod
+    from tools import validate_tece_unknown_role_review_csv as validator_mod
+
+    _write_unknown_role_review_validation_pack(tmp_path)
+    review_csv = tmp_path / "review.csv"
+    export_mod.export_unknown_role_review_csv(tmp_path, review_csv)
+    with review_csv.open(encoding="utf-8-sig", newline="") as fh:
+        reader = csv.DictReader(fh)
+        rows = list(reader); fields = reader.fieldnames
+    rows[0]["article_number"] = "999999"
+    with review_csv.open("w", encoding="utf-8-sig", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fields)
+        writer.writeheader(); writer.writerows(rows)
+
+    report = validator_mod.validate_unknown_role_review_csv(review_csv, tmp_path)
+
+    assert report["valid"] is True
+    assert report["matched_unknown_inventory_rows"] == 1
+    assert report["unmatched_rows"] == [{"row_number": 2, "article_number": "999999"}]
+
+
+def test_unknown_role_review_validator_reports_duplicate_rows(tmp_path):
+    import csv
+    from tools import export_tece_unknown_role_review_csv as export_mod
+    from tools import validate_tece_unknown_role_review_csv as validator_mod
+
+    _write_unknown_role_review_validation_pack(tmp_path)
+    review_csv = tmp_path / "review.csv"
+    export_mod.export_unknown_role_review_csv(tmp_path, review_csv)
+    with review_csv.open(encoding="utf-8-sig", newline="") as fh:
+        reader = csv.DictReader(fh)
+        rows = list(reader); fields = reader.fieldnames
+    rows.append(dict(rows[0]))
+    with review_csv.open("w", encoding="utf-8-sig", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fields)
+        writer.writeheader(); writer.writerows(rows)
+
+    report = validator_mod.validate_unknown_role_review_csv(review_csv, tmp_path)
+
+    assert report["valid"] is False
+    assert len(report["duplicate_review_rows"]) == 1
+    assert any("duplicate review row" in error for error in report["errors"])
+
+
+def test_unknown_role_review_validator_remains_diagnostic_only_and_production_blocked(tmp_path):
+    from tools import export_tece_unknown_role_review_csv as export_mod
+    from tools import validate_tece_unknown_role_review_csv as validator_mod
+
+    _write_unknown_role_review_validation_pack(tmp_path)
+    review_csv = tmp_path / "review.csv"
+    export_mod.export_unknown_role_review_csv(tmp_path, review_csv)
+    before_roles = {row.article_number: row.tece_article_role_candidate for row in report_mod.load_source_pack(tmp_path).rows}
+    before_coverage = coverage_mod.build_coverage_report(tmp_path)
+
+    report = validator_mod.validate_unknown_role_review_csv(review_csv, tmp_path)
+
+    after_roles = {row.article_number: row.tece_article_role_candidate for row in report_mod.load_source_pack(tmp_path).rows}
+    assert after_roles == before_roles
+    assert coverage_mod.build_coverage_report(tmp_path) == before_coverage
+    assert report["production_promotion_blocked"] is True
+    assert report["ready_for_benchmark"] is False
+    assert report["ready_for_customer_view"] is False
+
+
+def test_unknown_role_review_validator_does_not_change_aco_canonical_export(tmp_path):
+    from src.canonical_aco_export import build_canonical_aco_frames
+    from tools import export_tece_unknown_role_review_csv as export_mod
+    from tools import validate_tece_unknown_role_review_csv as validator_mod
+
+    _write_unknown_role_review_validation_pack(tmp_path)
+    review_csv = tmp_path / "review.csv"
+    export_mod.export_unknown_role_review_csv(tmp_path, review_csv)
+    before = build_canonical_aco_frames()
+
+    report = validator_mod.validate_unknown_role_review_csv(review_csv, tmp_path)
+
+    after = build_canonical_aco_frames()
+    assert report["production_promotion_blocked"] is True
+    assert after.registry.equals(before.registry)
+    assert after.products.equals(before.products)
+    assert after.comparison.equals(before.comparison)
+    assert after.excluded.equals(before.excluded)
+    assert after.evidence.equals(before.evidence)
+    assert after.bom_options.equals(before.bom_options)
