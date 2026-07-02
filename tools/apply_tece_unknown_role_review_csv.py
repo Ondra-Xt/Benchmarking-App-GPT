@@ -98,12 +98,18 @@ def build_apply_preview(review_csv: str | Path, source_pack: str | Path, family:
     preview_rows = [_base_preview_row(row) for row in inventory_rows]
 
     current_counts: Counter[str] = Counter()
-    matches_by_key: dict[tuple[str, str], list[int]] = defaultdict(list)
+    unknown_matches_by_key: dict[tuple[str, str], list[int]] = defaultdict(list)
+    non_unknown_matches_by_key: dict[tuple[str, str], list[int]] = defaultdict(list)
     for idx, row in enumerate(inventory_rows):
         if _family(row) != family:
             continue
-        current_counts[_role(row)] += 1
-        matches_by_key[(_clean(row.article_number), _family(row))].append(idx)
+        role = _role(row)
+        current_counts[role] += 1
+        key = (_clean(row.article_number), _family(row))
+        if role == "unknown":
+            unknown_matches_by_key[key].append(idx)
+        else:
+            non_unknown_matches_by_key[key].append(idx)
 
     review_rows = _read_review_rows(review_csv)
     applied_count = 0
@@ -120,13 +126,14 @@ def build_apply_preview(review_csv: str | Path, source_pack: str | Path, family:
         decision = _clean(review_row.get("reviewer_role_decision")) or "(empty)"
         safe = _norm_bool(review_row.get("safe_to_apply_automatically"))
         is_blocked = safe != "true" or decision not in APPLY_DECISIONS or decision in BLOCKED_DECISIONS
-        matches = matches_by_key.get((article, row_family), [])
+        key = (article, row_family)
+        unknown_matches = unknown_matches_by_key.get(key, [])
+        non_unknown_matches = non_unknown_matches_by_key.get(key, [])
 
         if is_blocked:
             skipped_blocked_count += 1
             blocked_decision_counts[decision] += 1
-            if len(matches) == 1:
-                idx = matches[0]
+            for idx in unknown_matches:
                 preview_rows[idx].update({
                     "review_decision_source": decision,
                     "review_safe_to_apply": safe,
@@ -134,37 +141,32 @@ def build_apply_preview(review_csv: str | Path, source_pack: str | Path, family:
                     "review_apply_note": "review row is not safe for automatic diagnostic preview apply",
                 })
             continue
-        if row_family != family or not matches:
+        if row_family != family or (not unknown_matches and not non_unknown_matches):
             skipped_unmatched_count += 1
             continue
-        if len(matches) != 1:
+        if len(unknown_matches) > 1:
             skipped_duplicate_match_count += 1
-            for idx in matches:
+            for idx in unknown_matches:
                 preview_rows[idx].update({
                     "review_decision_source": decision,
                     "review_safe_to_apply": safe,
                     "review_apply_status": "skipped_duplicate_match",
-                    "review_apply_note": "review row matched multiple source inventory rows; safe preview apply requires exactly one match",
+                    "review_apply_note": "review row matched multiple unknown source inventory rows; safe preview apply requires exactly one unknown match",
+                })
+            continue
+        if not unknown_matches:
+            skipped_non_unknown_count += 1
+            for idx in non_unknown_matches:
+                preview_rows[idx].update({
+                    "review_decision_source": decision,
+                    "review_safe_to_apply": safe,
+                    "review_apply_status": "skipped_non_unknown",
+                    "review_apply_note": f"current source inventory role is {preview_rows[idx]['original_article_role']!r}, not 'unknown'",
                 })
             continue
 
-        idx = matches[0]
-        original_role = preview_rows[idx]["original_article_role"]
-        if original_role != "unknown":
-            skipped_non_unknown_count += 1
-            preview_rows[idx].update({
-                "review_decision_source": decision,
-                "review_safe_to_apply": safe,
-                "review_apply_status": "skipped_non_unknown",
-                "review_apply_note": f"current source inventory role is {original_role!r}, not 'unknown'",
-            })
-            continue
+        idx = unknown_matches[0]
         if idx in touched_inventory_indices:
-            skipped_duplicate_match_count += 1
-            preview_rows[idx].update({
-                "review_apply_status": "skipped_duplicate_match",
-                "review_apply_note": "multiple safe review rows target the same source inventory row",
-            })
             continue
 
         preview_rows[idx].update({

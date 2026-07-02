@@ -2183,6 +2183,56 @@ def test_apply_tece_unknown_role_review_non_unknown_rows_are_not_overwritten(tmp
     assert rows[0]["review_apply_status"] == "skipped_non_unknown"
 
 
+
+def test_apply_tece_unknown_role_review_ignores_same_article_non_unknown_when_unknown_match_exists(tmp_path):
+    from tools import apply_tece_unknown_role_review_csv as apply_mod
+
+    (tmp_path / "known.txt").write_text("TECEdrainline Zubehör Best.-Nr. 777777.", encoding="utf-8")
+    (tmp_path / "unknown.txt").write_text("TECEdrainline Neutralprodukt Best.-Nr. 777777.", encoding="utf-8")
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": [
+        {"source_file": "known.txt", "source_type": "txt", "source_origin": "manual_download", "evidence_scope": "article_data", "product_family_hint": "TECEdrainline", "page_range_label": "TECEdrainline known", "approved_for_benchmark_evidence": False},
+        {"source_file": "unknown.txt", "source_type": "txt", "source_origin": "manual_download", "evidence_scope": "article_data", "product_family_hint": "TECEdrainline", "page_range_label": "TECEdrainline unknown", "approved_for_benchmark_evidence": False},
+    ]}), encoding="utf-8")
+    review_csv = tmp_path / "review.csv"
+    _write_apply_review_csv(review_csv, [{"article_number": "777777", "reviewer_role_decision": "drain_body", "safe_to_apply_automatically": "true"}])
+
+    rows, report = apply_mod.build_apply_preview(review_csv, tmp_path)
+    rows_by_original_role = {row["original_article_role"]: row for row in rows}
+
+    assert report["applied_count"] == 1
+    assert report["skipped_duplicate_match_count"] == 0
+    assert report["unknown_reduction"] == 1
+    assert rows_by_original_role["accessory"]["applied_article_role"] == "accessory"
+    assert rows_by_original_role["accessory"]["review_apply_status"] == "not_reviewed"
+    assert rows_by_original_role["unknown"]["applied_article_role"] == "drain_body"
+    assert rows_by_original_role["unknown"]["review_apply_status"] == "applied"
+
+
+def test_apply_tece_unknown_role_review_blocked_review_rows_annotate_matching_unknowns(tmp_path):
+    from tools import apply_tece_unknown_role_review_csv as apply_mod
+
+    sources = []
+    for article in ("650700", "650800", "651500"):
+        source_file = f"unknown_{article}.txt"
+        (tmp_path / source_file).write_text(f"TECEdrainline Neutralprodukt Best.-Nr. {article}.", encoding="utf-8")
+        sources.append({"source_file": source_file, "source_type": "txt", "source_origin": "manual_download", "evidence_scope": "article_data", "product_family_hint": "TECEdrainline", "page_range_label": "TECEdrainline 271-294", "approved_for_benchmark_evidence": False})
+    (tmp_path / "tece_source_pack_manifest.json").write_text(json.dumps({"sources": sources}), encoding="utf-8")
+    review_csv = tmp_path / "review.csv"
+    _write_apply_review_csv(review_csv, [
+        {"article_number": "650700", "reviewer_role_decision": "drain_body", "safe_to_apply_automatically": "false"},
+        {"article_number": "650800", "reviewer_role_decision": "drain_body", "safe_to_apply_automatically": "false"},
+        {"article_number": "651500", "reviewer_role_decision": "drain_body", "safe_to_apply_automatically": "false"},
+    ])
+
+    rows, report = apply_mod.build_apply_preview(review_csv, tmp_path)
+
+    assert report["applied_count"] == 0
+    assert report["skipped_blocked_count"] == 3
+    assert report["blocked_decision_counts"] == {"drain_body": 3}
+    assert report["preview_role_counts_after_safe_apply"] == {"unknown": 3}
+    assert {row["applied_article_role"] for row in rows} == {"unknown"}
+    assert {row["review_apply_status"] for row in rows} == {"skipped_blocked"}
+
 def test_apply_tece_unknown_role_review_duplicate_matches_are_blocked(tmp_path):
     from tools import apply_tece_unknown_role_review_csv as apply_mod
 
