@@ -3,31 +3,33 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+if __package__ in {None, ""}:
+    repo_root = Path(__file__).resolve().parents[1]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
 
-from tools.apply_tece_unknown_role_review_csv import DIAGNOSTIC_ONLY_NOTE
-from tools.report_tece_overlay_compatibility_diagnostic import (
-    PAIR_TYPES,
-    _article,
-    _family,
-    _nominal_length,
-    _overlay_role,
-    _pair,
-    _read_csv,
-    _sample_row,
-    _source_file,
-    _status,
-)
 from tools.report_tece_reviewed_role_overlay_qa import build_qa_report
 from tools.report_tece_unknown_role_contexts import _clean
 from tools.tece_report_output import write_json_output, write_text_output
+
+ROLE_COLUMNS = ("applied_article_role", "article_role", "tece_article_role_candidate")
+LENGTH_COLUMNS = ("nominal_length_mm", "length_mm", "nominal_length", "length", "product_length_mm")
+PAIR_TYPES = (
+    "drain_body_to_cover_or_grate",
+    "drain_body_to_profile_cover",
+    "drain_body_to_accessory",
+    "drain_body_to_unknown",
+)
+DIAGNOSTIC_ONLY_NOTE = (
+    "Diagnostic-only pair audit/ranking report; writes only requested report outputs and does not mutate "
+    "source-pack files, TECE extraction/classification logic, production promotion flags, or ACO canonical export."
+)
 
 BLOCKED_UNKNOWN_ARTICLES = ["650700", "650800", "651500"]
 CSV_COLUMNS = [
@@ -45,6 +47,89 @@ PRIORITY_ORDER = {
     "excluded_not_paired": 4,
 }
 TEXT_COLUMNS = ("evidence_text_snippet", "evidence_text", "evidence_text_or_reason", "product_name", "description", "name", "review_apply_note")
+
+
+def _read_csv(path: str | Path) -> list[dict[str, Any]]:
+    with Path(path).open(encoding="utf-8-sig", newline="") as fh:
+        return list(csv.DictReader(fh))
+
+
+def _family(row: dict[str, Any]) -> str:
+    return _clean(row.get("tece_family_candidate") or row.get("product_family") or row.get("family"))
+
+
+def _article(row: dict[str, Any]) -> str:
+    return _clean(row.get("article_number") or row.get("product_article_number") or row.get("article"))
+
+
+def _overlay_role(row: dict[str, Any]) -> str:
+    for col in ROLE_COLUMNS:
+        role = _clean(row.get(col))
+        if role:
+            return role
+    return "unknown"
+
+
+def _original_role(row: dict[str, Any]) -> str:
+    return _clean(row.get("original_article_role") or row.get("article_role") or row.get("tece_article_role_candidate")) or "unknown"
+
+
+def _status(row: dict[str, Any]) -> str:
+    return _clean(row.get("review_apply_status"))
+
+
+def _source_file(row: dict[str, Any]) -> str:
+    return _clean(row.get("source_file") or row.get("evidence_source_file")) or "(blank)"
+
+
+def _length_from_value(value: Any) -> str:
+    text = _clean(value).replace(",", ".")
+    if not text:
+        return ""
+    match = re.search(r"(?<!\d)(\d{2,4})(?:\.0+)?\s*(?:mm)?(?!\d)", text, flags=re.I)
+    return match.group(1) if match else ""
+
+
+def _nominal_length(row: dict[str, Any]) -> str:
+    for col in LENGTH_COLUMNS:
+        length = _length_from_value(row.get(col))
+        if length:
+            return length
+    text = " ".join(_clean(row.get(col)) for col in TEXT_COLUMNS if _clean(row.get(col)))
+    cue_match = re.search(r"(?i)(?:length|länge|laenge|nominal)[^\d]{0,20}(\d{2,4})\s*(?:mm)?", text)
+    if cue_match:
+        return cue_match.group(1)
+    mm_match = re.search(r"(?<!\d)(\d{2,4})\s*mm\b", text, flags=re.I)
+    return mm_match.group(1) if mm_match else ""
+
+
+def _sample_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "article_number": _article(row),
+        "applied_article_role": _overlay_role(row),
+        "original_article_role": _original_role(row),
+        "review_apply_status": _status(row),
+        "nominal_length_mm": _nominal_length(row),
+        "source_file": _source_file(row),
+    }
+
+
+def _pair(body: dict[str, Any], other: dict[str, Any], pair_type: str) -> dict[str, Any]:
+    body_len = _nominal_length(body)
+    other_len = _nominal_length(other)
+    status = "diagnostic_exact_length_match" if body_len and body_len == other_len else "unresolved_length_missing"
+    return {
+        "pair_type": pair_type,
+        "status": status,
+        "drain_body_article": _article(body),
+        "candidate_article": _article(other),
+        "drain_body_nominal_length_mm": body_len,
+        "candidate_nominal_length_mm": other_len,
+        "candidate_role": _overlay_role(other),
+        "diagnostic_only": True,
+        "production_safe": False,
+        "production_promotion_blocked": True,
+    }
 
 
 def _load_json(path: str | Path) -> dict[str, Any]:
