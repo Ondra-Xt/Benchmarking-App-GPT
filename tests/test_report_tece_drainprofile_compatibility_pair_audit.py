@@ -163,7 +163,7 @@ def test_aco_canonical_baseline_remains_stable() -> None:
     export = subprocess.run([sys.executable, "tools/export_canonical_aco_benchmark_xlsx.py", "--out", str(out)], text=True, capture_output=True)
     if export.returncode != 0:
         pytest.skip("ACO canonical export baseline is unavailable in this checkout: " + (export.stderr or export.stdout)[:500])
-    subprocess.run([sys.executable, "tools/validate_xlsx_export.py", str(out)], check=True)
+    validation = subprocess.run([sys.executable, "tools/validate_xlsx_export.py", str(out)], check=True, text=True, capture_output=True)
     result = subprocess.run([sys.executable, "tools/report_aco_final_baseline.py", "--xlsx", str(out)], check=True, text=True, capture_output=True)
-    assert "OVERALL: PASS" in result.stdout
+    assert "OVERALL: PASS" in validation.stdout
     assert "OVERALL: ACO_BASELINE_STABLE" in result.stdout
