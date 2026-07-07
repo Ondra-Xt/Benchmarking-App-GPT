@@ -13,7 +13,42 @@ from tools.export_tece_reviewed_compatibility_overlay_diagnostic import OUTPUT_C
 from tools.export_tece_reviewed_compatibility_overlay_diagnostic import _overlay_row
 from tools.export_tece_reviewed_compatibility_pairs import OUTPUT_COLUMNS as PAIR_COLUMNS
 from tools.report_tece_reviewed_compatibility_overlay_diagnostic_qa import report_overlay_diagnostic_qa
-from tests.test_export_tece_reviewed_compatibility_overlay_diagnostic import _rows
+
+
+def _rows() -> list[dict[str, str]]:
+    pairs = [
+        ("600700", "600710"), ("600700", "600711"), ("600700", "600751"), ("600700", "600770"), ("600700", "600772"), ("600700", "600782"), ("600700", "600783"), ("600700", "600785"),
+        ("600701", "600710"), ("600701", "600711"), ("600701", "600751"), ("600701", "600770"), ("600701", "600772"), ("600701", "600782"), ("600701", "600783"), ("600701", "600785"),
+        ("600702", "600710"), ("600702", "600711"), ("600702", "600751"), ("600702", "600770"), ("600702", "600772"), ("600702", "600782"), ("600702", "600783"), ("600702", "600785"),
+        ("600703", "600710"), ("600703", "600711"), ("600703", "600751"), ("600703", "600770"), ("600703", "600772"), ("600703", "600782"), ("600703", "600783"), ("600703", "600785"),
+        ("600705", "600785"), ("600707", "600785"),
+    ]
+    rows: list[dict[str, str]] = []
+    for idx, (body, candidate) in enumerate(pairs, 1):
+        rows.append({
+            "reviewed_pair_id": f"TECE-RP-{idx:04d}",
+            "source_shortlist_id": f"TECE-HP-{idx:04d}",
+            "family": "TECEdrainline",
+            "pair_type": "drain_body_to_cover_or_grate",
+            "nominal_length_mm": "700",
+            "drain_body_article": body,
+            "candidate_article": candidate,
+            "candidate_role": "cover_or_grate",
+            "drain_body_source_file": "body.pdf",
+            "candidate_source_file": "candidate.pdf",
+            "drain_body_evidence_text_snippet": "body evidence",
+            "candidate_evidence_text_snippet": "candidate evidence",
+            "reviewer_pair_decision": "compatible",
+            "reviewer_notes": "Reviewed.",
+            "safe_to_apply_automatically": "true",
+            "diagnostic_only": "true",
+            "production_safe": "false",
+            "production_promotion_blocked": "true",
+            "ready_for_benchmark": "false",
+            "ready_for_customer_view": "false",
+            "production_status_note": "diagnostic-only reviewed compatibility pair; not production-safe; no Products/BOM/assembly/customer-view promotion",
+        })
+    return rows
 
 
 def _write_csv(path: Path, rows: list[dict[str, str]], columns: list[str]) -> None:
