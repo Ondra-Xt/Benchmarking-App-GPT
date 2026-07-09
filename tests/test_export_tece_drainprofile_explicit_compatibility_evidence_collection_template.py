@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -189,10 +190,15 @@ def test_source_pack_immutability(artifacts):
 
 
 def test_aco_canonical_baseline_remains_pass_and_stable():
-    from tests.test_report_aco_final_baseline import _canonical_sheets
     from tools import report_aco_final_baseline as aco_mod
 
-    report = aco_mod.audit_frames(_canonical_sheets())
+    baseline_test_path = Path(__file__).resolve().parent / "test_report_aco_final_baseline.py"
+    spec = importlib.util.spec_from_file_location("aco_final_baseline_test_helpers", baseline_test_path)
+    assert spec is not None and spec.loader is not None
+    baseline_test_helpers = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(baseline_test_helpers)
+
+    report = aco_mod.audit_frames(baseline_test_helpers._canonical_sheets())
 
     assert all(check.passed for check in report.checks)
     assert report.overall == aco_mod.STABLE
