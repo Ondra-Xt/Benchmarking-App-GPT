@@ -134,8 +134,26 @@ def test_date_scope_notes_required_for_new_articles(artifacts):
     _mut(artifacts, lambda rows: [r.update(reviewer_notes="no date scope") for r in rows if r["article_number"] in {"675024", "675025"}])
     assert set(_run(artifacts)["invalid_date_scope_rows"])
 
-def test_direct_drain_body_to_cover_matrix_claim_fails(artifacts):
-    _mut(artifacts, lambda rows: rows[0].update(reviewer_notes="direct drain body to cover matrix generated"))
+def test_negative_direct_pairing_disclaimer_does_not_fail(artifacts):
+    _mut(artifacts, lambda rows: rows[0].update(reviewer_notes="This evidence does not allow direct drain-body-to-cover pairing."))
+    r = _run(artifacts)
+    assert r["valid"] is True and r["invalid_direct_pairing_claim_rows"] == []
+
+def test_negative_direct_matrix_generation_disclaimer_does_not_fail(artifacts):
+    _mut(artifacts, lambda rows: rows[0].update(reviewer_notes="No direct drain-body-to-cover matrix generation is allowed."))
+    r = _run(artifacts)
+    assert r["valid"] is True and r["invalid_direct_pairing_claim_rows"] == []
+
+def test_positive_allows_direct_drain_body_to_cover_pairing_fails(artifacts):
+    _mut(artifacts, lambda rows: rows[0].update(reviewer_notes="allows direct drain-body-to-cover pairing"))
+    assert _run(artifacts)["invalid_direct_pairing_claim_rows"]
+
+def test_positive_generate_direct_drain_body_to_cover_pairs_fails(artifacts):
+    _mut(artifacts, lambda rows: rows[0].update(reviewer_notes="generate direct drain-body-to-cover pairs"))
+    assert _run(artifacts)["invalid_direct_pairing_claim_rows"]
+
+def test_positive_all_covers_compatible_with_all_drain_bodies_fails(artifacts):
+    _mut(artifacts, lambda rows: rows[0].update(reviewer_notes="all covers compatible with all drain bodies"))
     assert _run(artifacts)["invalid_direct_pairing_claim_rows"]
 
 def test_production_customer_readiness_claim_in_notes_fails(artifacts):

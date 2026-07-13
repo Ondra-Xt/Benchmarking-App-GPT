@@ -66,6 +66,26 @@ def _date_ok(article: str, text: str) -> bool:
     if article in {"675024", "675025"}: return bool(re.search(r"(ab|from|since)\s*0?7\s*/\s*2023|07\s*/\s*2023", low))
     return True
 
+def _is_negated(text: str, start: int) -> bool:
+    prefix = text[max(0, start - 60):start]
+    return bool(re.search(r"\b(no|not|never|does\s+not|do\s+not|must\s+not|nesmí|nepovoluje|nezakládá)\b", prefix))
+
+def _has_affirmative_direct_pairing_claim(text: str) -> bool:
+    low = text.lower()
+    explicit_compatibility = [
+        r"\b\d{6}\s+(?:is\s+)?compatible\s+with\s+\d{6}\b",
+        r"\ball\s+(?:profile\s+)?covers\s+(?:are\s+)?compatible\s+with\s+all\s+drain\s+bodies\b",
+    ]
+    affirmative_direct_claims = [
+        r"\b(?:allow|allows|support|supports|confirm|confirms|prove|proves|create|creates|generate|generates|generated|enable|enables)\b.{0,100}\bdirect\b.{0,40}\bdrain[- ]?body\b.{0,40}\b(?:cover|profile[- ]?cover|profildeckel)\b.{0,40}\b(?:pair|pairs|pairing|matrix|compatibility)\b",
+        r"\bdirect\b.{0,40}\bdrain[- ]?body\b.{0,40}\b(?:cover|profile[- ]?cover|profildeckel)\b.{0,40}\b(?:pair|pairs|pairing|matrix|compatibility)\b.{0,60}\b(?:allowed|supported|confirmed|proved|created|generated|enabled)\b",
+    ]
+    for pattern in explicit_compatibility + affirmative_direct_claims:
+        for match in re.finditer(pattern, low):
+            if not _is_negated(low, match.start()):
+                return True
+    return False
+
 def validate(evidence_csv, template_v2_report, source_pack=DEFAULT_SOURCE_PACK, family=EXPECTED_FAMILY):
     errors: list[str] = []; warnings: list[str] = []
     rows, columns = _read_csv(evidence_csv, errors)
@@ -86,7 +106,7 @@ def validate(evidence_csv, template_v2_report, source_pack=DEFAULT_SOURCE_PACK, 
         if (safe and dec not in ACCEPTED_DECISIONS) or not safe: invalid_safe.append(label)
         if not _date_ok(_clean(r.get("article_number")), _clean(r.get("reviewed_evidence_summary")) + " " + _clean(r.get("reviewer_notes"))): invalid_date.append(label)
         claim_text = (_clean(r.get("source_text_excerpt")) + " " + _clean(r.get("reviewer_notes"))).lower()
-        if re.search(r"direct .*drain.*body.*(cover|profildeckel).*(matrix|pair)|matrix.*drain.*body.*(cover|profildeckel)", claim_text): direct_claim.append(label)
+        if _has_affirmative_direct_pairing_claim(claim_text): direct_claim.append(label)
         if any(_bool(r.get(f)) for f in ["direct_pair_generation_allowed","mediated_pair_generation_allowed","candidate_matrix_generation_allowed","evidence_acceptance_allowed","source_pack_mutation_allowed","extraction_logic_change_allowed","role_overlay_allowed","length_overlay_allowed","production_promotion_allowed"]): production_leak.append(label)
         if any(_bool(r.get(f)) for f in ["evidence_complete","ready_for_future_diagnostic_design","benchmark_ready_allowed","customer_view_allowed"]): readiness_leak.append(label)
         if re.search(r"production[- ]ready|customer[- ]view ready|benchmark[- ]ready|production promotion allowed|customer readiness", claim_text): readiness_leak.append(label)
