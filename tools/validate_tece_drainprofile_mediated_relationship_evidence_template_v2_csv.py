@@ -66,25 +66,45 @@ def _date_ok(article: str, text: str) -> bool:
     if article in {"675024", "675025"}: return bool(re.search(r"(ab|from|since)\s*0?7\s*/\s*2023|07\s*/\s*2023", low))
     return True
 
-def _is_negated(text: str, start: int) -> bool:
-    prefix = text[max(0, start - 60):start]
-    return bool(re.search(r"\b(no|not|never|does\s+not|do\s+not|must\s+not|nesmí|nepovoluje|nezakládá)\b", prefix))
+MANUAL_REVIEW_CLAIM_FIELDS = ["source_text_excerpt", "reviewed_evidence_summary", "reviewer_notes"]
+NEGATION_BLOCKING_PHRASES = [
+    "does not", "do not", "not", "no", "must not", "should not", "cannot", "can't", "is not",
+    "does not create", "does not generate", "does not allow", "do not generate", "do not allow",
+    "not create", "not generate", "not allow", "no direct", "no matrix", "from this row do not",
+    "nepovoluje", "nesmí", "negeneruje", "nevytváří", "nezakládá", "není", "bez generování", "bez párování",
+]
+DIRECT_PAIRING_RULES = [
+    ("article_compatible_with_article", r"\b\d{6}\s+(?:is\s+)?compatible\s+with\s+\d{6}\b"),
+    ("all_covers_compatible_with_all_drain_bodies", r"\ball\s+(?:profile\s+)?covers\s+(?:are\s+)?compatible\s+with\s+all\s+drain\s+bodies\b"),
+    ("affirmative_verb_direct_drain_body_cover", r"\b(?:allow|allows|support|supports|confirm|confirms|prove|proves|create|creates|generate|generates|generated|enable|enables)\b.{0,100}\bdirect\b.{0,40}\bdrain[- ]?body\b.{0,40}\b(?:cover|profile[- ]?cover|profildeckel)\b.{0,40}\b(?:pair|pairs|pairing|matrix|compatibility)\b"),
+    ("direct_drain_body_cover_affirmed", r"\bdirect\b.{0,40}\bdrain[- ]?body\b.{0,40}\b(?:cover|profile[- ]?cover|profildeckel)\b.{0,40}\b(?:pair|pairs|pairing|matrix|compatibility)\b.{0,60}\b(?:allowed|supported|confirmed|proved|created|generated|enabled|found)\b"),
+]
 
-def _has_affirmative_direct_pairing_claim(text: str) -> bool:
-    low = text.lower()
-    explicit_compatibility = [
-        r"\b\d{6}\s+(?:is\s+)?compatible\s+with\s+\d{6}\b",
-        r"\ball\s+(?:profile\s+)?covers\s+(?:are\s+)?compatible\s+with\s+all\s+drain\s+bodies\b",
-    ]
-    affirmative_direct_claims = [
-        r"\b(?:allow|allows|support|supports|confirm|confirms|prove|proves|create|creates|generate|generates|generated|enable|enables)\b.{0,100}\bdirect\b.{0,40}\bdrain[- ]?body\b.{0,40}\b(?:cover|profile[- ]?cover|profildeckel)\b.{0,40}\b(?:pair|pairs|pairing|matrix|compatibility)\b",
-        r"\bdirect\b.{0,40}\bdrain[- ]?body\b.{0,40}\b(?:cover|profile[- ]?cover|profildeckel)\b.{0,40}\b(?:pair|pairs|pairing|matrix|compatibility)\b.{0,60}\b(?:allowed|supported|confirmed|proved|created|generated|enabled)\b",
-    ]
-    for pattern in explicit_compatibility + affirmative_direct_claims:
-        for match in re.finditer(pattern, low):
-            if not _is_negated(low, match.start()):
-                return True
-    return False
+def _claim_fragments(text: str) -> list[str]:
+    return [fragment.strip() for fragment in re.split(r"[.;\n]+|,", text) if fragment.strip()]
+
+def _has_negation_or_blocking(fragment: str) -> bool:
+    low = fragment.lower()
+    return any(phrase in low for phrase in NEGATION_BLOCKING_PHRASES)
+
+def _direct_pairing_claim_details(row: dict[str, Any]) -> list[dict[str, str]]:
+    details = []
+    for column in MANUAL_REVIEW_CLAIM_FIELDS:
+        for fragment in _claim_fragments(_clean(row.get(column))):
+            low = fragment.lower()
+            if _has_negation_or_blocking(low):
+                continue
+            for rule_name, pattern in DIRECT_PAIRING_RULES:
+                if re.search(pattern, low):
+                    details.append({
+                        "template_v2_row_id": _clean(row.get("template_v2_row_id")),
+                        "article_number": _clean(row.get("article_number")),
+                        "column": column,
+                        "matched_text": fragment,
+                        "matched_rule": rule_name,
+                    })
+                    break
+    return details
 
 def validate(evidence_csv, template_v2_report, source_pack=DEFAULT_SOURCE_PACK, family=EXPECTED_FAMILY):
     errors: list[str] = []; warnings: list[str] = []
@@ -98,22 +118,25 @@ def validate(evidence_csv, template_v2_report, source_pack=DEFAULT_SOURCE_PACK, 
 
     invalid_family = [_row_label(r, i) for i, r in enumerate(rows) if _clean(r.get("family")) != EXPECTED_FAMILY]
     invalid_template = [_row_label(r, i) for i, r in enumerate(rows) if _clean(r.get("template_v2_row_id")) not in EXPECTED_ROW_IDS]
-    invalid_decision = [] ; invalid_evidence = [] ; invalid_safe = [] ; invalid_date = [] ; direct_claim = [] ; production_leak = [] ; readiness_leak = [] ; diagnostic_leak = []
+    invalid_decision = [] ; invalid_evidence = [] ; invalid_safe = [] ; invalid_date = [] ; direct_claim = [] ; direct_claim_details = [] ; production_leak = [] ; readiness_leak = [] ; diagnostic_leak = []
     for i, r in enumerate(rows):
         label = _row_label(r, i); area = _clean(r.get("evidence_collection_area")); dec = _clean(r.get("reviewer_decision")); safe = _bool(r.get("safe_to_use_for_future_diagnostic_design"))
         if dec not in ALLOWED_DECISIONS.get(area, set()): invalid_decision.append(label)
         if dec in ACCEPTED_DECISIONS and any(not _clean(r.get(f)) for f in SOURCE_EVIDENCE_FIELDS): invalid_evidence.append(label)
         if (safe and dec not in ACCEPTED_DECISIONS) or not safe: invalid_safe.append(label)
         if not _date_ok(_clean(r.get("article_number")), _clean(r.get("reviewed_evidence_summary")) + " " + _clean(r.get("reviewer_notes"))): invalid_date.append(label)
-        claim_text = (_clean(r.get("source_text_excerpt")) + " " + _clean(r.get("reviewer_notes"))).lower()
-        if _has_affirmative_direct_pairing_claim(claim_text): direct_claim.append(label)
+        claim_text = (_clean(r.get("source_text_excerpt")) + " " + _clean(r.get("reviewed_evidence_summary")) + " " + _clean(r.get("reviewer_notes"))).lower()
+        row_direct_claim_details = _direct_pairing_claim_details(r)
+        if row_direct_claim_details:
+            direct_claim.append(label)
+            direct_claim_details.extend(row_direct_claim_details)
         if any(_bool(r.get(f)) for f in ["direct_pair_generation_allowed","mediated_pair_generation_allowed","candidate_matrix_generation_allowed","evidence_acceptance_allowed","source_pack_mutation_allowed","extraction_logic_change_allowed","role_overlay_allowed","length_overlay_allowed","production_promotion_allowed"]): production_leak.append(label)
         if any(_bool(r.get(f)) for f in ["evidence_complete","ready_for_future_diagnostic_design","benchmark_ready_allowed","customer_view_allowed"]): readiness_leak.append(label)
         if re.search(r"production[- ]ready|customer[- ]view ready|benchmark[- ]ready|production promotion allowed|customer readiness", claim_text): readiness_leak.append(label)
         if not _bool(r.get("diagnostic_only")): diagnostic_leak.append(label)
     readiness_leak = sorted(set(readiness_leak))
 
-    report = {"valid": False, "errors": errors, "warnings": warnings, "family": family, "source_pack_path": str(source_pack), "evidence_csv_path": str(evidence_csv), "template_v2_report_path": str(template_v2_report), "template_v2_report_valid": tmpl.get("valid") is True, "input_inventory_row_count": len(all_rows), "family_inventory_row_count": len(fam_rows), "current_machine_role_counts": machine_counts, "evidence_csv_row_count": len(rows), "template_v2_row_count": len(ids), "template_v2_row_ids": ids, "evidence_collection_area_counts": _counts(_clean(r.get("evidence_collection_area")) for r in rows), "evidence_target_type_counts": _counts(_clean(r.get("evidence_target_type")) for r in rows), "reviewer_decision_counts": _counts(_clean(r.get("reviewer_decision")) for r in rows), "row_status_counts": _counts(_clean(r.get("evidence_status")) for r in rows), "retained_drain_body_articles": RETAINED_DRAIN_BODY_ARTICLES, "proposed_profile_cover_articles": PROPOSED_PROFILE_COVER_ARTICLES, "source_pack_retained_drain_body_articles_found": drain_found, "source_pack_retained_drain_body_articles_missing": drain_missing, "source_pack_proposed_profile_cover_articles_found": cover_found, "source_pack_proposed_profile_cover_articles_missing": cover_missing, "duplicate_template_v2_row_ids": _dups(ids), "duplicate_article_rows": _dups(_clean(r.get("article_number")) for r in rows), "required_columns_missing": missing_cols, "invalid_family_rows": invalid_family, "invalid_template_v2_rows": invalid_template, "invalid_manual_decision_rows": invalid_decision, "invalid_manual_evidence_rows": invalid_evidence, "invalid_safe_to_use_rows": invalid_safe, "invalid_date_scope_rows": invalid_date, "invalid_direct_pairing_claim_rows": direct_claim, "invalid_blocking_rows": [], "production_leakage_rows": sorted(set(production_leak)), "readiness_leakage_rows": readiness_leak, "diagnostic_only_leakage_rows": diagnostic_leak, "diagnostic_only_note": DIAGNOSTIC_ONLY_NOTE}
+    report = {"valid": False, "errors": errors, "warnings": warnings, "family": family, "source_pack_path": str(source_pack), "evidence_csv_path": str(evidence_csv), "template_v2_report_path": str(template_v2_report), "template_v2_report_valid": tmpl.get("valid") is True, "input_inventory_row_count": len(all_rows), "family_inventory_row_count": len(fam_rows), "current_machine_role_counts": machine_counts, "evidence_csv_row_count": len(rows), "template_v2_row_count": len(ids), "template_v2_row_ids": ids, "evidence_collection_area_counts": _counts(_clean(r.get("evidence_collection_area")) for r in rows), "evidence_target_type_counts": _counts(_clean(r.get("evidence_target_type")) for r in rows), "reviewer_decision_counts": _counts(_clean(r.get("reviewer_decision")) for r in rows), "row_status_counts": _counts(_clean(r.get("evidence_status")) for r in rows), "retained_drain_body_articles": RETAINED_DRAIN_BODY_ARTICLES, "proposed_profile_cover_articles": PROPOSED_PROFILE_COVER_ARTICLES, "source_pack_retained_drain_body_articles_found": drain_found, "source_pack_retained_drain_body_articles_missing": drain_missing, "source_pack_proposed_profile_cover_articles_found": cover_found, "source_pack_proposed_profile_cover_articles_missing": cover_missing, "duplicate_template_v2_row_ids": _dups(ids), "duplicate_article_rows": _dups(_clean(r.get("article_number")) for r in rows), "required_columns_missing": missing_cols, "invalid_family_rows": invalid_family, "invalid_template_v2_rows": invalid_template, "invalid_manual_decision_rows": invalid_decision, "invalid_manual_evidence_rows": invalid_evidence, "invalid_safe_to_use_rows": invalid_safe, "invalid_date_scope_rows": invalid_date, "invalid_direct_pairing_claim_rows": direct_claim, "invalid_direct_pairing_claim_details": direct_claim_details, "invalid_blocking_rows": [], "production_leakage_rows": sorted(set(production_leak)), "readiness_leakage_rows": readiness_leak, "diagnostic_only_leakage_rows": diagnostic_leak, "diagnostic_only_note": DIAGNOSTIC_ONLY_NOTE}
     for k,v in {"accepted_drain_body_to_duschprofil_evidence_count":"accepted_explicit_drain_body_for_tecedrainprofile_duschprofil_statement","accepted_duschprofil_profile_cover_scope_count":"accepted_explicit_duschprofil_includes_profile_cover_statement","accepted_profile_cover_article_scope_count":"accepted_explicit_profile_cover_article_scope"}.items(): report[k] = report["reviewer_decision_counts"].get(v,0)
     report["accepted_mediated_evidence_row_count"] = sum(1 for r in rows if _clean(r.get("reviewer_decision")) in ACCEPTED_DECISIONS)
     report["rejected_or_ambiguous_row_count"] = len(rows) - report["accepted_mediated_evidence_row_count"]

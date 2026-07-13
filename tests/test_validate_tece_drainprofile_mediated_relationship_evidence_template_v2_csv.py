@@ -144,17 +144,50 @@ def test_negative_direct_matrix_generation_disclaimer_does_not_fail(artifacts):
     r = _run(artifacts)
     assert r["valid"] is True and r["invalid_direct_pairing_claim_rows"] == []
 
+
+def test_real_pilot_mediated_positive_direct_negative_disclaimer_passes(artifacts):
+    _mut(artifacts, lambda rows: rows[0].update(reviewer_notes="It supports mediated drain-body-to-Duschprofil system relationship only; it does not create direct drain-body-to-profile-cover compatibility pairs."))
+    r = _run(artifacts)
+    assert r["valid"] is True and r["invalid_direct_pairing_claim_details"] == []
+
+def test_real_pilot_do_not_generate_direct_pairs_disclaimer_passes(artifacts):
+    _mut(artifacts, lambda rows: rows[0].update(reviewer_notes="Do not generate direct drain-body-to-cover pairs from this row."))
+    r = _run(artifacts)
+    assert r["valid"] is True and r["invalid_direct_pairing_claim_details"] == []
+
+def test_real_pilot_diagnostic_only_generation_blocking_disclaimer_passes(artifacts):
+    _mut(artifacts, lambda rows: rows[0].update(reviewer_notes="Evidence is accepted only for mediated diagnostic model / article-scope confirmation. It does not allow direct or mediated pair generation, candidate matrix generation, production promotion, benchmark readiness, or customer-view readiness."))
+    r = _run(artifacts)
+    assert r["valid"] is True and r["invalid_direct_pairing_claim_details"] == []
+
 def test_positive_allows_direct_drain_body_to_cover_pairing_fails(artifacts):
-    _mut(artifacts, lambda rows: rows[0].update(reviewer_notes="allows direct drain-body-to-cover pairing"))
+    _mut(artifacts, lambda rows: rows[0].update(reviewer_notes="This evidence allows direct drain-body-to-cover pairing."))
+    r = _run(artifacts)
+    assert r["invalid_direct_pairing_claim_rows"] and r["invalid_direct_pairing_claim_details"][0]["column"] == "reviewer_notes"
+
+def test_positive_supports_direct_drain_body_to_cover_compatibility_fails(artifacts):
+    _mut(artifacts, lambda rows: rows[0].update(reviewer_notes="This evidence supports direct drain-body-to-cover compatibility."))
     assert _run(artifacts)["invalid_direct_pairing_claim_rows"]
 
+def test_positive_sentence_still_fails_when_other_sentence_is_negative(artifacts):
+    _mut(artifacts, lambda rows: rows[0].update(reviewer_notes="This evidence supports direct drain-body-to-cover compatibility. It does not generate direct drain-body-to-cover pairs."))
+    r = _run(artifacts)
+    assert r["invalid_direct_pairing_claim_rows"]
+    assert len(r["invalid_direct_pairing_claim_details"]) == 1
+    assert r["invalid_direct_pairing_claim_details"][0]["matched_text"] == "This evidence supports direct drain-body-to-cover compatibility"
+
 def test_positive_generate_direct_drain_body_to_cover_pairs_fails(artifacts):
-    _mut(artifacts, lambda rows: rows[0].update(reviewer_notes="generate direct drain-body-to-cover pairs"))
+    _mut(artifacts, lambda rows: rows[0].update(reviewer_notes="Generate direct drain-body-to-cover pairs."))
     assert _run(artifacts)["invalid_direct_pairing_claim_rows"]
 
 def test_positive_all_covers_compatible_with_all_drain_bodies_fails(artifacts):
-    _mut(artifacts, lambda rows: rows[0].update(reviewer_notes="all covers compatible with all drain bodies"))
+    _mut(artifacts, lambda rows: rows[0].update(reviewer_notes="All covers compatible with all drain bodies."))
     assert _run(artifacts)["invalid_direct_pairing_claim_rows"]
+
+@pytest.mark.parametrize("claim", ["This is production ready.", "This is benchmark ready.", "This is customer view ready."])
+def test_positive_readiness_claims_still_fail(artifacts, claim):
+    _mut(artifacts, lambda rows: rows[0].update(reviewer_notes=claim))
+    assert _run(artifacts)["readiness_leakage_rows"]
 
 def test_production_customer_readiness_claim_in_notes_fails(artifacts):
     _mut(artifacts, lambda rows: rows[0].update(reviewer_notes="customer-view ready and production-ready"))
