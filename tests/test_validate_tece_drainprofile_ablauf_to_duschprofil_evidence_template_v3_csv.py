@@ -58,7 +58,7 @@ def _valid_rows():
     rows = []
     areas = ["ablauf_to_duschprofil_interface_statement"] * 3 + ["duschprofil_installable_profile_scope_statement"] + ["installable_duschprofil_article_scope_and_length_evidence"] * 30
     targets = ["retained_drain_body_article"] * 3 + ["generic_duschprofil_scope"] + ["installable_duschprofil_article"] * 30
-    decisions = ["accepted_ablauf_to_duschprofil_interface"] * 3 + ["accepted_generic_duschprofil_scope"] + ["accepted_installable_duschprofil_article"] * 30
+    decisions = [mod.ACCEPTED_ABLAUF_TO_DUSCHPROFIL_INTERFACE_DECISION] * 3 + [mod.ACCEPTED_GENERIC_DUSCHPROFIL_SCOPE_DECISION] + [mod.ACCEPTED_INSTALLABLE_DUSCHPROFIL_ARTICLE_DECISION] * 30
     for i, (article, area, target, decision) in enumerate(zip(mod.EXPECTED_ARTICLE_ORDER, areas, targets, decisions), 1):
         row = {c: "" for c in mod.REQUIRED_COLUMNS}
         row.update(
@@ -193,8 +193,46 @@ def test_675xxx_spare_cover_articles_forbidden_as_installable_scope(artifacts, a
 
 
 def test_wrong_reviewer_decision_fails(artifacts):
-    _mut(artifacts, lambda rows: rows[0].update(reviewer_decision="accepted_installable_duschprofil_article"))
+    _mut(artifacts, lambda rows: rows[0].update(reviewer_decision=mod.ACCEPTED_INSTALLABLE_DUSCHPROFIL_ARTICLE_DECISION))
     assert _run(artifacts)["invalid_manual_decision_rows"]
+
+
+@pytest.mark.parametrize(
+    ("row_index", "decision"),
+    [
+        (0, mod.ACCEPTED_ABLAUF_TO_DUSCHPROFIL_INTERFACE_DECISION),
+        (3, mod.ACCEPTED_GENERIC_DUSCHPROFIL_SCOPE_DECISION),
+        (4, mod.ACCEPTED_INSTALLABLE_DUSCHPROFIL_ARTICLE_DECISION),
+    ],
+)
+def test_exact_reviewer_decision_strings_are_accepted_for_correct_row_type(artifacts, row_index, decision):
+    rows = list(csv.DictReader(artifacts[0].open(encoding="utf-8-sig")))
+    assert rows[row_index]["reviewer_decision"] == decision
+    assert _run(artifacts)["invalid_manual_decision_rows"] == []
+
+
+@pytest.mark.parametrize(
+    ("row_index", "wrong_decision"),
+    [
+        (0, mod.ACCEPTED_GENERIC_DUSCHPROFIL_SCOPE_DECISION),
+        (0, mod.ACCEPTED_INSTALLABLE_DUSCHPROFIL_ARTICLE_DECISION),
+        (3, mod.ACCEPTED_ABLAUF_TO_DUSCHPROFIL_INTERFACE_DECISION),
+        (3, mod.ACCEPTED_INSTALLABLE_DUSCHPROFIL_ARTICLE_DECISION),
+        (4, mod.ACCEPTED_ABLAUF_TO_DUSCHPROFIL_INTERFACE_DECISION),
+        (4, mod.ACCEPTED_GENERIC_DUSCHPROFIL_SCOPE_DECISION),
+    ],
+)
+def test_exact_reviewer_decision_strings_are_rejected_for_wrong_row_type(artifacts, row_index, wrong_decision):
+    _mut(artifacts, lambda rows: rows[row_index].update(reviewer_decision=wrong_decision))
+    assert _run(artifacts)["invalid_manual_decision_rows"]
+
+
+def test_decision_counts_require_matching_area_and_target_type(artifacts):
+    _mut(artifacts, lambda rows: rows[0].update(evidence_target_type="installable_duschprofil_article"))
+    r = _run(artifacts)
+    assert r["accepted_ablauf_to_duschprofil_interface_count"] == 2
+    assert r["accepted_v3_evidence_row_count"] == 33
+    assert r["valid"] is False
 
 
 def test_accepted_decision_with_blank_source_fields_fails(artifacts):

@@ -43,12 +43,15 @@ EXPECTED_TARGET_TYPE_COUNTS = {
     "generic_duschprofil_scope": 1,
     "installable_duschprofil_article": 30,
 }
-ALLOWED_DECISIONS = {
-    "ablauf_to_duschprofil_interface_statement": {"accepted_ablauf_to_duschprofil_interface"},
-    "duschprofil_installable_profile_scope_statement": {"accepted_generic_duschprofil_scope"},
-    "installable_duschprofil_article_scope_and_length_evidence": {"accepted_installable_duschprofil_article"},
+ACCEPTED_ABLAUF_TO_DUSCHPROFIL_INTERFACE_DECISION = "accepted_explicit_ablauf_to_duschprofil_interface_evidence"
+ACCEPTED_GENERIC_DUSCHPROFIL_SCOPE_DECISION = "accepted_explicit_duschprofil_to_ablauf_interface_and_profile_cover_inclusion_statement"
+ACCEPTED_INSTALLABLE_DUSCHPROFIL_ARTICLE_DECISION = "accepted_explicit_installable_duschprofil_article_scope_and_length_evidence"
+ALLOWED_DECISIONS_BY_ROW_TYPE = {
+    ("ablauf_to_duschprofil_interface_statement", "retained_drain_body_article"): {ACCEPTED_ABLAUF_TO_DUSCHPROFIL_INTERFACE_DECISION},
+    ("duschprofil_installable_profile_scope_statement", "generic_duschprofil_scope"): {ACCEPTED_GENERIC_DUSCHPROFIL_SCOPE_DECISION},
+    ("installable_duschprofil_article_scope_and_length_evidence", "installable_duschprofil_article"): {ACCEPTED_INSTALLABLE_DUSCHPROFIL_ARTICLE_DECISION},
 }
-ACCEPTED_DECISIONS = set().union(*ALLOWED_DECISIONS.values())
+ACCEPTED_DECISIONS = set().union(*ALLOWED_DECISIONS_BY_ROW_TYPE.values())
 SOURCE_EVIDENCE_FIELDS = ["source_document_name", "source_document_version", "source_page_or_section", "source_url_or_path", "source_text_excerpt", "reviewed_evidence_summary", "reviewer_decision", "reviewer_notes"]
 ALLOWED_TRUE_FIELDS = ["evidence_acceptance_allowed", "evidence_complete", "ready_for_future_diagnostic_design"]
 BLOCK_FALSE_FIELDS = ["direct_pair_generation_allowed", "mediated_pair_generation_allowed", "candidate_matrix_generation_allowed", "source_pack_mutation_allowed", "extraction_logic_change_allowed", "role_overlay_allowed", "length_overlay_allowed", "production_promotion_allowed", "benchmark_ready_allowed", "customer_view_allowed"]
@@ -119,8 +122,9 @@ def validate(evidence_csv, source_pack=DEFAULT_SOURCE_PACK, family=EXPECTED_FAMI
     for i, r in enumerate(rows):
         label = _row_label(r, i)
         area = _clean(r.get("evidence_collection_area"))
+        target_type = _clean(r.get("evidence_target_type"))
         decision = _clean(r.get("reviewer_decision"))
-        if decision not in ALLOWED_DECISIONS.get(area, set()):
+        if decision not in ALLOWED_DECISIONS_BY_ROW_TYPE.get((area, target_type), set()):
             invalid_decision.append(label)
         if decision in ACCEPTED_DECISIONS and any(not _clean(r.get(f)) for f in SOURCE_EVIDENCE_FIELDS):
             invalid_evidence.append(label)
@@ -147,10 +151,25 @@ def validate(evidence_csv, source_pack=DEFAULT_SOURCE_PACK, family=EXPECTED_FAMI
         "retained_drain_body_articles": RETAINED_DRAIN_BODY_ARTICLES,
         "installable_duschprofil_articles": INSTALLABLE_DUSCHPROFIL_ARTICLES,
         "forbidden_spare_cover_articles_in_installable_scope": forbidden_in_installable,
-        "accepted_ablauf_to_duschprofil_interface_count": sum(_clean(r.get("reviewer_decision")) == "accepted_ablauf_to_duschprofil_interface" for r in rows),
-        "accepted_generic_duschprofil_scope_count": sum(_clean(r.get("reviewer_decision")) == "accepted_generic_duschprofil_scope" for r in rows),
-        "accepted_installable_duschprofil_article_count": sum(_clean(r.get("reviewer_decision")) == "accepted_installable_duschprofil_article" for r in rows),
-        "accepted_v3_evidence_row_count": sum(_clean(r.get("reviewer_decision")) in ACCEPTED_DECISIONS for r in rows),
+        "accepted_ablauf_to_duschprofil_interface_count": sum(
+            _clean(r.get("evidence_collection_area")) == "ablauf_to_duschprofil_interface_statement"
+            and _clean(r.get("evidence_target_type")) == "retained_drain_body_article"
+            and _clean(r.get("reviewer_decision")) == ACCEPTED_ABLAUF_TO_DUSCHPROFIL_INTERFACE_DECISION
+            for r in rows
+        ),
+        "accepted_generic_duschprofil_scope_count": sum(
+            _clean(r.get("evidence_collection_area")) == "duschprofil_installable_profile_scope_statement"
+            and _clean(r.get("evidence_target_type")) == "generic_duschprofil_scope"
+            and _clean(r.get("reviewer_decision")) == ACCEPTED_GENERIC_DUSCHPROFIL_SCOPE_DECISION
+            for r in rows
+        ),
+        "accepted_installable_duschprofil_article_count": sum(
+            _clean(r.get("evidence_collection_area")) == "installable_duschprofil_article_scope_and_length_evidence"
+            and _clean(r.get("evidence_target_type")) == "installable_duschprofil_article"
+            and _clean(r.get("reviewer_decision")) == ACCEPTED_INSTALLABLE_DUSCHPROFIL_ARTICLE_DECISION
+            for r in rows
+        ),
+        "accepted_v3_evidence_row_count": 0,
         "reviewed_evidence_complete_row_count": sum(_bool(r.get("evidence_complete")) for r in rows),
         "ready_for_future_diagnostic_design_count": sum(_bool(r.get("ready_for_future_diagnostic_design")) for r in rows),
         "production_promotion_blocked": True,
@@ -168,6 +187,11 @@ def validate(evidence_csv, source_pack=DEFAULT_SOURCE_PACK, family=EXPECTED_FAMI
         "blocking_flag_leakage_rows": sorted(set(block_leak)),
         "allowed_diagnostic_acceptance_missing_rows": sorted(set(allowed_true_missing)),
     }
+    report["accepted_v3_evidence_row_count"] = (
+        report["accepted_ablauf_to_duschprofil_interface_count"]
+        + report["accepted_generic_duschprofil_scope_count"]
+        + report["accepted_installable_duschprofil_article_count"]
+    )
     for f in BLOCK_FALSE_FIELDS:
         report[f"{f}_count"] = sum(_bool(r.get(f)) for r in rows)
     for f in ZERO_COUNTER_FIELDS:
